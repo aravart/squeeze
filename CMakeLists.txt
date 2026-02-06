@@ -46,6 +46,47 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(sol2)
 
+# --- Catch2 ---
+FetchContent_Declare(
+    Catch2
+    GIT_REPOSITORY https://github.com/catchorg/Catch2.git
+    GIT_TAG        v3.5.2
+    GIT_SHALLOW    TRUE
+)
+FetchContent_MakeAvailable(Catch2)
+
+# --- Squeeze Core Library ---
+add_library(squeeze_core STATIC
+    src/core/Port.cpp
+)
+
+target_include_directories(squeeze_core PUBLIC src)
+
+target_link_libraries(squeeze_core PUBLIC
+    juce::juce_core
+    juce::juce_audio_basics
+)
+
+target_compile_definitions(squeeze_core PUBLIC
+    JUCE_WEB_BROWSER=0
+    JUCE_USE_CURL=0
+    JUCE_DISPLAY_SPLASH_SCREEN=0
+)
+
+# --- Tests ---
+add_executable(squeeze_tests
+    tests/core/PortTests.cpp
+)
+
+target_link_libraries(squeeze_tests PRIVATE
+    squeeze_core
+    Catch2::Catch2WithMain
+)
+
+include(CTest)
+include(Catch)
+catch_discover_tests(squeeze_tests)
+
 # --- Squeeze App ---
 juce_add_console_app(Squeeze
     PRODUCT_NAME "Squeeze"
@@ -56,18 +97,11 @@ target_sources(Squeeze PRIVATE
 )
 
 target_link_libraries(Squeeze PRIVATE
-    juce::juce_core
-    juce::juce_audio_basics
+    squeeze_core
     juce::juce_audio_devices
     juce::juce_audio_formats
     juce::juce_audio_processors
     juce::juce_audio_utils
     lua_static
     sol2
-)
-
-target_compile_definitions(Squeeze PRIVATE
-    JUCE_WEB_BROWSER=0
-    JUCE_USE_CURL=0
-    JUCE_DISPLAY_SPLASH_SCREEN=0
 )
