@@ -4,7 +4,7 @@
 -- Usage: ./Squeeze -d examples/channel-split.lua -i
 
 -- Collect all MIDI input nodes (auto-loaded at startup)
-local midi_nodes = {}
+midi_nodes = {}
 for _, n in ipairs(sq.nodes()) do
     local ports = sq.ports(n.id)
     for _, p in ipairs(ports.outputs) do
@@ -25,14 +25,14 @@ for _, n in ipairs(midi_nodes) do
 end
 
 -- Load plugins
-local lofi, err1 = sq.add_plugin("Pure LoFi")
+lofi, err1 = sq.add_plugin("Pure LoFi")
 if not lofi then
     print("Failed to load Pure LoFi: " .. err1)
     return
 end
 print("Loaded Pure LoFi (id=" .. lofi.id .. ")")
 
-local xo, err2 = sq.add_plugin("XO")
+xo, err2 = sq.add_plugin("XO")
 if not xo then
     print("Failed to load XO: " .. err2)
     return

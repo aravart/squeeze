@@ -186,6 +186,26 @@ static void closeEditorWindow(int nodeId)
     editorWindows.erase(nodeId);
 }
 
+// Run a function on the message thread, blocking until complete.
+// If already on the message thread, runs directly.
+template <typename Fn>
+static void runOnMessageThread(Fn&& fn)
+{
+    if (juce::MessageManager::getInstance()->isThisTheMessageThread())
+    {
+        fn();
+    }
+    else
+    {
+        juce::WaitableEvent done;
+        juce::MessageManager::callAsync([&]() {
+            fn();
+            done.signal();
+        });
+        done.wait();
+    }
+}
+
 static std::tuple<sol::object, sol::object> openEditor(
     sol::state_view lua, Engine& engine, int nodeId)
 {
@@ -208,21 +228,30 @@ static std::tuple<sol::object, sol::object> openEditor(
         return {sol::lua_nil, sol::make_object(lua,
             "Plugin has no editor")};
 
-    // Must create editor on the message thread
-    juce::MessageManagerLock mmLock;
-    if (!mmLock.lockWasGained())
-        return {sol::lua_nil, sol::make_object(lua, "GUI unavailable")};
+    // GUI work must happen on the actual message thread (macOS AppKit requirement)
+    std::string errorMsg;
+    bool success = false;
 
-    auto* editor = processor->createEditorIfNeeded();
-    if (!editor)
+    runOnMessageThread([&]() {
+        auto* editor = processor->createEditorIfNeeded();
+        if (!editor)
+        {
+            errorMsg = "Failed to create editor";
+            return;
+        }
+
+        auto name = engine.getNodeName(nodeId);
+        auto window = std::make_unique<PluginEditorWindow>(
+            juce::String(name), editor, nodeId, closeEditorWindow);
+
+        editorWindows[nodeId] = std::move(window);
+        success = true;
+    });
+
+    if (!success)
         return {sol::lua_nil, sol::make_object(lua,
-            "Failed to create editor")};
+            errorMsg.empty() ? "GUI unavailable" : errorMsg)};
 
-    auto name = engine.getNodeName(nodeId);
-    auto window = std::make_unique<PluginEditorWindow>(
-        juce::String(name), editor, nodeId, closeEditorWindow);
-
-    editorWindows[nodeId] = std::move(window);
     return {sol::make_object(lua, true), sol::lua_nil};
 }
 
@@ -234,11 +263,10 @@ static std::tuple<sol::object, sol::object> closeEditor(
         return {sol::lua_nil, sol::make_object(lua,
             "No editor open for node " + std::to_string(nodeId))};
 
-    juce::MessageManagerLock mmLock;
-    if (!mmLock.lockWasGained())
-        return {sol::lua_nil, sol::make_object(lua, "GUI unavailable")};
+    runOnMessageThread([&]() {
+        editorWindows.erase(it);
+    });
 
-    editorWindows.erase(it);
     return {sol::make_object(lua, true), sol::lua_nil};
 }
 

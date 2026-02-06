@@ -17,7 +17,7 @@ end
 -- Open the first MIDI device
 local midi_name = devices[1]
 print("\nOpening: " .. midi_name)
-local midi, err = sq.add_midi_input(midi_name)
+midi, err = sq.add_midi_input(midi_name)
 if not midi then
     print("Error: " .. err)
     return
@@ -26,7 +26,7 @@ print("MIDI node id=" .. midi.id)
 
 -- Find and load the first instrument plugin
 local plugins = sq.list_plugins()
-local synth = nil
+synth = nil
 
 for _, name in ipairs(plugins) do
     local info = sq.plugin_info(name)
