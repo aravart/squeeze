@@ -59,6 +59,7 @@ FetchContent_MakeAvailable(Catch2)
 add_library(squeeze_core STATIC
     src/core/Port.cpp
     src/core/Graph.cpp
+    src/core/Scheduler.cpp
 )
 
 target_include_directories(squeeze_core PUBLIC src)
@@ -79,6 +80,7 @@ add_executable(squeeze_tests
     tests/core/PortTests.cpp
     tests/core/NodeTests.cpp
     tests/core/GraphTests.cpp
+    tests/core/SchedulerTests.cpp
 )
 
 target_link_libraries(squeeze_tests PRIVATE
