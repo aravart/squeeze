@@ -16,6 +16,80 @@ static void signalHandler(int)
     running.store(false);
 }
 
+static void printValue(sol::state_view lua, const sol::object& val, int indent = 0);
+
+static void printTable(sol::state_view lua, const sol::table& tbl, int indent)
+{
+    // Check if it's an array (sequential integer keys starting at 1)
+    bool isArray = true;
+    int count = 0;
+    for (auto& kv : tbl) {
+        ++count;
+        if (kv.first.get_type() != sol::type::number)
+            { isArray = false; break; }
+    }
+    if (count == 0) { std::cout << "{}"; return; }
+
+    // Check sequential keys
+    if (isArray) {
+        for (int i = 1; i <= count; ++i) {
+            if (tbl[i].get_type() == sol::type::lua_nil)
+                { isArray = false; break; }
+        }
+    }
+
+    std::string pad(indent + 2, ' ');
+    std::cout << "{" << std::endl;
+
+    if (isArray) {
+        for (int i = 1; i <= count; ++i) {
+            std::cout << pad;
+            printValue(lua, tbl[i], indent + 2);
+            if (i < count) std::cout << ",";
+            std::cout << std::endl;
+        }
+    } else {
+        int idx = 0;
+        for (auto& kv : tbl) {
+            std::cout << pad;
+            if (kv.first.is<std::string>())
+                std::cout << kv.first.as<std::string>();
+            else
+                std::cout << "[" << kv.first.as<double>() << "]";
+            std::cout << " = ";
+            printValue(lua, kv.second, indent + 2);
+            if (++idx < count) std::cout << ",";
+            std::cout << std::endl;
+        }
+    }
+
+    std::cout << std::string(indent, ' ') << "}";
+}
+
+static void printValue(sol::state_view lua, const sol::object& val, int indent)
+{
+    switch (val.get_type()) {
+        case sol::type::string:
+            std::cout << "\"" << val.as<std::string>() << "\"";
+            break;
+        case sol::type::number:
+            std::cout << val.as<double>();
+            break;
+        case sol::type::boolean:
+            std::cout << (val.as<bool>() ? "true" : "false");
+            break;
+        case sol::type::table:
+            printTable(lua, val.as<sol::table>(), indent);
+            break;
+        case sol::type::lua_nil:
+            std::cout << "nil";
+            break;
+        default:
+            std::cout << sol::type_name(lua, val.get_type());
+            break;
+    }
+}
+
 static void runRepl(sol::state& lua)
 {
     std::cout << "squeeze> " << std::flush;
@@ -35,14 +109,8 @@ static void runRepl(sol::state& lua)
             sol::object val = exprResult;
             if (val.get_type() != sol::type::lua_nil)
             {
-                if (val.is<std::string>())
-                    std::cout << val.as<std::string>() << std::endl;
-                else if (val.is<double>())
-                    std::cout << val.as<double>() << std::endl;
-                else if (val.is<bool>())
-                    std::cout << (val.as<bool>() ? "true" : "false") << std::endl;
-                else
-                    std::cout << sol::type_name(lua, val.get_type()) << std::endl;
+                printValue(lua, val);
+                std::cout << std::endl;
             }
         }
         else
@@ -111,13 +179,13 @@ int main(int argc, char* argv[])
     // Create Lua bindings and register the sq API
     LuaBindings bindings(engine, scheduler);
 
-    if (!cachePath.empty())
-    {
-        if (bindings.loadPluginCache(cachePath))
-            std::cout << "Plugin cache loaded: " << cachePath << std::endl;
-        else
-            std::cerr << "Warning: failed to load plugin cache: " << cachePath << std::endl;
-    }
+    if (cachePath.empty())
+        cachePath = "plugin-cache.xml";
+
+    if (bindings.loadPluginCache(cachePath))
+        std::cout << "Plugin cache loaded: " << cachePath << std::endl;
+    else if (cachePath != "plugin-cache.xml")
+        std::cerr << "Warning: failed to load plugin cache: " << cachePath << std::endl;
 
     sol::state lua;
     lua.open_libraries(sol::lib::base, sol::lib::string, sol::lib::math,
