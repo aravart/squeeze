@@ -37,6 +37,15 @@ if(UNIX)
     target_link_libraries(lua_static PUBLIC m)
 endif()
 
+# --- sol2 (Lua C++ bindings) ---
+FetchContent_Declare(
+    sol2
+    GIT_REPOSITORY https://github.com/ThePhD/sol2.git
+    GIT_TAG        v3.3.0
+    GIT_SHALLOW    TRUE
+)
+FetchContent_MakeAvailable(sol2)
+
 # --- Squeeze App ---
 juce_add_console_app(Squeeze
     PRODUCT_NAME "Squeeze"
@@ -54,6 +63,7 @@ target_link_libraries(Squeeze PRIVATE
     juce::juce_audio_processors
     juce::juce_audio_utils
     lua_static
+    sol2
 )
 
 target_compile_definitions(Squeeze PRIVATE

@@ -1,35 +1,23 @@
 #include <juce_core/juce_core.h>
 
-extern "C" {
-#include <lua.h>
-#include <lauxlib.h>
-#include <lualib.h>
-}
+#define SOL_ALL_SAFETIES_ON 1
+#include <sol/sol.hpp>
 
 int main()
 {
-    // JUCE: prove it's linked
     juce::String juceVersion = juce::SystemStats::getJUCEVersion();
     std::cout << "JUCE: " << juceVersion << std::endl;
 
-    // Lua: create a state and run a script
-    lua_State* L = luaL_newstate();
-    luaL_openlibs(L);
+    sol::state lua;
+    lua.open_libraries(sol::lib::base, sol::lib::string, sol::lib::math);
 
-    const char* script = "return _VERSION";
-    if (luaL_dostring(L, script) == LUA_OK)
-    {
-        const char* version = lua_tostring(L, -1);
-        std::cout << "Lua:  " << version << std::endl;
-        lua_pop(L, 1);
-    }
-    else
-    {
-        std::cerr << "Lua error: " << lua_tostring(L, -1) << std::endl;
-        lua_pop(L, 1);
-    }
+    lua["getVersion"] = []() { return "Squeeze 0.1.0"; };
 
-    lua_close(L);
+    std::string luaVersion = lua["_VERSION"];
+    std::string appVersion = lua.script("return getVersion()").get<std::string>();
+
+    std::cout << "Lua:  " << luaVersion << std::endl;
+    std::cout << "sol2: called back into C++ -> " << appVersion << std::endl;
 
     std::cout << "Squeeze hello world OK" << std::endl;
     return 0;
