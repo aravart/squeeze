@@ -4,6 +4,10 @@
 #include "core/Engine.h"
 #include "core/Scheduler.h"
 
+extern "C" {
+#include <linenoise.h>
+}
+
 #include <atomic>
 #include <csignal>
 
@@ -90,17 +94,35 @@ static void printValue(sol::state_view lua, const sol::object& val, int indent)
     }
 }
 
+static std::string getHistoryPath()
+{
+    auto home = juce::File::getSpecialLocation(juce::File::userHomeDirectory);
+    return home.getChildFile(".squeeze_history").getFullPathName().toStdString();
+}
+
 static void runRepl(sol::state& lua)
 {
-    std::cout << "squeeze> " << std::flush;
-    std::string line;
-    while (running.load() && std::getline(std::cin, line))
+    auto histPath = getHistoryPath();
+    linenoiseHistorySetMaxLen(500);
+    linenoiseHistoryLoad(histPath.c_str());
+
+    char* raw;
+    while (running.load() && (raw = linenoise("squeeze> ")) != nullptr)
     {
+        std::string line(raw);
+        free(raw);
+
+        if (line.empty())
+            continue;
+
         if (line == "quit" || line == "exit")
         {
             running.store(false);
             break;
         }
+
+        linenoiseHistoryAdd(line.c_str());
+        linenoiseHistorySave(histPath.c_str());
 
         // Try as expression first (so "1+1" prints the result)
         auto exprResult = lua.safe_script("return " + line, sol::script_pass_on_error);
@@ -123,8 +145,6 @@ static void runRepl(sol::state& lua)
                 std::cerr << err.what() << std::endl;
             }
         }
-
-        std::cout << "squeeze> " << std::flush;
     }
 
     std::cout << std::endl;

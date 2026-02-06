@@ -46,6 +46,18 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(sol2)
 
+# --- linenoise (readline replacement) ---
+FetchContent_Declare(
+    linenoise
+    GIT_REPOSITORY https://github.com/antirez/linenoise.git
+    GIT_TAG        master
+    GIT_SHALLOW    TRUE
+)
+FetchContent_MakeAvailable(linenoise)
+
+add_library(linenoise_static STATIC ${linenoise_SOURCE_DIR}/linenoise.c)
+target_include_directories(linenoise_static PUBLIC ${linenoise_SOURCE_DIR})
+
 # --- Catch2 ---
 FetchContent_Declare(
     Catch2
@@ -125,6 +137,7 @@ target_sources(Squeeze PRIVATE
 
 target_link_libraries(Squeeze PRIVATE
     squeeze_lua
+    linenoise_static
     juce::juce_audio_devices
     juce::juce_audio_formats
     juce::juce_audio_processors
