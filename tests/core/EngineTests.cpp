@@ -1014,3 +1014,106 @@ TEST_CASE("MIDI channel 0 passes all channels")
     }
     REQUIRE(midiCount == 3);
 }
+
+// ============================================================
+// MIDI fan-in (multiple sources to one destination)
+// ============================================================
+
+TEST_CASE("Multiple MIDI sources merge into one synth node")
+{
+    Scheduler sched;
+    Engine engine(sched);
+    engine.prepareForTesting(44100.0, 64);
+
+    TestMidiSourceNode src1, src2;
+    TestSynthNode synth;
+    src1.prepare(44100.0, 64);
+    src2.prepare(44100.0, 64);
+    synth.prepare(44100.0, 64);
+
+    juce::MidiBuffer events1;
+    events1.addEvent(juce::MidiMessage::noteOn(1, 60, 0.8f), 0);
+    src1.setEvents(events1);
+
+    juce::MidiBuffer events2;
+    events2.addEvent(juce::MidiMessage::noteOn(1, 72, 0.6f), 5);
+    events2.addEvent(juce::MidiMessage::noteOn(1, 76, 0.7f), 10);
+    src2.setEvents(events2);
+
+    Graph graph;
+    int id1 = graph.addNode(&src1);
+    int id2 = graph.addNode(&src2);
+    int idSynth = graph.addNode(&synth);
+    graph.connect({id1, PortDirection::output, "midi"},
+                  {idSynth, PortDirection::input, "midi"});
+    graph.connect({id2, PortDirection::output, "midi"},
+                  {idSynth, PortDirection::input, "midi"});
+
+    engine.updateGraph(graph);
+
+    juce::AudioBuffer<float> output(2, 64);
+    runBlock(engine, sched, output, 64);
+
+    // Synth should receive all 3 events merged from both sources
+    int midiCount = 0;
+    for (const auto& m : synth.lastMidiReceived)
+    {
+        (void)m;
+        midiCount++;
+    }
+    REQUIRE(midiCount == 3);
+}
+
+TEST_CASE("Multiple MIDI sources with channel filters merge correctly")
+{
+    Scheduler sched;
+    Engine engine(sched);
+    engine.prepareForTesting(44100.0, 64);
+
+    TestMidiSourceNode src1, src2;
+    TestSynthNode synth;
+    src1.prepare(44100.0, 64);
+    src2.prepare(44100.0, 64);
+    synth.prepare(44100.0, 64);
+
+    // src1 sends on channels 1 and 2
+    juce::MidiBuffer events1;
+    events1.addEvent(juce::MidiMessage::noteOn(1, 60, 0.8f), 0);
+    events1.addEvent(juce::MidiMessage::noteOn(2, 64, 0.8f), 5);
+    src1.setEvents(events1);
+
+    // src2 sends on channels 3 and 4
+    juce::MidiBuffer events2;
+    events2.addEvent(juce::MidiMessage::noteOn(3, 72, 0.6f), 0);
+    events2.addEvent(juce::MidiMessage::noteOn(4, 76, 0.7f), 10);
+    src2.setEvents(events2);
+
+    Graph graph;
+    int id1 = graph.addNode(&src1);
+    int id2 = graph.addNode(&src2);
+    int idSynth = graph.addNode(&synth);
+    // src1 filtered to channel 1 only
+    graph.connect({id1, PortDirection::output, "midi"},
+                  {idSynth, PortDirection::input, "midi"}, 1);
+    // src2 filtered to channel 3 only
+    graph.connect({id2, PortDirection::output, "midi"},
+                  {idSynth, PortDirection::input, "midi"}, 3);
+
+    engine.updateGraph(graph);
+
+    juce::AudioBuffer<float> output(2, 64);
+    runBlock(engine, sched, output, 64);
+
+    // Should receive 2 events: ch1 note from src1, ch3 note from src2
+    int midiCount = 0;
+    std::vector<int> receivedNotes;
+    for (const auto& m : synth.lastMidiReceived)
+    {
+        auto msg = m.getMessage();
+        receivedNotes.push_back(msg.getNoteNumber());
+        midiCount++;
+    }
+    REQUIRE(midiCount == 2);
+    REQUIRE(std::find(receivedNotes.begin(), receivedNotes.end(), 60) != receivedNotes.end());
+    REQUIRE(std::find(receivedNotes.begin(), receivedNotes.end(), 72) != receivedNotes.end());
+}

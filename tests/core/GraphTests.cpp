@@ -268,7 +268,7 @@ TEST_CASE("connect fails for mismatched channel counts")
     REQUIRE(connId == -1);
 }
 
-TEST_CASE("connect fails if input port already has a connection")
+TEST_CASE("connect fails if audio input port already has a connection")
 {
     Graph graph;
     StereoEffectNode a, b, c;
@@ -283,12 +283,49 @@ TEST_CASE("connect fails if input port already has a connection")
     );
     REQUIRE(conn1 >= 0);
 
-    // Second connection to same input
+    // Second connection to same audio input
     int conn2 = graph.connect(
         {idB, PortDirection::output, "out"},
         {idC, PortDirection::input, "in"}
     );
     REQUIRE(conn2 == -1);
+    REQUIRE(graph.getLastError() == "Audio input port already has a connection");
+}
+
+TEST_CASE("MIDI fan-in is allowed: multiple sources to one MIDI input")
+{
+    Graph graph;
+    MidiSourceNode src1, src2, src3;
+    SynthNode synth;
+
+    int idSrc1 = graph.addNode(&src1);
+    int idSrc2 = graph.addNode(&src2);
+    int idSrc3 = graph.addNode(&src3);
+    int idSynth = graph.addNode(&synth);
+
+    int conn1 = graph.connect(
+        {idSrc1, PortDirection::output, "midi"},
+        {idSynth, PortDirection::input, "midi"}
+    );
+    REQUIRE(conn1 >= 0);
+
+    int conn2 = graph.connect(
+        {idSrc2, PortDirection::output, "midi"},
+        {idSynth, PortDirection::input, "midi"}
+    );
+    REQUIRE(conn2 >= 0);
+
+    int conn3 = graph.connect(
+        {idSrc3, PortDirection::output, "midi"},
+        {idSynth, PortDirection::input, "midi"}
+    );
+    REQUIRE(conn3 >= 0);
+
+    REQUIRE(graph.getConnections().size() == 3);
+
+    // All sources should appear before synth in execution order
+    auto order = graph.getExecutionOrder();
+    REQUIRE(order.size() == 4);
 }
 
 TEST_CASE("Fan-out is allowed: one output to multiple inputs")

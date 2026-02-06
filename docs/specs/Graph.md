@@ -51,7 +51,8 @@ public:
 - Cycles are rejected at connection time
 - Removing a node removes all its connections
 - A connection requires: source node exists, dest node exists, source port exists on source node, dest port exists on dest node, ports pass `canConnect()`
-- Each input port accepts at most one connection (no fan-in for this milestone)
+- Each audio input port accepts at most one connection (no audio fan-in)
+- MIDI input ports accept multiple connections (MIDI fan-in is allowed)
 - An output port may connect to multiple inputs (fan-out is allowed)
 - Node IDs are unique and never reused within a Graph instance
 - Connection IDs are unique and never reused within a Graph instance
@@ -67,7 +68,7 @@ All errors are reported via `getLastError()` after a failed operation.
   - Destination port not found on destination node
   - Ports are incompatible (signal type or channel mismatch)
   - Connection would create a cycle
-  - Destination input port already has a connection
+  - Audio destination input port already has a connection
 - `removeNode()` returns false if node ID not found
 - `disconnect()` returns false if connection ID not found
 - `getNode()` returns nullptr if node ID not found

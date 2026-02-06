@@ -24,9 +24,9 @@ struct GraphSnapshot {
     struct NodeSlot {
         Node* node;
         int audioSourceIndex;
-        int midiSourceIndex;
+        struct MidiSource { int slotIndex; int channelFilter; };
+        std::vector<MidiSource> midiSources;
         bool isAudioLeaf;  // true if no other node reads this node's audio output
-        int midiChannelFilter = 0;  // 0 = all, 1-16 = filter
     };
 
     std::vector<NodeSlot> slots;

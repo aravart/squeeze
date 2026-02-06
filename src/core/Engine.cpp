@@ -395,8 +395,7 @@ GraphSnapshot* Engine::buildSnapshot(const Graph& graph,
         Node* node = graph.getNode(nodeId);
 
         int audioSrc = -1;
-        int midiSrc = -1;
-        int midiChFilter = 0;
+        std::vector<GraphSnapshot::NodeSlot::MidiSource> midiSources;
 
         // Find incoming connections for this node
         for (const auto& conn : connections)
@@ -415,16 +414,13 @@ GraphSnapshot* Engine::buildSnapshot(const Graph& graph,
                     if (p.signalType == SignalType::audio)
                         audioSrc = srcIndex;
                     else if (p.signalType == SignalType::midi)
-                    {
-                        midiSrc = srcIndex;
-                        midiChFilter = conn.midiChannel;
-                    }
+                        midiSources.push_back({srcIndex, conn.midiChannel});
                     break;
                 }
             }
         }
 
-        snap->slots.push_back({node, audioSrc, midiSrc, false, midiChFilter});
+        snap->slots.push_back({node, audioSrc, std::move(midiSources), false});
 
         // Determine output channel count from this node's output ports
         int outChannels = 2;
@@ -526,20 +522,46 @@ void Engine::processBlock(juce::AudioBuffer<float>& outputBuffer,
                 ? snap.audioOutputs[slot.audioSourceIndex]
                 : snap.silenceBuffer;
 
-        juce::MidiBuffer* midiInPtr =
-            (slot.midiSourceIndex >= 0)
-                ? &snap.midiOutputs[slot.midiSourceIndex]
-                : &snap.emptyMidi;
+        juce::MidiBuffer* midiInPtr = &snap.emptyMidi;
 
-        // Apply MIDI channel filter if set
-        if (slot.midiSourceIndex >= 0 && slot.midiChannelFilter > 0)
+        if (slot.midiSources.size() == 1)
+        {
+            auto& ms = slot.midiSources[0];
+            midiInPtr = &snap.midiOutputs[ms.slotIndex];
+
+            if (ms.channelFilter > 0)
+            {
+                snap.filteredMidi.clear();
+                for (const auto metadata : *midiInPtr)
+                {
+                    auto msg = metadata.getMessage();
+                    if (msg.getChannel() == ms.channelFilter)
+                        snap.filteredMidi.addEvent(msg, metadata.samplePosition);
+                }
+                midiInPtr = &snap.filteredMidi;
+            }
+        }
+        else if (slot.midiSources.size() > 1)
         {
             snap.filteredMidi.clear();
-            for (const auto metadata : *midiInPtr)
+            for (const auto& ms : slot.midiSources)
             {
-                auto msg = metadata.getMessage();
-                if (msg.getChannel() == slot.midiChannelFilter)
-                    snap.filteredMidi.addEvent(msg, metadata.samplePosition);
+                auto& srcBuf = snap.midiOutputs[ms.slotIndex];
+                if (ms.channelFilter == 0)
+                {
+                    for (const auto metadata : srcBuf)
+                        snap.filteredMidi.addEvent(metadata.getMessage(),
+                                                   metadata.samplePosition);
+                }
+                else
+                {
+                    for (const auto metadata : srcBuf)
+                    {
+                        auto msg = metadata.getMessage();
+                        if (msg.getChannel() == ms.channelFilter)
+                            snap.filteredMidi.addEvent(msg, metadata.samplePosition);
+                    }
+                }
             }
             midiInPtr = &snap.filteredMidi;
         }

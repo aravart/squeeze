@@ -120,11 +120,13 @@ int Graph::connect(PortAddress source, PortAddress dest, int midiChannel)
         return -1;
     }
 
-    // Check input port not already connected
-    for (const auto& c : connections_) {
-        if (c.dest == dest) {
-            lastError_ = "Destination port already has a connection";
-            return -1;
+    // Check input port not already connected (audio only — MIDI allows fan-in)
+    if (dstPort->signalType == SignalType::audio) {
+        for (const auto& c : connections_) {
+            if (c.dest == dest) {
+                lastError_ = "Audio input port already has a connection";
+                return -1;
+            }
         }
     }
 
