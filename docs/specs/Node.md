@@ -2,21 +2,7 @@
 
 ## Overview
 
-Node is the abstract interface for anything that processes audio in the graph. Port is a lightweight struct describing a connection point on a node, defined alongside Node rather than as a separate component.
-
-## Port
-
-```cpp
-struct Port {
-    enum class Direction { input, output };
-    enum class SignalType { audio, midi };
-
-    std::string name;
-    Direction direction;
-    SignalType signalType;
-    int channels;  // for audio (1=mono, 2=stereo, N); ignored for midi
-};
-```
+Node is the abstract interface for anything that processes audio or MIDI in the graph. It declares its ports, processes buffers provided by Engine, and exposes parameters.
 
 ## ProcessContext
 
@@ -34,7 +20,7 @@ struct ProcessContext {
 
 ## Responsibilities
 
-- Declare input and output ports
+- Declare input and output ports (using PortDescriptor from Port.h)
 - Process audio and MIDI data provided by Engine
 - Expose parameters by name
 
@@ -51,10 +37,10 @@ public:
     virtual void release() = 0;
 
     // Port declaration (static after construction)
-    virtual std::vector<Port> getInputPorts() const = 0;
-    virtual std::vector<Port> getOutputPorts() const = 0;
+    virtual std::vector<PortDescriptor> getInputPorts() const = 0;
+    virtual std::vector<PortDescriptor> getOutputPorts() const = 0;
 
-    // Parameters
+    // Parameters (default implementations for nodes with no parameters)
     virtual std::vector<std::string> getParameterNames() const { return {}; }
     virtual float getParameter(const std::string& name) const { return 0.0f; }
     virtual void setParameter(const std::string& name, float value) {}
@@ -64,9 +50,10 @@ public:
 ## Invariants
 
 - `process()` is realtime-safe: no allocation, no blocking, no unbounded work
-- Port configuration is fixed after construction — `getInputPorts()` and `getOutputPorts()` always return the same values
+- Port configuration is fixed after construction — `getInputPorts()` and `getOutputPorts()` always return the same values across calls
 - `prepare()` is called before the first `process()` call
 - `release()` is called before destruction
+- All declared ports are valid (pass `isValid()`)
 - Node does not own or allocate its processing buffers
 
 ## Error Conditions
@@ -84,7 +71,8 @@ public:
 
 ## Dependencies
 
-- JUCE (`juce::AudioBuffer<float>`, `juce::MidiBuffer`) for buffer types
+- Port (`PortDescriptor`, `PortDirection`, `SignalType`)
+- JUCE (`juce::AudioBuffer<float>`, `juce::MidiBuffer`)
 
 ## Thread Safety
 
@@ -96,7 +84,7 @@ public:
 ## Example Usage
 
 ```cpp
-// A simple gain node
+// A simple gain node (used for testing)
 class GainNode : public Node {
     float gain = 1.0f;
     double sampleRate = 0;
@@ -117,12 +105,12 @@ public:
 
     void release() override {}
 
-    std::vector<Port> getInputPorts() const override {
-        return {{ "in", Port::Direction::input, Port::SignalType::audio, 2 }};
+    std::vector<PortDescriptor> getInputPorts() const override {
+        return {{ "in", PortDirection::input, SignalType::audio, 2 }};
     }
 
-    std::vector<Port> getOutputPorts() const override {
-        return {{ "out", Port::Direction::output, Port::SignalType::audio, 2 }};
+    std::vector<PortDescriptor> getOutputPorts() const override {
+        return {{ "out", PortDirection::output, SignalType::audio, 2 }};
     }
 
     std::vector<std::string> getParameterNames() const override { return { "gain" }; }

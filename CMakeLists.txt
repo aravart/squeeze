@@ -76,6 +76,7 @@ target_compile_definitions(squeeze_core PUBLIC
 # --- Tests ---
 add_executable(squeeze_tests
     tests/core/PortTests.cpp
+    tests/core/NodeTests.cpp
 )
 
 target_link_libraries(squeeze_tests PRIVATE
