@@ -1,4 +1,5 @@
 #include "core/LuaBindings.h"
+#include "core/Logger.h"
 
 namespace squeeze {
 
@@ -130,6 +131,7 @@ std::tuple<sol::object, sol::object> LuaBindings::luaPluginInfo(
 std::tuple<sol::object, sol::object> LuaBindings::luaAddPlugin(
     sol::state_view lua, const std::string& name)
 {
+    SQ_LOG("luaAddPlugin: %s", name.c_str());
     auto* desc = cache_.findByName(juce::String(name));
     if (!desc)
         return {sol::lua_nil, sol::make_object(lua, "Plugin '" + name + "' not found in cache")};
@@ -155,6 +157,7 @@ std::tuple<sol::object, sol::object> LuaBindings::luaAddPlugin(
 std::tuple<sol::object, sol::object> LuaBindings::luaRemoveNode(
     sol::state_view lua, int id)
 {
+    SQ_LOG("luaRemoveNode: id=%d", id);
     if (ownedNodes_.find(id) == ownedNodes_.end())
         return {sol::lua_nil, sol::make_object(lua, "Node " + std::to_string(id) + " not found")};
 
@@ -170,6 +173,7 @@ std::tuple<sol::object, sol::object> LuaBindings::luaConnect(
     int srcId, const std::string& srcPort,
     int dstId, const std::string& dstPort)
 {
+    SQ_LOG("luaConnect: %d:%s -> %d:%s", srcId, srcPort.c_str(), dstId, dstPort.c_str());
     PortAddress source{srcId, PortDirection::output, srcPort};
     PortAddress dest{dstId, PortDirection::input, dstPort};
 
@@ -183,6 +187,7 @@ std::tuple<sol::object, sol::object> LuaBindings::luaConnect(
 std::tuple<sol::object, sol::object> LuaBindings::luaDisconnect(
     sol::state_view lua, int connId)
 {
+    SQ_LOG("luaDisconnect: conn=%d", connId);
     if (!graph_.disconnect(connId))
         return {sol::lua_nil, sol::make_object(lua, "Connection " + std::to_string(connId) + " not found")};
 
@@ -191,6 +196,7 @@ std::tuple<sol::object, sol::object> LuaBindings::luaDisconnect(
 
 void LuaBindings::luaUpdate()
 {
+    SQ_LOG("luaUpdate");
     engine_.updateGraph(graph_);
 }
 
@@ -198,11 +204,13 @@ void LuaBindings::luaStart(sol::optional<double> sr, sol::optional<int> bs)
 {
     double sampleRate = sr.value_or(44100.0);
     int blockSize = bs.value_or(512);
+    SQ_LOG("luaStart: sr=%.0f bs=%d", sampleRate, blockSize);
     engine_.start(sampleRate, blockSize);
 }
 
 void LuaBindings::luaStop()
 {
+    SQ_LOG("luaStop");
     engine_.stop();
 }
 

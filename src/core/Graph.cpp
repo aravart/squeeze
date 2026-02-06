@@ -1,4 +1,5 @@
 #include "core/Graph.h"
+#include "core/Logger.h"
 
 #include <algorithm>
 #include <queue>
@@ -10,11 +11,13 @@ int Graph::addNode(Node* node)
 {
     int id = nextNodeId_++;
     nodes_[id] = node;
+    SQ_LOG("addNode: id=%d", id);
     return id;
 }
 
 bool Graph::removeNode(int nodeId)
 {
+    SQ_LOG("removeNode: id=%d", nodeId);
     auto it = nodes_.find(nodeId);
     if (it == nodes_.end())
         return false;
@@ -126,11 +129,15 @@ int Graph::connect(PortAddress source, PortAddress dest)
 
     int id = nextConnectionId_++;
     connections_.push_back({id, source, dest});
+    SQ_LOG("connect: %d:%s -> %d:%s (conn=%d)",
+           source.nodeId, source.portName.c_str(),
+           dest.nodeId, dest.portName.c_str(), id);
     return id;
 }
 
 bool Graph::disconnect(int connectionId)
 {
+    SQ_LOG("disconnect: conn=%d", connectionId);
     auto it = std::find_if(connections_.begin(), connections_.end(),
         [connectionId](const Connection& c) { return c.id == connectionId; });
 

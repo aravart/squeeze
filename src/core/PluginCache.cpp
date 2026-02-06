@@ -1,11 +1,16 @@
 #include "core/PluginCache.h"
+#include "core/Logger.h"
 
 namespace squeeze {
 
 bool PluginCache::loadFromFile(const juce::File& xmlFile)
 {
+    SQ_LOG("loadFromFile: %s", xmlFile.getFullPathName().toRawUTF8());
     if (!xmlFile.existsAsFile())
+    {
+        SQ_LOG("loadFromFile: file not found");
         return false;
+    }
 
     auto xmlString = xmlFile.loadFileAsString();
     return loadFromXml(xmlString);
@@ -26,6 +31,7 @@ bool PluginCache::loadFromXml(const juce::String& xmlString)
     for (int i = 0; i < arr.size(); ++i)
         types_.push_back(arr[i]);
 
+    SQ_LOG("loadFromXml: %d plugins loaded", (int)types_.size());
     return !types_.empty();
 }
 

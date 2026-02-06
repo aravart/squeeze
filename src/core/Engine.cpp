@@ -1,4 +1,5 @@
 #include "core/Engine.h"
+#include "core/Logger.h"
 
 #include <unordered_map>
 #include <unordered_set>
@@ -18,6 +19,7 @@ Engine::~Engine()
 
 bool Engine::start(double sampleRate, int blockSize)
 {
+    SQ_LOG("start: sr=%.0f bs=%d", sampleRate, blockSize);
     sampleRate_.store(sampleRate);
     blockSize_.store(blockSize);
     running_.store(true);
@@ -26,6 +28,7 @@ bool Engine::start(double sampleRate, int blockSize)
 
 void Engine::stop()
 {
+    SQ_LOG("stop");
     running_.store(false);
 }
 
@@ -41,6 +44,7 @@ void Engine::prepareForTesting(double sampleRate, int blockSize)
 
 void Engine::updateGraph(const Graph& graph)
 {
+    SQ_LOG("updateGraph: %d nodes", graph.getNodeCount());
     double sr = sampleRate_.load();
     int bs = blockSize_.load();
 
@@ -57,6 +61,9 @@ GraphSnapshot* Engine::buildSnapshot(const Graph& graph,
 {
     auto order = graph.getExecutionOrder();
     auto connections = graph.getConnections();
+
+    SQ_LOG("buildSnapshot: %d nodes, sr=%.0f bs=%d",
+           (int)order.size(), sampleRate, blockSize);
 
     auto* snap = new GraphSnapshot();
 
@@ -163,6 +170,7 @@ void Engine::processBlock(juce::AudioBuffer<float>& outputBuffer,
             {
                 auto* oldSnapshot = activeSnapshot_;
                 activeSnapshot_ = static_cast<GraphSnapshot*>(cmd.ptr);
+                SQ_LOG_RT("snapshot swap");
                 if (oldSnapshot)
                     scheduler_.sendGarbage(GarbageItem::wrap(oldSnapshot));
                 break;
@@ -249,10 +257,14 @@ void Engine::audioDeviceAboutToStart(juce::AudioIODevice* device)
     sampleRate_.store(device->getCurrentSampleRate());
     blockSize_.store(device->getCurrentBufferSizeSamples());
     running_.store(true);
+    SQ_LOG("audioDeviceAboutToStart: sr=%.0f bs=%d",
+           device->getCurrentSampleRate(),
+           device->getCurrentBufferSizeSamples());
 }
 
 void Engine::audioDeviceStopped()
 {
+    SQ_LOG("audioDeviceStopped");
     running_.store(false);
 }
 

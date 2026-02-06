@@ -1,4 +1,5 @@
 #include "core/PluginNode.h"
+#include "core/Logger.h"
 
 namespace squeeze {
 
@@ -24,7 +25,10 @@ std::unique_ptr<PluginNode> PluginNode::create(
         description, sampleRate, blockSize, errorMessage);
 
     if (!instance)
+    {
+        SQ_LOG("PluginNode::create failed: %s", errorMessage.toRawUTF8());
         return nullptr;
+    }
 
     bool midi = instance->acceptsMidi();
     int numIn = description.numInputChannels;
@@ -33,11 +37,15 @@ std::unique_ptr<PluginNode> PluginNode::create(
     auto node = std::make_unique<PluginNode>(
         std::move(instance), numIn, numOut, midi);
 
+    SQ_LOG("PluginNode::create: %s (%din/%dout, midi=%d)",
+           description.name.toRawUTF8(), numIn, numOut, (int)midi);
     return node;
 }
 
 void PluginNode::prepare(double sampleRate, int blockSize)
 {
+    SQ_LOG("PluginNode::prepare: %s sr=%.0f bs=%d",
+           name_.toRawUTF8(), sampleRate, blockSize);
     processor_->prepareToPlay(sampleRate, blockSize);
 }
 

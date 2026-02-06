@@ -2,6 +2,7 @@
 
 #include "core/LuaBindings.h"
 #include "core/Engine.h"
+#include "core/Logger.h"
 #include "core/Scheduler.h"
 
 extern "C" {
@@ -145,6 +146,8 @@ static void runRepl(sol::state& lua)
                 std::cerr << err.what() << std::endl;
             }
         }
+
+        Logger::drain();
     }
 
     std::cout << std::endl;
@@ -155,6 +158,7 @@ static void printUsage()
     std::cout << "Usage: squeeze [options] [script.lua]\n"
               << "  -i          Interactive mode (REPL)\n"
               << "  -c FILE     Plugin cache XML file\n"
+              << "  -d          Enable debug logging to stderr\n"
               << "  -h, --help  Show this help\n"
               << "\n"
               << "With no arguments, runs the engine until Ctrl+C.\n"
@@ -169,12 +173,15 @@ int main(int argc, char* argv[])
     std::string scriptPath;
     std::string cachePath;
     bool interactive = false;
+    bool debug = false;
 
     for (int i = 1; i < argc; ++i)
     {
         std::string arg = argv[i];
         if (arg == "-i")
             interactive = true;
+        else if (arg == "-d" || arg == "--debug")
+            debug = true;
         else if (arg == "-c" && i + 1 < argc)
             cachePath = argv[++i];
         else if (arg == "-h" || arg == "--help")
@@ -190,6 +197,12 @@ int main(int argc, char* argv[])
         }
         else
             scriptPath = arg;
+    }
+
+    if (debug)
+    {
+        Logger::enable();
+        SQ_LOG("debug logging enabled");
     }
 
     // Create engine components
@@ -237,10 +250,14 @@ int main(int argc, char* argv[])
     {
         std::cout << "Engine running. Press Ctrl+C to stop." << std::endl;
         while (running.load())
+        {
+            Logger::drain();
             juce::Thread::sleep(100);
+        }
     }
 
     engine.stop();
+    Logger::drain();
     scheduler.collectGarbage();
 
     std::cout << "Goodbye." << std::endl;

@@ -75,6 +75,7 @@ add_library(squeeze_core STATIC
     src/core/Engine.cpp
     src/core/PluginCache.cpp
     src/core/PluginNode.cpp
+    src/core/Logger.cpp
 )
 
 target_include_directories(squeeze_core PUBLIC src)
@@ -115,6 +116,7 @@ add_executable(squeeze_tests
     tests/core/EngineTests.cpp
     tests/core/PluginNodeTests.cpp
     tests/core/LuaBindingsTests.cpp
+    tests/core/LoggerTests.cpp
 )
 
 target_link_libraries(squeeze_tests PRIVATE
