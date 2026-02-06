@@ -117,6 +117,7 @@ private:
                                         double sampleRate, int blockSize);
 
     Scheduler& scheduler_;
+    juce::AudioDeviceManager deviceManager_;
     GraphSnapshot* activeSnapshot_ = nullptr;
     std::atomic<double> sampleRate_{0.0};
     std::atomic<int> blockSize_{0};

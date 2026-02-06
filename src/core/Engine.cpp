@@ -23,6 +23,26 @@ Engine::~Engine()
 bool Engine::start(double sampleRate, int blockSize)
 {
     SQ_LOG("start: sr=%.0f bs=%d", sampleRate, blockSize);
+
+    // Try to open a real audio device
+    juce::AudioDeviceManager::AudioDeviceSetup setup;
+    setup.sampleRate = sampleRate;
+    setup.bufferSize = blockSize;
+
+    auto err = deviceManager_.initialise(0, 2, nullptr, true, {}, &setup);
+    if (err.isEmpty())
+    {
+        deviceManager_.addAudioCallback(this);
+        // audioDeviceAboutToStart has now fired, setting actual sr/bs
+        // Rebuild snapshot with correct values
+        updateGraph();
+        SQ_LOG("start: audio device opened (sr=%.0f bs=%d)",
+               sampleRate_.load(), blockSize_.load());
+        return true;
+    }
+
+    // No device available (testing or headless)
+    SQ_LOG("start: no audio device: %s", err.toRawUTF8());
     sampleRate_.store(sampleRate);
     blockSize_.store(blockSize);
     running_.store(true);
@@ -32,6 +52,11 @@ bool Engine::start(double sampleRate, int blockSize)
 void Engine::stop()
 {
     SQ_LOG("stop");
+    if (deviceManager_.getCurrentAudioDevice() != nullptr)
+    {
+        deviceManager_.removeAudioCallback(this);
+        deviceManager_.closeAudioDevice();
+    }
     running_.store(false);
 }
 

@@ -250,7 +250,7 @@ int main(int argc, char* argv[])
 
     if (interactive)
         runRepl(lua);
-    else if (scriptPath.empty())
+    else
     {
         std::cout << "Engine running. Press Ctrl+C to stop." << std::endl;
         while (running.load())
