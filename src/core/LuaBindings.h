@@ -2,6 +2,7 @@
 
 #include "core/Engine.h"
 #include "core/Graph.h"
+#include "core/MidiInputNode.h"
 #include "core/PluginCache.h"
 #include "core/PluginNode.h"
 #include "core/Scheduler.h"
@@ -53,6 +54,8 @@ private:
     sol::table luaNodes(sol::state_view lua);
     std::tuple<sol::object, sol::object> luaPorts(sol::state_view lua, int nodeId);
     sol::table luaConnections(sol::state_view lua);
+    sol::table luaListMidiInputs(sol::state_view lua);
+    std::tuple<sol::object, sol::object> luaAddMidiInput(sol::state_view lua, const std::string& name);
 
     Engine& engine_;
     Scheduler& scheduler_;

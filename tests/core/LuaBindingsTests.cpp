@@ -600,3 +600,42 @@ TEST_CASE("LuaBindings add_plugin returns nil when plugin not in cache")
     sol::object val = result;
     REQUIRE(val.get_type() == sol::type::lua_nil);
 }
+
+// ============================================================
+// MIDI input bindings
+// ============================================================
+
+TEST_CASE("LuaBindings list_midi_inputs returns a table")
+{
+    LuaFixture f;
+
+    auto result = f.lua.safe_script("return sq.list_midi_inputs()", sol::script_pass_on_error);
+    REQUIRE(result.valid());
+
+    sol::table list = result;
+    // We can't know how many devices are available, but it should be a valid table
+    REQUIRE(list.size() >= 0);
+}
+
+TEST_CASE("LuaBindings add_midi_input returns nil and error for nonexistent device")
+{
+    LuaFixture f;
+
+    auto result = f.lua.safe_script(
+        "local v, err = sq.add_midi_input('Nonexistent MIDI Device 12345')\n"
+        "return v, err",
+        sol::script_pass_on_error);
+    REQUIRE(result.valid());
+
+    sol::object val = result;
+    REQUIRE(val.get_type() == sol::type::lua_nil);
+}
+
+TEST_CASE("LuaBindings bind creates sq table with MIDI input functions")
+{
+    LuaFixture f;
+
+    sol::table sq = f.lua["sq"];
+    REQUIRE(sq["list_midi_inputs"].get_type() == sol::type::function);
+    REQUIRE(sq["add_midi_input"].get_type() == sol::type::function);
+}

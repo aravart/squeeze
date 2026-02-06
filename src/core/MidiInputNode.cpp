@@ -1,0 +1,109 @@
+#include "core/MidiInputNode.h"
+#include "core/Logger.h"
+
+namespace squeeze {
+
+MidiInputNode::MidiInputNode(const std::string& deviceName,
+                             const juce::String& deviceIdentifier)
+    : deviceName_(deviceName)
+{
+    device_ = juce::MidiInput::openDevice(deviceIdentifier, this);
+    if (device_)
+    {
+        device_->start();
+        SQ_LOG("MidiInputNode: opened device '%s'", deviceName_.c_str());
+    }
+    else
+    {
+        SQ_LOG("MidiInputNode: failed to open device '%s'", deviceName_.c_str());
+    }
+}
+
+MidiInputNode::~MidiInputNode()
+{
+    if (device_)
+    {
+        device_->stop();
+        SQ_LOG("MidiInputNode: closed device '%s'", deviceName_.c_str());
+    }
+}
+
+std::unique_ptr<MidiInputNode> MidiInputNode::create(const std::string& deviceName,
+                                                      std::string& errorMessage)
+{
+    auto devices = juce::MidiInput::getAvailableDevices();
+
+    for (const auto& dev : devices)
+    {
+        if (dev.name.toStdString() == deviceName)
+        {
+            auto node = std::make_unique<MidiInputNode>(deviceName, dev.identifier);
+            if (!node->device_)
+            {
+                errorMessage = "Failed to open MIDI device '" + deviceName + "'";
+                return nullptr;
+            }
+            return node;
+        }
+    }
+
+    errorMessage = "MIDI device '" + deviceName + "' not found";
+    return nullptr;
+}
+
+void MidiInputNode::prepare(double /*sampleRate*/, int /*blockSize*/)
+{
+}
+
+void MidiInputNode::process(ProcessContext& context)
+{
+    context.outputMidi.clear();
+
+    MidiEvent event;
+    while (midiQueue_.tryPop(event))
+    {
+        context.outputMidi.addEvent(event.data, event.size, 0);
+    }
+}
+
+void MidiInputNode::release()
+{
+}
+
+std::vector<PortDescriptor> MidiInputNode::getInputPorts() const
+{
+    return {};
+}
+
+std::vector<PortDescriptor> MidiInputNode::getOutputPorts() const
+{
+    return {{"midi_out", PortDirection::output, SignalType::midi, 1}};
+}
+
+const std::string& MidiInputNode::getDeviceName() const
+{
+    return deviceName_;
+}
+
+void MidiInputNode::handleIncomingMidiMessage(juce::MidiInput* /*source*/,
+                                               const juce::MidiMessage& message)
+{
+    // Skip SysEx (too large for fixed-size queue entry)
+    if (message.isSysEx())
+        return;
+
+    int size = message.getRawDataSize();
+    if (size < 1 || size > 3)
+        return;
+
+    MidiEvent event;
+    event.size = size;
+    auto* raw = message.getRawData();
+    for (int i = 0; i < size; ++i)
+        event.data[i] = raw[i];
+
+    // Drop on overflow (lock-free, no block)
+    midiQueue_.tryPush(event);
+}
+
+} // namespace squeeze

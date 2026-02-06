@@ -96,6 +96,14 @@ void LuaBindings::bind(sol::state& lua)
     sq.set_function("connections", [this](sol::this_state s) {
         return luaConnections(sol::state_view(s));
     });
+
+    sq.set_function("list_midi_inputs", [this](sol::this_state s) {
+        return luaListMidiInputs(sol::state_view(s));
+    });
+
+    sq.set_function("add_midi_input", [this](sol::this_state s, const std::string& name) {
+        return luaAddMidiInput(sol::state_view(s), name);
+    });
 }
 
 // ============================================================
@@ -321,6 +329,33 @@ sol::table LuaBindings::luaConnections(sol::state_view lua)
         result[i + 1] = c;
     }
     return result;
+}
+
+sol::table LuaBindings::luaListMidiInputs(sol::state_view lua)
+{
+    sol::table result = lua.create_table();
+    auto devices = juce::MidiInput::getAvailableDevices();
+    for (int i = 0; i < devices.size(); ++i)
+        result[i + 1] = devices[i].name.toStdString();
+    return result;
+}
+
+std::tuple<sol::object, sol::object> LuaBindings::luaAddMidiInput(
+    sol::state_view lua, const std::string& name)
+{
+    SQ_LOG("luaAddMidiInput: %s", name.c_str());
+
+    std::string errorMessage;
+    auto midiNode = MidiInputNode::create(name, errorMessage);
+    if (!midiNode)
+        return {sol::lua_nil, sol::make_object(lua, errorMessage)};
+
+    Node* raw = midiNode.get();
+    int id = graph_.addNode(raw);
+    ownedNodes_[id] = std::move(midiNode);
+    nodeNames_[id] = name;
+
+    return {sol::make_object(lua, id), sol::lua_nil};
 }
 
 } // namespace squeeze
