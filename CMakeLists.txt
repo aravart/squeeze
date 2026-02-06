@@ -93,6 +93,7 @@ target_compile_definitions(squeeze_core PUBLIC
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
     JUCE_DISPLAY_SPLASH_SCREEN=0
+    JUCE_PLUGINHOST_VST3=1
 )
 
 # --- Squeeze Lua Library ---
