@@ -4,7 +4,7 @@
 
 namespace squeeze {
 
-std::atomic<bool> Logger::enabled_{false};
+std::atomic<int> Logger::level_{0};
 SPSCQueue<LogEntry, 1024> Logger::rtQueue_;
 std::chrono::steady_clock::time_point Logger::startTime_ = std::chrono::steady_clock::now();
 
@@ -27,9 +27,12 @@ long Logger::elapsedMs()
     return static_cast<long>(ms.count());
 }
 
-void Logger::enable()  { enabled_.store(true, std::memory_order_relaxed); }
-void Logger::disable() { enabled_.store(false, std::memory_order_relaxed); }
-bool Logger::isEnabled() { return enabled_.load(std::memory_order_relaxed); }
+void Logger::enable()    { level_.store(static_cast<int>(LogLevel::debug), std::memory_order_relaxed); }
+void Logger::disable()   { level_.store(static_cast<int>(LogLevel::off), std::memory_order_relaxed); }
+bool Logger::isEnabled() { return level_.load(std::memory_order_relaxed) >= static_cast<int>(LogLevel::debug); }
+
+void Logger::setLevel(LogLevel level) { level_.store(static_cast<int>(level), std::memory_order_relaxed); }
+LogLevel Logger::getLevel() { return static_cast<LogLevel>(level_.load(std::memory_order_relaxed)); }
 
 void Logger::log(const char* file, int line, const char* fmt, ...)
 {

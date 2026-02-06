@@ -15,11 +15,16 @@ struct LogEntry {
     char message[256];
 };
 
+// Log levels: 0 = off, 1 = debug (-d), 2 = trace (-dd)
+enum class LogLevel : int { off = 0, debug = 1, trace = 2 };
+
 class Logger {
 public:
-    static void enable();
-    static void disable();
-    static bool isEnabled();
+    static void enable();                   // sets level to debug
+    static void disable();                  // sets level to off
+    static bool isEnabled();                // true if level >= debug
+    static void setLevel(LogLevel level);
+    static LogLevel getLevel();
 
     // Control thread: formats and writes directly to stderr
     static void log(const char* file, int line, const char* fmt, ...);
@@ -33,9 +38,13 @@ public:
 
 } // namespace squeeze
 
-// Macros (short-circuit when disabled)
+// Macros — debug level (short-circuit when disabled)
 #define SQ_LOG(fmt, ...)    do { if (squeeze::Logger::isEnabled()) squeeze::Logger::log(__FILE__, __LINE__, fmt, ##__VA_ARGS__); } while(0)
 #define SQ_LOG_RT(fmt, ...) do { if (squeeze::Logger::isEnabled()) squeeze::Logger::logRT(__FILE__, __LINE__, fmt, ##__VA_ARGS__); } while(0)
+
+// Macros — trace level (short-circuit when level < trace)
+#define SQ_LOG_TRACE(fmt, ...)    do { if (squeeze::Logger::getLevel() >= squeeze::LogLevel::trace) squeeze::Logger::log(__FILE__, __LINE__, fmt, ##__VA_ARGS__); } while(0)
+#define SQ_LOG_RT_TRACE(fmt, ...) do { if (squeeze::Logger::getLevel() >= squeeze::LogLevel::trace) squeeze::Logger::logRT(__FILE__, __LINE__, fmt, ##__VA_ARGS__); } while(0)
 ```
 
 ## Invariants
@@ -63,7 +72,6 @@ public:
 - `log()`/`logRT()` when disabled: macros short-circuit, no formatting occurs
 
 ## Does NOT Handle
-- Log levels (info/warn/error) — everything is debug-level
 - Log file output — stderr only
 - Log rotation or size limits
 - Thread identification beyond CT/RT tags
@@ -83,13 +91,17 @@ public:
 
 ```cpp
 // In main.cpp
-Logger::enable();
+Logger::setLevel(LogLevel::debug);  // -d flag
+Logger::setLevel(LogLevel::trace);  // -dd flag
 
-// In Engine.cpp (control thread)
+// In Engine.cpp (control thread) — fires at debug level
 SQ_LOG("updateGraph: %d nodes", graph.getNodeCount());
 
-// In Engine.cpp (audio thread, inside processBlock)
+// In Engine.cpp (audio thread, inside processBlock) — fires at debug level
 SQ_LOG_RT("snapshot swap");
+
+// In MidiInputNode.cpp — fires only at trace level
+SQ_LOG_RT_TRACE("MIDI [%s] note-on ch=%d note=%d vel=%d", ...);
 
 // In main loop
 Logger::drain();

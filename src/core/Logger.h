@@ -13,11 +13,16 @@ struct LogEntry {
     char message[256];
 };
 
+// Log levels: 0 = off, 1 = debug (-d), 2 = trace (-dd)
+enum class LogLevel : int { off = 0, debug = 1, trace = 2 };
+
 class Logger {
 public:
-    static void enable();
-    static void disable();
-    static bool isEnabled();
+    static void enable();                   // sets level to debug
+    static void disable();                  // sets level to off
+    static bool isEnabled();                // true if level >= debug
+    static void setLevel(LogLevel level);
+    static LogLevel getLevel();
 
     // Control thread: formats and writes directly to stderr
     static void log(const char* file, int line, const char* fmt, ...);
@@ -31,7 +36,7 @@ public:
 private:
     static long elapsedMs();
 
-    static std::atomic<bool> enabled_;
+    static std::atomic<int> level_;
     static SPSCQueue<LogEntry, 1024> rtQueue_;
     static std::chrono::steady_clock::time_point startTime_;
 };
@@ -43,3 +48,9 @@ private:
 
 #define SQ_LOG_RT(fmt, ...) \
     do { if (squeeze::Logger::isEnabled()) squeeze::Logger::logRT(__FILE__, __LINE__, fmt, ##__VA_ARGS__); } while(0)
+
+#define SQ_LOG_TRACE(fmt, ...) \
+    do { if (squeeze::Logger::getLevel() >= squeeze::LogLevel::trace) squeeze::Logger::log(__FILE__, __LINE__, fmt, ##__VA_ARGS__); } while(0)
+
+#define SQ_LOG_RT_TRACE(fmt, ...) \
+    do { if (squeeze::Logger::getLevel() >= squeeze::LogLevel::trace) squeeze::Logger::logRT(__FILE__, __LINE__, fmt, ##__VA_ARGS__); } while(0)

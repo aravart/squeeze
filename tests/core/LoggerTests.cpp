@@ -106,3 +106,63 @@ TEST_CASE("Long messages are truncated safely")
 
     Logger::disable();
 }
+
+TEST_CASE("Logger setLevel and getLevel")
+{
+    Logger::disable();
+    REQUIRE(Logger::getLevel() == LogLevel::off);
+
+    Logger::setLevel(LogLevel::debug);
+    REQUIRE(Logger::getLevel() == LogLevel::debug);
+    REQUIRE(Logger::isEnabled());
+
+    Logger::setLevel(LogLevel::trace);
+    REQUIRE(Logger::getLevel() == LogLevel::trace);
+    REQUIRE(Logger::isEnabled());
+
+    Logger::setLevel(LogLevel::off);
+    REQUIRE(Logger::getLevel() == LogLevel::off);
+    REQUIRE_FALSE(Logger::isEnabled());
+}
+
+TEST_CASE("enable sets level to debug")
+{
+    Logger::disable();
+    Logger::enable();
+    REQUIRE(Logger::getLevel() == LogLevel::debug);
+    Logger::disable();
+}
+
+TEST_CASE("SQ_LOG_TRACE is a no-op at debug level")
+{
+    Logger::setLevel(LogLevel::debug);
+    Logger::drain();
+
+    // Should not push anything to the queue
+    SQ_LOG_RT_TRACE("this should not appear: %d", 42);
+
+    // Drain should have nothing new — we can't directly count entries,
+    // but at least verify it doesn't crash
+    Logger::drain();
+    Logger::disable();
+}
+
+TEST_CASE("SQ_LOG_TRACE fires at trace level")
+{
+    Logger::setLevel(LogLevel::trace);
+    Logger::drain();
+
+    SQ_LOG_TRACE("trace CT message: %d", 99);
+    SQ_LOG_RT_TRACE("trace RT message: %d", 100);
+    Logger::drain();  // should write without crashing
+
+    Logger::disable();
+}
+
+TEST_CASE("SQ_LOG_TRACE is a no-op when logging is off")
+{
+    Logger::disable();
+    SQ_LOG_TRACE("should not appear: %d", 1);
+    SQ_LOG_RT_TRACE("should not appear: %d", 2);
+    Logger::drain();
+}

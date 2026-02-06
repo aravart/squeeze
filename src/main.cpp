@@ -159,6 +159,7 @@ static void printUsage()
               << "  -i          Interactive mode (REPL)\n"
               << "  -c FILE     Plugin cache XML file\n"
               << "  -d          Enable debug logging to stderr\n"
+              << "  -dd         Enable trace logging (includes per-message MIDI)\n"
               << "  -h, --help  Show this help\n"
               << "\n"
               << "With no arguments, runs the engine until Ctrl+C.\n"
@@ -173,15 +174,17 @@ int main(int argc, char* argv[])
     std::string scriptPath;
     std::string cachePath;
     bool interactive = false;
-    bool debug = false;
+    LogLevel logLevel = LogLevel::off;
 
     for (int i = 1; i < argc; ++i)
     {
         std::string arg = argv[i];
         if (arg == "-i")
             interactive = true;
+        else if (arg == "-dd")
+            logLevel = LogLevel::trace;
         else if (arg == "-d" || arg == "--debug")
-            debug = true;
+            logLevel = std::max(logLevel, LogLevel::debug);
         else if (arg == "-c" && i + 1 < argc)
             cachePath = argv[++i];
         else if (arg == "-h" || arg == "--help")
@@ -199,10 +202,10 @@ int main(int argc, char* argv[])
             scriptPath = arg;
     }
 
-    if (debug)
+    if (logLevel != LogLevel::off)
     {
-        Logger::enable();
-        SQ_LOG("debug logging enabled");
+        Logger::setLevel(logLevel);
+        SQ_LOG("debug logging enabled (level %d)", static_cast<int>(logLevel));
     }
 
     // Create engine components

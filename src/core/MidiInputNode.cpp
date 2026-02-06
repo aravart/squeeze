@@ -106,31 +106,31 @@ void MidiInputNode::handleIncomingMidiMessage(juce::MidiInput* /*source*/,
     midiQueue_.tryPush(event);
 
     if (message.isNoteOn())
-        SQ_LOG_RT("MIDI [%s] note-on  ch=%d note=%d vel=%d",
+        SQ_LOG_RT_TRACE("MIDI [%s] note-on  ch=%d note=%d vel=%d",
                   deviceName_.c_str(), message.getChannel(),
                   message.getNoteNumber(), (int)message.getVelocity());
     else if (message.isNoteOff())
-        SQ_LOG_RT("MIDI [%s] note-off ch=%d note=%d",
+        SQ_LOG_RT_TRACE("MIDI [%s] note-off ch=%d note=%d",
                   deviceName_.c_str(), message.getChannel(),
                   message.getNoteNumber());
     else if (message.isController())
-        SQ_LOG_RT("MIDI [%s] cc       ch=%d cc=%d val=%d",
+        SQ_LOG_RT_TRACE("MIDI [%s] cc       ch=%d cc=%d val=%d",
                   deviceName_.c_str(), message.getChannel(),
                   message.getControllerNumber(), message.getControllerValue());
     else if (message.isPitchWheel())
-        SQ_LOG_RT("MIDI [%s] pitch    ch=%d val=%d",
+        SQ_LOG_RT_TRACE("MIDI [%s] pitch    ch=%d val=%d",
                   deviceName_.c_str(), message.getChannel(),
                   message.getPitchWheelValue());
     else if (message.isChannelPressure())
-        SQ_LOG_RT("MIDI [%s] pressure ch=%d val=%d",
+        SQ_LOG_RT_TRACE("MIDI [%s] pressure ch=%d val=%d",
                   deviceName_.c_str(), message.getChannel(),
                   message.getChannelPressureValue());
     else if (message.isProgramChange())
-        SQ_LOG_RT("MIDI [%s] pgm      ch=%d pgm=%d",
+        SQ_LOG_RT_TRACE("MIDI [%s] pgm      ch=%d pgm=%d",
                   deviceName_.c_str(), message.getChannel(),
                   message.getProgramChangeNumber());
     else
-        SQ_LOG_RT("MIDI [%s] status=0x%02x size=%d",
+        SQ_LOG_RT_TRACE("MIDI [%s] status=0x%02x size=%d",
                   deviceName_.c_str(), (unsigned)event.data[0], size);
 }
 
