@@ -61,6 +61,8 @@ add_library(squeeze_core STATIC
     src/core/Graph.cpp
     src/core/Scheduler.cpp
     src/core/Engine.cpp
+    src/core/PluginCache.cpp
+    src/core/PluginNode.cpp
 )
 
 target_include_directories(squeeze_core PUBLIC src)
@@ -69,6 +71,7 @@ target_link_libraries(squeeze_core PUBLIC
     juce::juce_core
     juce::juce_audio_basics
     juce::juce_audio_devices
+    juce::juce_audio_processors
     juce::juce_events
 )
 
@@ -85,6 +88,7 @@ add_executable(squeeze_tests
     tests/core/GraphTests.cpp
     tests/core/SchedulerTests.cpp
     tests/core/EngineTests.cpp
+    tests/core/PluginNodeTests.cpp
 )
 
 target_link_libraries(squeeze_tests PRIVATE
