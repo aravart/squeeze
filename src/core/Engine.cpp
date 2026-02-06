@@ -1,6 +1,7 @@
 #include "core/Engine.h"
 
 #include <unordered_map>
+#include <unordered_set>
 
 namespace squeeze {
 
@@ -101,7 +102,7 @@ GraphSnapshot* Engine::buildSnapshot(const Graph& graph,
             }
         }
 
-        snap->slots.push_back({node, audioSrc, midiSrc});
+        snap->slots.push_back({node, audioSrc, midiSrc, false});
 
         // Determine output channel count from this node's output ports
         int outChannels = 2;
@@ -123,6 +124,29 @@ GraphSnapshot* Engine::buildSnapshot(const Graph& graph,
 
     snap->silenceBuffer.setSize(maxChannels, blockSize);
     snap->silenceBuffer.clear();
+
+    // Determine which slots are audio leaves (no other slot reads their audio output)
+    std::unordered_set<int> hasAudioConsumer;
+    for (const auto& slot : snap->slots)
+    {
+        if (slot.audioSourceIndex >= 0)
+            hasAudioConsumer.insert(slot.audioSourceIndex);
+    }
+
+    for (int i = 0; i < (int)snap->slots.size(); ++i)
+    {
+        // A leaf is a node that has an audio output port but no one reads it
+        bool hasAudioOutput = false;
+        for (const auto& p : snap->slots[i].node->getOutputPorts())
+        {
+            if (p.signalType == SignalType::audio)
+            {
+                hasAudioOutput = true;
+                break;
+            }
+        }
+        snap->slots[i].isAudioLeaf = hasAudioOutput && !hasAudioConsumer.count(i);
+    }
 
     return snap;
 }
@@ -190,20 +214,22 @@ void Engine::processBlock(juce::AudioBuffer<float>& outputBuffer,
         slot.node->process(ctx);
     }
 
-    // 4. Copy last node's output to device output
-    int lastIdx = (int)snap.slots.size() - 1;
-    auto& lastAudio = snap.audioOutputs[lastIdx];
+    // 4. Sum all audio leaf nodes to device output
+    outputBuffer.clear();
+    outputMidi.clear();
 
-    int chToCopy = std::min(outputBuffer.getNumChannels(),
-                            lastAudio.getNumChannels());
-    for (int ch = 0; ch < chToCopy; ++ch)
-        outputBuffer.copyFrom(ch, 0, lastAudio, ch, 0, numSamples);
+    for (int i = 0; i < (int)snap.slots.size(); ++i)
+    {
+        if (!snap.slots[i].isAudioLeaf)
+            continue;
 
-    // Clear any extra output channels
-    for (int ch = chToCopy; ch < outputBuffer.getNumChannels(); ++ch)
-        outputBuffer.clear(ch, 0, numSamples);
-
-    outputMidi = snap.midiOutputs[lastIdx];
+        auto& leafAudio = snap.audioOutputs[i];
+        int chToAdd = std::min(outputBuffer.getNumChannels(),
+                               leafAudio.getNumChannels());
+        for (int ch = 0; ch < chToAdd; ++ch)
+            for (int s = 0; s < numSamples; ++s)
+                outputBuffer.addSample(ch, s, leafAudio.getSample(ch, s));
+    }
 }
 
 // JUCE AudioIODeviceCallback

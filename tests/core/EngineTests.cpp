@@ -312,6 +312,104 @@ TEST_CASE("Engine handles MIDI source -> synth -> effect chain")
 }
 
 // ============================================================
+// Parallel branches (leaf node summing)
+// ============================================================
+
+TEST_CASE("Two parallel source nodes are summed to output")
+{
+    Scheduler sched;
+    Engine engine(sched);
+    engine.prepareForTesting(44100.0, 64);
+
+    ConstNode source1(0.3f);
+    ConstNode source2(0.4f);
+    source1.prepare(44100.0, 64);
+    source2.prepare(44100.0, 64);
+
+    Graph graph;
+    graph.addNode(&source1);
+    graph.addNode(&source2);
+    // No connections — both are leaf nodes
+
+    engine.updateGraph(graph);
+
+    juce::AudioBuffer<float> output(2, 64);
+    runBlock(engine, sched, output, 64);
+
+    // 0.3 + 0.4 = 0.7
+    for (int ch = 0; ch < 2; ++ch)
+        for (int i = 0; i < 64; ++i)
+            REQUIRE_THAT(output.getSample(ch, i), WithinAbs(0.7f, 1e-6));
+}
+
+TEST_CASE("Only leaf nodes contribute to output, not mid-chain nodes")
+{
+    Scheduler sched;
+    Engine engine(sched);
+    engine.prepareForTesting(44100.0, 64);
+
+    ConstNode source(1.0f);
+    TestGainNode gain(0.5f);
+    source.prepare(44100.0, 64);
+    gain.prepare(44100.0, 64);
+
+    Graph graph;
+    int srcId = graph.addNode(&source);
+    int gainId = graph.addNode(&gain);
+    graph.connect({srcId, PortDirection::output, "out"},
+                  {gainId, PortDirection::input, "in"});
+
+    engine.updateGraph(graph);
+
+    juce::AudioBuffer<float> output(2, 64);
+    runBlock(engine, sched, output, 64);
+
+    // Only the gain node is a leaf. source is consumed by gain.
+    // Output should be 0.5, NOT 1.0 + 0.5 = 1.5
+    for (int ch = 0; ch < 2; ++ch)
+        for (int i = 0; i < 64; ++i)
+            REQUIRE_THAT(output.getSample(ch, i), WithinAbs(0.5f, 1e-6));
+}
+
+TEST_CASE("Parallel chains are summed: two independent chains")
+{
+    Scheduler sched;
+    Engine engine(sched);
+    engine.prepareForTesting(44100.0, 64);
+
+    // Chain 1: source(1.0) -> gain(0.25) => 0.25
+    // Chain 2: source(0.5) -> gain(0.5) => 0.25
+    // Output: 0.25 + 0.25 = 0.5
+    ConstNode src1(1.0f);
+    TestGainNode gain1(0.25f);
+    ConstNode src2(0.5f);
+    TestGainNode gain2(0.5f);
+    src1.prepare(44100.0, 64);
+    gain1.prepare(44100.0, 64);
+    src2.prepare(44100.0, 64);
+    gain2.prepare(44100.0, 64);
+
+    Graph graph;
+    int s1 = graph.addNode(&src1);
+    int g1 = graph.addNode(&gain1);
+    int s2 = graph.addNode(&src2);
+    int g2 = graph.addNode(&gain2);
+    graph.connect({s1, PortDirection::output, "out"},
+                  {g1, PortDirection::input, "in"});
+    graph.connect({s2, PortDirection::output, "out"},
+                  {g2, PortDirection::input, "in"});
+
+    engine.updateGraph(graph);
+
+    juce::AudioBuffer<float> output(2, 64);
+    runBlock(engine, sched, output, 64);
+
+    for (int ch = 0; ch < 2; ++ch)
+        for (int i = 0; i < 64; ++i)
+            REQUIRE_THAT(output.getSample(ch, i), WithinAbs(0.5f, 1e-6));
+}
+
+// ============================================================
 // Graph update while running
 // ============================================================
 

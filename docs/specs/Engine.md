@@ -14,6 +14,7 @@ struct GraphSnapshot {
         Node* node;
         int audioSourceIndex;  // index in slots for audio input, or -1 (silence)
         int midiSourceIndex;   // index in slots for MIDI input, or -1 (empty)
+        bool isAudioLeaf;      // true if no other node reads this node's audio output
     };
 
     std::vector<NodeSlot> slots;  // in execution order
@@ -82,7 +83,7 @@ public:
    - Resolve MIDI input: source slot's `midiOutputs[i]` or `emptyMidi`
    - Clear this slot's output buffers
    - Call `node->process(context)`
-4. **Copy to device output**: last slot's audio output goes to the device buffer. If no slots, silence.
+4. **Sum leaf nodes to device output**: all audio leaf nodes (nodes with an audio output that no other node reads) have their outputs summed to the device buffer. This means parallel branches (e.g., two independent synths) are both heard. Mid-chain nodes are not double-counted. If no leaf nodes, silence.
 
 ## Building a Snapshot (updateGraph)
 
@@ -90,7 +91,8 @@ public:
 2. Map node IDs to slot indices
 3. For each node in order, find which source slot feeds its audio and MIDI inputs
 4. Pre-allocate output buffers sized to each node's output channel count
-5. Send snapshot via Scheduler `swapGraph` command
+5. Mark each slot as `isAudioLeaf` if it has an audio output port but no other slot reads from it
+6. Send snapshot via Scheduler `swapGraph` command
 
 ## Invariants
 
