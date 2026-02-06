@@ -58,6 +58,7 @@ FetchContent_MakeAvailable(Catch2)
 # --- Squeeze Core Library ---
 add_library(squeeze_core STATIC
     src/core/Port.cpp
+    src/core/Graph.cpp
 )
 
 target_include_directories(squeeze_core PUBLIC src)
@@ -77,6 +78,7 @@ target_compile_definitions(squeeze_core PUBLIC
 add_executable(squeeze_tests
     tests/core/PortTests.cpp
     tests/core/NodeTests.cpp
+    tests/core/GraphTests.cpp
 )
 
 target_link_libraries(squeeze_tests PRIVATE
