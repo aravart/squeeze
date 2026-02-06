@@ -1,5 +1,7 @@
 #include "core/Engine.h"
 #include "core/Logger.h"
+#include "core/MidiInputNode.h"
+#include "core/PluginNode.h"
 
 #include <unordered_map>
 #include <unordered_set>
@@ -9,6 +11,7 @@ namespace squeeze {
 Engine::Engine(Scheduler& scheduler)
     : scheduler_(scheduler)
 {
+    formatManager_.addDefaultFormats();
 }
 
 Engine::~Engine()
@@ -42,6 +45,252 @@ void Engine::prepareForTesting(double sampleRate, int blockSize)
     blockSize_.store(blockSize);
 }
 
+Graph& Engine::getGraph()
+{
+    return graph_;
+}
+
+// ============================================================
+// Plugin cache
+// ============================================================
+
+bool Engine::loadPluginCache(const std::string& xmlPath)
+{
+    return cache_.loadFromFile(juce::File(xmlPath));
+}
+
+std::vector<std::string> Engine::getAvailablePluginNames() const
+{
+    auto names = cache_.getAvailablePluginNames();
+    std::vector<std::string> result;
+    result.reserve(names.size());
+    for (const auto& n : names)
+        result.push_back(n.toStdString());
+    return result;
+}
+
+const juce::PluginDescription* Engine::findPluginByName(const std::string& name) const
+{
+    return cache_.findByName(juce::String(name));
+}
+
+// ============================================================
+// Node management
+// ============================================================
+
+int Engine::addNode(std::unique_ptr<Node> node, const std::string& name)
+{
+    Node* raw = node.get();
+    int id = graph_.addNode(raw);
+    ownedNodes_[id] = std::move(node);
+    nodeNames_[id] = name;
+    return id;
+}
+
+bool Engine::removeNode(int id)
+{
+    SQ_LOG("removeNode: id=%d", id);
+    auto it = ownedNodes_.find(id);
+    if (it == ownedNodes_.end())
+        return false;
+
+    graph_.removeNode(id);
+
+    // Remove from midiDeviceNodes_ if present
+    for (auto mit = midiDeviceNodes_.begin(); mit != midiDeviceNodes_.end(); ++mit)
+    {
+        if (mit->second == id)
+        {
+            midiDeviceNodes_.erase(mit);
+            break;
+        }
+    }
+
+    // Defer destruction for RT safety
+    pendingDeletions_.push_back(std::move(it->second));
+    ownedNodes_.erase(it);
+    nodeNames_.erase(id);
+
+    // Push updated graph so audio thread stops referencing removed node
+    updateGraph();
+
+    return true;
+}
+
+Node* Engine::getNode(int id) const
+{
+    return graph_.getNode(id);
+}
+
+std::string Engine::getNodeName(int id) const
+{
+    auto it = nodeNames_.find(id);
+    return (it != nodeNames_.end()) ? it->second : "";
+}
+
+std::vector<std::pair<int, std::string>> Engine::getNodes() const
+{
+    std::vector<std::pair<int, std::string>> result;
+    for (const auto& kv : ownedNodes_)
+    {
+        auto nameIt = nodeNames_.find(kv.first);
+        std::string name = (nameIt != nodeNames_.end()) ? nameIt->second : "unknown";
+        result.push_back({kv.first, name});
+    }
+    return result;
+}
+
+// ============================================================
+// Plugin instantiation
+// ============================================================
+
+int Engine::addPlugin(const std::string& name, std::string& errorMessage)
+{
+    SQ_LOG("addPlugin: %s", name.c_str());
+    auto* desc = cache_.findByName(juce::String(name));
+    if (!desc)
+    {
+        errorMessage = "Plugin '" + name + "' not found in cache";
+        return -1;
+    }
+
+    double sr = getSampleRate();
+    int bs = getBlockSize();
+    if (sr <= 0.0) sr = 44100.0;
+    if (bs <= 0) bs = 512;
+
+    juce::String juceError;
+    auto pluginNode = PluginNode::create(*desc, formatManager_, sr, bs, juceError);
+    if (!pluginNode)
+    {
+        errorMessage = "Failed to create plugin: " + juceError.toStdString();
+        return -1;
+    }
+
+    return addNode(std::move(pluginNode), name);
+}
+
+// ============================================================
+// MIDI input management
+// ============================================================
+
+std::vector<std::string> Engine::getAvailableMidiInputs() const
+{
+    std::vector<std::string> result;
+    auto devices = juce::MidiInput::getAvailableDevices();
+    for (int i = 0; i < devices.size(); ++i)
+        result.push_back(devices[i].name.toStdString());
+    return result;
+}
+
+int Engine::addMidiInput(const std::string& deviceName, std::string& errorMessage)
+{
+    SQ_LOG("addMidiInput: %s", deviceName.c_str());
+
+    auto midiNode = MidiInputNode::create(deviceName, errorMessage);
+    if (!midiNode)
+        return -1;
+
+    int id = addNode(std::move(midiNode), deviceName);
+    midiDeviceNodes_[deviceName] = id;
+    return id;
+}
+
+void Engine::autoLoadMidiInputs()
+{
+    auto devices = juce::MidiInput::getAvailableDevices();
+    for (int i = 0; i < devices.size(); ++i)
+    {
+        std::string name = devices[i].name.toStdString();
+        if (midiDeviceNodes_.find(name) == midiDeviceNodes_.end())
+        {
+            std::string err;
+            int id = addMidiInput(name, err);
+            if (id >= 0)
+                SQ_LOG("autoLoadMidiInputs: loaded '%s' as node %d", name.c_str(), id);
+            else
+                SQ_LOG("autoLoadMidiInputs: failed '%s': %s", name.c_str(), err.c_str());
+        }
+    }
+}
+
+Engine::MidiRefreshResult Engine::refreshMidiInputs()
+{
+    MidiRefreshResult result;
+
+    // Build set of currently available device names
+    auto devices = juce::MidiInput::getAvailableDevices();
+    std::unordered_set<std::string> currentDeviceNames;
+    for (int i = 0; i < devices.size(); ++i)
+        currentDeviceNames.insert(devices[i].name.toStdString());
+
+    // Find new devices (available but not yet loaded)
+    for (const auto& name : currentDeviceNames)
+    {
+        if (midiDeviceNodes_.find(name) == midiDeviceNodes_.end())
+        {
+            std::string err;
+            int id = addMidiInput(name, err);
+            if (id >= 0)
+                result.added.push_back(name);
+        }
+    }
+
+    // Find disappeared devices (loaded but no longer available)
+    for (const auto& kv : midiDeviceNodes_)
+    {
+        if (currentDeviceNames.find(kv.first) == currentDeviceNames.end())
+            result.removed.push_back(kv.first);
+    }
+
+    // Push updated graph if anything changed
+    if (!result.added.empty())
+        updateGraph();
+
+    return result;
+}
+
+// ============================================================
+// Graph topology
+// ============================================================
+
+int Engine::connect(int srcId, const std::string& srcPort,
+                    int dstId, const std::string& dstPort, std::string& error)
+{
+    SQ_LOG("connect: %d:%s -> %d:%s", srcId, srcPort.c_str(), dstId, dstPort.c_str());
+    PortAddress source{srcId, PortDirection::output, srcPort};
+    PortAddress dest{dstId, PortDirection::input, dstPort};
+
+    int connId = graph_.connect(source, dest);
+    if (connId < 0)
+    {
+        error = graph_.getLastError();
+        return -1;
+    }
+
+    return connId;
+}
+
+bool Engine::disconnect(int connId)
+{
+    SQ_LOG("disconnect: conn=%d", connId);
+    return graph_.disconnect(connId);
+}
+
+std::vector<Connection> Engine::getConnections() const
+{
+    return graph_.getConnections();
+}
+
+// ============================================================
+// Graph push
+// ============================================================
+
+void Engine::updateGraph()
+{
+    updateGraph(graph_);
+}
+
 void Engine::updateGraph(const Graph& graph)
 {
     SQ_LOG("updateGraph: %d nodes", graph.getNodeCount());
@@ -55,6 +304,42 @@ void Engine::updateGraph(const Graph& graph)
     cmd.ptr = snapshot;
     scheduler_.sendCommand(cmd);
 }
+
+// ============================================================
+// Parameters
+// ============================================================
+
+bool Engine::setParameter(int nodeId, const std::string& name, float value)
+{
+    Node* node = graph_.getNode(nodeId);
+    if (!node)
+        return false;
+
+    node->setParameter(name, value);
+    return true;
+}
+
+float Engine::getParameter(int nodeId, const std::string& name) const
+{
+    Node* node = graph_.getNode(nodeId);
+    if (!node)
+        return 0.0f;
+
+    return node->getParameter(name);
+}
+
+std::vector<std::string> Engine::getParameterNames(int nodeId) const
+{
+    Node* node = graph_.getNode(nodeId);
+    if (!node)
+        return {};
+
+    return node->getParameterNames();
+}
+
+// ============================================================
+// Snapshot building
+// ============================================================
 
 GraphSnapshot* Engine::buildSnapshot(const Graph& graph,
                                      double sampleRate, int blockSize)
@@ -158,6 +443,10 @@ GraphSnapshot* Engine::buildSnapshot(const Graph& graph,
 
     return snap;
 }
+
+// ============================================================
+// Audio processing
+// ============================================================
 
 void Engine::processBlock(juce::AudioBuffer<float>& outputBuffer,
                           juce::MidiBuffer& outputMidi,

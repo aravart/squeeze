@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include "core/Engine.h"
+#include "core/PluginNode.h"
 
 using namespace squeeze;
 using Catch::Matchers::WithinAbs;
@@ -540,4 +541,362 @@ TEST_CASE("prepareForTesting sets sample rate and block size")
 
     REQUIRE(engine.getSampleRate() == 48000.0);
     REQUIRE(engine.getBlockSize() == 256);
+}
+
+// ============================================================
+// Test processor for Engine node management tests
+// ============================================================
+
+class EngineTestProcessor : public juce::AudioProcessor {
+public:
+    EngineTestProcessor(int numIn, int numOut, bool midi)
+        : AudioProcessor(BusesProperties()
+            .withInput("Input", juce::AudioChannelSet::canonicalChannelSet(std::max(numIn, 1)), numIn > 0)
+            .withOutput("Output", juce::AudioChannelSet::canonicalChannelSet(std::max(numOut, 1)), numOut > 0))
+        , acceptsMidi_(midi)
+    {
+        addParameter(new juce::AudioParameterFloat(
+            juce::ParameterID{"gain", 1}, "Gain",
+            juce::NormalisableRange<float>(0.0f, 1.0f), 0.5f));
+    }
+
+    const juce::String getName() const override { return "EngineTestPlugin"; }
+    void prepareToPlay(double, int) override {}
+    void releaseResources() override {}
+    void processBlock(juce::AudioBuffer<float>& audio, juce::MidiBuffer&) override {
+        float gainVal = getParameters()[0]->getValue();
+        audio.applyGain(gainVal);
+    }
+    juce::AudioProcessorEditor* createEditor() override { return nullptr; }
+    bool hasEditor() const override { return false; }
+    int getNumPrograms() override { return 1; }
+    int getCurrentProgram() override { return 0; }
+    void setCurrentProgram(int) override {}
+    const juce::String getProgramName(int) override { return {}; }
+    void changeProgramName(int, const juce::String&) override {}
+    void getStateInformation(juce::MemoryBlock&) override {}
+    void setStateInformation(const void*, int) override {}
+    bool acceptsMidi() const override { return acceptsMidi_; }
+    bool producesMidi() const override { return false; }
+    double getTailLengthSeconds() const override { return 0.0; }
+
+private:
+    bool acceptsMidi_;
+};
+
+static std::unique_ptr<PluginNode> makeEngineTestNode(int numIn, int numOut, bool midi)
+{
+    auto proc = std::make_unique<EngineTestProcessor>(numIn, numOut, midi);
+    return std::make_unique<PluginNode>(std::move(proc), numIn, numOut, midi);
+}
+
+// ============================================================
+// Engine::addNode / getNode / getNodeName / getNodes
+// ============================================================
+
+TEST_CASE("Engine addNode adds a node and returns valid ID")
+{
+    Scheduler sched;
+    Engine engine(sched);
+    engine.prepareForTesting(44100.0, 512);
+
+    auto node = makeEngineTestNode(0, 2, true);
+    int id = engine.addNode(std::move(node), "MySynth");
+
+    REQUIRE(id >= 0);
+    REQUIRE(engine.getNode(id) != nullptr);
+    REQUIRE(engine.getNodeName(id) == "MySynth");
+}
+
+TEST_CASE("Engine getNodes returns all added nodes")
+{
+    Scheduler sched;
+    Engine engine(sched);
+    engine.prepareForTesting(44100.0, 512);
+
+    auto n1 = makeEngineTestNode(0, 2, true);
+    auto n2 = makeEngineTestNode(2, 2, false);
+    int id1 = engine.addNode(std::move(n1), "Synth");
+    int id2 = engine.addNode(std::move(n2), "FX");
+
+    auto nodes = engine.getNodes();
+    REQUIRE(nodes.size() == 2);
+
+    bool foundSynth = false, foundFX = false;
+    for (const auto& kv : nodes)
+    {
+        if (kv.first == id1 && kv.second == "Synth") foundSynth = true;
+        if (kv.first == id2 && kv.second == "FX") foundFX = true;
+    }
+    REQUIRE(foundSynth);
+    REQUIRE(foundFX);
+}
+
+TEST_CASE("Engine getNode returns nullptr for invalid ID")
+{
+    Scheduler sched;
+    Engine engine(sched);
+
+    REQUIRE(engine.getNode(9999) == nullptr);
+}
+
+TEST_CASE("Engine getNodeName returns empty string for invalid ID")
+{
+    Scheduler sched;
+    Engine engine(sched);
+
+    REQUIRE(engine.getNodeName(9999) == "");
+}
+
+// ============================================================
+// Engine::removeNode
+// ============================================================
+
+TEST_CASE("Engine removeNode removes a node")
+{
+    Scheduler sched;
+    Engine engine(sched);
+    engine.prepareForTesting(44100.0, 512);
+
+    auto node = makeEngineTestNode(0, 2, true);
+    int id = engine.addNode(std::move(node), "Synth");
+
+    REQUIRE(engine.removeNode(id));
+    REQUIRE(engine.getNode(id) == nullptr);
+    REQUIRE(engine.getNodes().empty());
+}
+
+TEST_CASE("Engine removeNode returns false for invalid ID")
+{
+    Scheduler sched;
+    Engine engine(sched);
+
+    REQUIRE_FALSE(engine.removeNode(9999));
+}
+
+// ============================================================
+// Engine::connect / disconnect / getConnections
+// ============================================================
+
+TEST_CASE("Engine connect creates a connection between nodes")
+{
+    Scheduler sched;
+    Engine engine(sched);
+    engine.prepareForTesting(44100.0, 512);
+
+    auto synth = makeEngineTestNode(0, 2, true);
+    auto fx = makeEngineTestNode(2, 2, false);
+    int synthId = engine.addNode(std::move(synth), "Synth");
+    int fxId = engine.addNode(std::move(fx), "FX");
+
+    std::string error;
+    int connId = engine.connect(synthId, "out", fxId, "in", error);
+    REQUIRE(connId >= 0);
+    REQUIRE(error.empty());
+
+    auto conns = engine.getConnections();
+    REQUIRE(conns.size() == 1);
+    REQUIRE(conns[0].source.nodeId == synthId);
+    REQUIRE(conns[0].dest.nodeId == fxId);
+}
+
+TEST_CASE("Engine connect returns -1 for invalid nodes")
+{
+    Scheduler sched;
+    Engine engine(sched);
+
+    std::string error;
+    int connId = engine.connect(999, "out", 888, "in", error);
+    REQUIRE(connId < 0);
+    REQUIRE_FALSE(error.empty());
+}
+
+TEST_CASE("Engine disconnect removes a connection")
+{
+    Scheduler sched;
+    Engine engine(sched);
+    engine.prepareForTesting(44100.0, 512);
+
+    auto synth = makeEngineTestNode(0, 2, true);
+    auto fx = makeEngineTestNode(2, 2, false);
+    int synthId = engine.addNode(std::move(synth), "Synth");
+    int fxId = engine.addNode(std::move(fx), "FX");
+
+    std::string error;
+    int connId = engine.connect(synthId, "out", fxId, "in", error);
+    REQUIRE(connId >= 0);
+
+    REQUIRE(engine.disconnect(connId));
+    REQUIRE(engine.getConnections().empty());
+}
+
+TEST_CASE("Engine disconnect returns false for invalid connection ID")
+{
+    Scheduler sched;
+    Engine engine(sched);
+
+    REQUIRE_FALSE(engine.disconnect(9999));
+}
+
+// ============================================================
+// Engine::updateGraph (no-arg) pushes internal graph
+// ============================================================
+
+TEST_CASE("Engine updateGraph no-arg pushes internal graph to audio thread")
+{
+    Scheduler sched;
+    Engine engine(sched);
+    engine.prepareForTesting(44100.0, 64);
+
+    // Add a ConstNode via the owned-node API
+    auto constNode = std::make_unique<ConstNode>(0.6f);
+    constNode->prepare(44100.0, 64);
+    engine.addNode(std::move(constNode), "Source");
+
+    engine.updateGraph();
+
+    juce::AudioBuffer<float> output(2, 64);
+    juce::MidiBuffer midi;
+    engine.processBlock(output, midi, 64);
+
+    REQUIRE_THAT(output.getSample(0, 0), WithinAbs(0.6f, 1e-6));
+}
+
+// ============================================================
+// Engine::setParameter / getParameter / getParameterNames
+// ============================================================
+
+TEST_CASE("Engine setParameter and getParameter work through Engine API")
+{
+    Scheduler sched;
+    Engine engine(sched);
+    engine.prepareForTesting(44100.0, 512);
+
+    auto node = makeEngineTestNode(2, 2, false);
+    int id = engine.addNode(std::move(node), "FX");
+
+    auto names = engine.getParameterNames(id);
+    REQUIRE(names.size() == 1);
+    REQUIRE(names[0] == "Gain");
+
+    REQUIRE_THAT(engine.getParameter(id, "Gain"), WithinAbs(0.5f, 1e-3));
+
+    REQUIRE(engine.setParameter(id, "Gain", 0.75f));
+    REQUIRE_THAT(engine.getParameter(id, "Gain"), WithinAbs(0.75f, 1e-3));
+}
+
+TEST_CASE("Engine setParameter returns false for invalid node ID")
+{
+    Scheduler sched;
+    Engine engine(sched);
+
+    REQUIRE_FALSE(engine.setParameter(9999, "Gain", 0.5f));
+}
+
+TEST_CASE("Engine getParameterNames returns empty for invalid node ID")
+{
+    Scheduler sched;
+    Engine engine(sched);
+
+    REQUIRE(engine.getParameterNames(9999).empty());
+}
+
+// ============================================================
+// Engine::loadPluginCache / getAvailablePluginNames
+// ============================================================
+
+TEST_CASE("Engine getAvailablePluginNames returns empty with no cache loaded")
+{
+    Scheduler sched;
+    Engine engine(sched);
+
+    REQUIRE(engine.getAvailablePluginNames().empty());
+}
+
+TEST_CASE("Engine loadPluginCache returns false for nonexistent file")
+{
+    Scheduler sched;
+    Engine engine(sched);
+
+    REQUIRE_FALSE(engine.loadPluginCache("/nonexistent/path.xml"));
+}
+
+TEST_CASE("Engine findPluginByName returns nullptr with no cache")
+{
+    Scheduler sched;
+    Engine engine(sched);
+
+    REQUIRE(engine.findPluginByName("Nonexistent") == nullptr);
+}
+
+// ============================================================
+// Engine::addPlugin with no cache
+// ============================================================
+
+TEST_CASE("Engine addPlugin returns -1 when plugin not in cache")
+{
+    Scheduler sched;
+    Engine engine(sched);
+
+    std::string error;
+    REQUIRE(engine.addPlugin("Nonexistent", error) == -1);
+    REQUIRE_FALSE(error.empty());
+}
+
+// ============================================================
+// Engine::addMidiInput
+// ============================================================
+
+TEST_CASE("Engine addMidiInput returns -1 for nonexistent device")
+{
+    Scheduler sched;
+    Engine engine(sched);
+
+    std::string error;
+    REQUIRE(engine.addMidiInput("Nonexistent MIDI Device 12345", error) == -1);
+    REQUIRE_FALSE(error.empty());
+}
+
+TEST_CASE("Engine getAvailableMidiInputs returns a vector")
+{
+    Scheduler sched;
+    Engine engine(sched);
+
+    auto inputs = engine.getAvailableMidiInputs();
+    // Can't guarantee any devices, but should not crash
+    REQUIRE(inputs.size() >= 0);
+}
+
+// ============================================================
+// Engine::refreshMidiInputs
+// ============================================================
+
+TEST_CASE("Engine refreshMidiInputs returns result with added and removed vectors")
+{
+    Scheduler sched;
+    Engine engine(sched);
+    engine.prepareForTesting(44100.0, 512);
+
+    auto result = engine.refreshMidiInputs();
+    // Can't guarantee devices, but result should have valid vectors
+    REQUIRE(result.added.size() >= 0);
+    REQUIRE(result.removed.size() >= 0);
+}
+
+// ============================================================
+// Engine::getGraph
+// ============================================================
+
+TEST_CASE("Engine getGraph returns internal graph reference")
+{
+    Scheduler sched;
+    Engine engine(sched);
+
+    auto& graph = engine.getGraph();
+    REQUIRE(graph.getNodeCount() == 0);
+
+    auto node = makeEngineTestNode(0, 2, true);
+    engine.addNode(std::move(node), "Synth");
+
+    REQUIRE(graph.getNodeCount() == 1);
 }

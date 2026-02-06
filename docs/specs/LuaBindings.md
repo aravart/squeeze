@@ -2,40 +2,30 @@
 
 ## Overview
 
-LuaBindings bridges all C++ engine components to Lua via a flat `sq` table API. It is the last component before milestone 1. All Lua API functions live under a single `sq` table registered into the Lua state.
+LuaBindings is a thin Lua-to-C++ translation layer. It registers a flat `sq` table API into a Lua state and delegates all operations to Engine. It owns no graph, node, or plugin state — Engine is the single source of truth.
 
 ## Responsibilities
 
-- Own a Graph, PluginCache, and FormatManager instance
-- Own all dynamically created nodes (via `std::unique_ptr<Node>`)
-- Expose a flat `sq.*` Lua API for plugin discovery, graph manipulation, engine control, and parameter access
+- Register the `sq.*` Lua API table into a Lua state
 - Translate between Lua types and C++ types
+- Delegate all operations to Engine
 - Report errors via Lua return values (nil + error string pattern)
+- Provide `addTestNode()` for injecting test nodes without real plugins
 
 ## Interface
 
 ```cpp
 class LuaBindings {
 public:
-    LuaBindings(Engine& engine, Scheduler& scheduler);
+    explicit LuaBindings(Engine& engine);
 
-    bool loadPluginCache(const std::string& xmlPath);
     void bind(sol::state& lua);
 
     // For testing: add a pre-built node without going through PluginCache
     int addTestNode(std::unique_ptr<Node> node, const std::string& name = "test");
 
-    Graph& getGraph();
-
 private:
-    Engine& engine_;
-    Scheduler& scheduler_;
-    Graph graph_;
-    PluginCache cache_;
-    juce::AudioPluginFormatManager formatManager_;
-    std::unordered_map<int, std::unique_ptr<Node>> ownedNodes_;
-    std::unordered_map<int, std::string> nodeNames_;
-    int nextNodeId_ = 0;
+    Engine& engine_;  // only member state
 };
 ```
 
@@ -81,6 +71,25 @@ sq.get_param(node_id, name)         -- returns float or nil, error
 sq.params(node_id)                  -- returns {"Gain", "Mix", ...} or nil, error
 ```
 
+### MIDI Input
+
+```lua
+sq.list_midi_inputs()                -- returns {"Device 1", "Device 2", ...}
+sq.add_midi_input(device_name)       -- returns node_id or nil, error
+sq.refresh_midi_inputs()             -- returns {added={"New Device"}, removed={"Gone Device"}}
+```
+
+## Delegation Pattern
+
+Every Lua API method follows the same pattern:
+
+1. Extract arguments from Lua
+2. Call the corresponding Engine method
+3. Convert the C++ result back to Lua types
+4. Return using the error pattern (value or nil + error string)
+
+No business logic lives in LuaBindings. If a Lua method needs to check a condition, query state, or make a decision, that logic belongs in Engine.
+
 ## Error Pattern
 
 All functions that can fail return a tuple:
@@ -93,25 +102,22 @@ Implemented as `std::tuple<sol::object, sol::object>` where the second element i
 
 - `bind()` creates the `sq` table with all API functions
 - After `bind()`, the `sq` table is accessible from Lua
-- Node IDs are stable — removing a node does not change other IDs
-- Connection IDs are stable — disconnecting does not change other IDs
-- `addTestNode()` returns the graph node ID and stores ownership
-- `update()` calls `engine_.updateGraph(graph_)` to push the current graph state
-- `start()` calls `engine_.start()` with given or default sample rate and block size
-- `stop()` calls `engine_.stop()`
-- All owned nodes are destroyed when LuaBindings is destroyed
+- `addTestNode()` delegates to `engine_.addNode()` and returns the graph node ID
+- LuaBindings holds no mutable state beyond the `Engine&` reference
+- All node, graph, and plugin state lives in Engine
 
 ## Error Conditions
 
-- `add_plugin(name)`: returns nil + error if plugin name not found in cache
-- `remove_node(id)`: returns nil + error if node ID not found
-- `connect(...)`: returns nil + error if source/dest node not found or Graph rejects connection
-- `disconnect(id)`: returns nil + error if connection ID not found
-- `set_param(id, name, value)`: returns nil + error if node not found
-- `get_param(id, name)`: returns nil + error if node not found
-- `params(id)`: returns nil + error if node not found
-- `ports(id)`: returns nil + error if node not found
-- `plugin_info(name)`: returns nil + error if plugin not found in cache
+- `add_plugin(name)`: returns nil + error if Engine reports failure
+- `remove_node(id)`: returns nil + error if Engine reports failure
+- `connect(...)`: returns nil + error if Engine reports failure
+- `disconnect(id)`: returns nil + error if Engine reports failure
+- `set_param(id, name, value)`: returns nil + error if Engine reports failure
+- `get_param(id, name)`: returns nil + error if node not found in Engine
+- `params(id)`: returns nil + error if node not found in Engine
+- `ports(id)`: returns nil + error if node not found in Engine
+- `plugin_info(name)`: returns nil + error if plugin not found in Engine's cache
+- `add_midi_input(name)`: returns nil + error if Engine reports failure
 
 ## Does NOT Handle
 
@@ -121,23 +127,19 @@ Implemented as `std::tuple<sol::object, sol::object>` where the second element i
 - State save/restore
 - Undo/redo
 - Real-time safety (all Lua API calls are on the control thread)
+- Graph, node, or plugin ownership (Engine handles all of this)
 
 ## Dependencies
 
-- Engine (graph push, start/stop)
-- Scheduler (owned by main, passed to Engine)
-- Graph (node/connection management)
-- PluginCache (plugin lookup)
-- PluginNode (plugin instantiation)
-- Node (base class for all nodes)
-- Port (PortDescriptor, PortAddress, PortDirection, SignalType)
+- Engine (all operations delegate here)
+- Node (type used in `addTestNode`)
+- Port (PortDescriptor, SignalType for `ports()` formatting)
 - sol2 (Lua bindings)
-- JUCE (AudioPluginFormatManager)
 
 ## Thread Safety
 
 - All Lua API methods are called from the control thread (the REPL thread)
-- `update()` sends a graph snapshot to the audio thread via the Scheduler's SPSC queue
+- `update()` triggers Engine to send a graph snapshot to the audio thread via the Scheduler's SPSC queue
 - No Lua API method is safe to call from the audio thread
 
 ## Example Usage
@@ -152,10 +154,15 @@ end
 local synth = sq.add_plugin("Pigments")
 local effect = sq.add_plugin("Chorus DIMENSION-D")
 
-sq.connect(synth, "midi_in", effect, "in")  -- error: wrong ports
-sq.connect(synth, "out", effect, "in")      -- correct
+sq.connect(synth, "out", effect, "in")
 
 sq.set_param(synth, "Gain", 0.8)
 sq.update()
 sq.start()
+
+-- Check for new/removed MIDI devices
+local changes = sq.refresh_midi_inputs()
+for _, name in ipairs(changes.added) do
+    print("New MIDI device: " .. name)
+end
 ```

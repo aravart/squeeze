@@ -8,6 +8,7 @@
 #include "core/Engine.h"
 #include "core/Scheduler.h"
 #include "core/Node.h"
+#include "core/PluginNode.h"
 #include "core/Port.h"
 
 using namespace squeeze;
@@ -71,7 +72,7 @@ static std::unique_ptr<PluginNode> makeTestPluginNode(int numIn, int numOut, boo
 struct LuaFixture {
     Scheduler scheduler;
     Engine engine{scheduler};
-    LuaBindings bindings{engine, scheduler};
+    LuaBindings bindings{engine};
     sol::state lua;
 
     LuaFixture()
@@ -108,6 +109,7 @@ TEST_CASE("LuaBindings bind creates sq table with all functions")
     REQUIRE(sq["nodes"].get_type() == sol::type::function);
     REQUIRE(sq["ports"].get_type() == sol::type::function);
     REQUIRE(sq["connections"].get_type() == sol::type::function);
+    REQUIRE(sq["refresh_midi_inputs"].get_type() == sol::type::function);
 }
 
 // ============================================================
@@ -638,4 +640,22 @@ TEST_CASE("LuaBindings bind creates sq table with MIDI input functions")
     sol::table sq = f.lua["sq"];
     REQUIRE(sq["list_midi_inputs"].get_type() == sol::type::function);
     REQUIRE(sq["add_midi_input"].get_type() == sol::type::function);
+}
+
+// ============================================================
+// refresh_midi_inputs
+// ============================================================
+
+TEST_CASE("LuaBindings refresh_midi_inputs returns table with added and removed keys")
+{
+    LuaFixture f;
+
+    auto result = f.lua.safe_script(
+        "return sq.refresh_midi_inputs()",
+        sol::script_pass_on_error);
+    REQUIRE(result.valid());
+
+    sol::table tbl = result;
+    REQUIRE(tbl["added"].get_type() == sol::type::table);
+    REQUIRE(tbl["removed"].get_type() == sol::type::table);
 }

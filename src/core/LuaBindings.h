@@ -1,29 +1,18 @@
 #pragma once
 
 #include "core/Engine.h"
-#include "core/Graph.h"
-#include "core/MidiInputNode.h"
-#include "core/PluginCache.h"
-#include "core/PluginNode.h"
-#include "core/Scheduler.h"
-
-#include <juce_audio_processors/juce_audio_processors.h>
 
 #define SOL_ALL_SAFETIES_ON 1
 #include <sol/sol.hpp>
 
 #include <memory>
 #include <string>
-#include <unordered_map>
 
 namespace squeeze {
 
 class LuaBindings {
 public:
-    LuaBindings(Engine& engine, Scheduler& scheduler);
-
-    /// Load plugin cache from an XML file on disk.
-    bool loadPluginCache(const std::string& xmlPath);
+    explicit LuaBindings(Engine& engine);
 
     /// Register the "sq" table and all API functions into the Lua state.
     void bind(sol::state& lua);
@@ -32,10 +21,8 @@ public:
     /// Returns the graph node ID.
     int addTestNode(std::unique_ptr<Node> node, const std::string& name = "test");
 
-    Graph& getGraph();
-
 private:
-    // Lua API implementations
+    // Lua API implementations (thin delegates to engine_)
     sol::table luaListPlugins(sol::state_view lua);
     std::tuple<sol::object, sol::object> luaPluginInfo(sol::state_view lua, const std::string& name);
     std::tuple<sol::object, sol::object> luaAddPlugin(sol::state_view lua, const std::string& name);
@@ -56,14 +43,9 @@ private:
     sol::table luaConnections(sol::state_view lua);
     sol::table luaListMidiInputs(sol::state_view lua);
     std::tuple<sol::object, sol::object> luaAddMidiInput(sol::state_view lua, const std::string& name);
+    sol::table luaRefreshMidiInputs(sol::state_view lua);
 
     Engine& engine_;
-    Scheduler& scheduler_;
-    Graph graph_;
-    PluginCache cache_;
-    juce::AudioPluginFormatManager formatManager_;
-    std::unordered_map<int, std::unique_ptr<Node>> ownedNodes_;
-    std::unordered_map<int, std::string> nodeNames_;
 };
 
 } // namespace squeeze

@@ -209,16 +209,20 @@ int main(int argc, char* argv[])
     Scheduler scheduler;
     Engine engine(scheduler);
 
-    // Create Lua bindings and register the sq API
-    LuaBindings bindings(engine, scheduler);
-
+    // Load plugin cache into engine
     if (cachePath.empty())
         cachePath = "plugin-cache.xml";
 
-    if (bindings.loadPluginCache(cachePath))
+    if (engine.loadPluginCache(cachePath))
         std::cout << "Plugin cache loaded: " << cachePath << std::endl;
     else if (cachePath != "plugin-cache.xml")
         std::cerr << "Warning: failed to load plugin cache: " << cachePath << std::endl;
+
+    // Auto-load all available MIDI inputs
+    engine.autoLoadMidiInputs();
+
+    // Create Lua bindings and register the sq API
+    LuaBindings bindings(engine);
 
     sol::state lua;
     lua.open_libraries(sol::lib::base, sol::lib::string, sol::lib::math,

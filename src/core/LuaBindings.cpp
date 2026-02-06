@@ -3,30 +3,14 @@
 
 namespace squeeze {
 
-LuaBindings::LuaBindings(Engine& engine, Scheduler& scheduler)
+LuaBindings::LuaBindings(Engine& engine)
     : engine_(engine)
-    , scheduler_(scheduler)
 {
-    formatManager_.addDefaultFormats();
-}
-
-bool LuaBindings::loadPluginCache(const std::string& xmlPath)
-{
-    return cache_.loadFromFile(juce::File(xmlPath));
 }
 
 int LuaBindings::addTestNode(std::unique_ptr<Node> node, const std::string& name)
 {
-    Node* raw = node.get();
-    int id = graph_.addNode(raw);
-    ownedNodes_[id] = std::move(node);
-    nodeNames_[id] = name;
-    return id;
-}
-
-Graph& LuaBindings::getGraph()
-{
-    return graph_;
+    return engine_.addNode(std::move(node), name);
 }
 
 void LuaBindings::bind(sol::state& lua)
@@ -104,25 +88,29 @@ void LuaBindings::bind(sol::state& lua)
     sq.set_function("add_midi_input", [this](sol::this_state s, const std::string& name) {
         return luaAddMidiInput(sol::state_view(s), name);
     });
+
+    sq.set_function("refresh_midi_inputs", [this](sol::this_state s) {
+        return luaRefreshMidiInputs(sol::state_view(s));
+    });
 }
 
 // ============================================================
-// Lua API implementations
+// Lua API implementations — thin delegates to Engine
 // ============================================================
 
 sol::table LuaBindings::luaListPlugins(sol::state_view lua)
 {
     sol::table result = lua.create_table();
-    auto names = cache_.getAvailablePluginNames();
+    auto names = engine_.getAvailablePluginNames();
     for (int i = 0; i < (int)names.size(); ++i)
-        result[i + 1] = names[i].toStdString();
+        result[i + 1] = names[i];
     return result;
 }
 
 std::tuple<sol::object, sol::object> LuaBindings::luaPluginInfo(
     sol::state_view lua, const std::string& name)
 {
-    auto* desc = cache_.findByName(juce::String(name));
+    auto* desc = engine_.findPluginByName(name);
     if (!desc)
         return {sol::lua_nil, sol::make_object(lua, "Plugin '" + name + "' not found")};
 
@@ -139,25 +127,10 @@ std::tuple<sol::object, sol::object> LuaBindings::luaPluginInfo(
 std::tuple<sol::object, sol::object> LuaBindings::luaAddPlugin(
     sol::state_view lua, const std::string& name)
 {
-    SQ_LOG("luaAddPlugin: %s", name.c_str());
-    auto* desc = cache_.findByName(juce::String(name));
-    if (!desc)
-        return {sol::lua_nil, sol::make_object(lua, "Plugin '" + name + "' not found in cache")};
-
-    double sr = engine_.getSampleRate();
-    int bs = engine_.getBlockSize();
-    if (sr <= 0.0) sr = 44100.0;
-    if (bs <= 0) bs = 512;
-
-    juce::String errorMessage;
-    auto pluginNode = PluginNode::create(*desc, formatManager_, sr, bs, errorMessage);
-    if (!pluginNode)
-        return {sol::lua_nil, sol::make_object(lua, "Failed to create plugin: " + errorMessage.toStdString())};
-
-    Node* raw = pluginNode.get();
-    int id = graph_.addNode(raw);
-    ownedNodes_[id] = std::move(pluginNode);
-    nodeNames_[id] = name;
+    std::string errorMessage;
+    int id = engine_.addPlugin(name, errorMessage);
+    if (id < 0)
+        return {sol::lua_nil, sol::make_object(lua, errorMessage)};
 
     return {sol::make_object(lua, id), sol::lua_nil};
 }
@@ -165,13 +138,8 @@ std::tuple<sol::object, sol::object> LuaBindings::luaAddPlugin(
 std::tuple<sol::object, sol::object> LuaBindings::luaRemoveNode(
     sol::state_view lua, int id)
 {
-    SQ_LOG("luaRemoveNode: id=%d", id);
-    if (ownedNodes_.find(id) == ownedNodes_.end())
+    if (!engine_.removeNode(id))
         return {sol::lua_nil, sol::make_object(lua, "Node " + std::to_string(id) + " not found")};
-
-    graph_.removeNode(id);
-    ownedNodes_.erase(id);
-    nodeNames_.erase(id);
 
     return {sol::make_object(lua, true), sol::lua_nil};
 }
@@ -181,13 +149,10 @@ std::tuple<sol::object, sol::object> LuaBindings::luaConnect(
     int srcId, const std::string& srcPort,
     int dstId, const std::string& dstPort)
 {
-    SQ_LOG("luaConnect: %d:%s -> %d:%s", srcId, srcPort.c_str(), dstId, dstPort.c_str());
-    PortAddress source{srcId, PortDirection::output, srcPort};
-    PortAddress dest{dstId, PortDirection::input, dstPort};
-
-    int connId = graph_.connect(source, dest);
+    std::string error;
+    int connId = engine_.connect(srcId, srcPort, dstId, dstPort, error);
     if (connId < 0)
-        return {sol::lua_nil, sol::make_object(lua, graph_.getLastError())};
+        return {sol::lua_nil, sol::make_object(lua, error)};
 
     return {sol::make_object(lua, connId), sol::lua_nil};
 }
@@ -195,8 +160,7 @@ std::tuple<sol::object, sol::object> LuaBindings::luaConnect(
 std::tuple<sol::object, sol::object> LuaBindings::luaDisconnect(
     sol::state_view lua, int connId)
 {
-    SQ_LOG("luaDisconnect: conn=%d", connId);
-    if (!graph_.disconnect(connId))
+    if (!engine_.disconnect(connId))
         return {sol::lua_nil, sol::make_object(lua, "Connection " + std::to_string(connId) + " not found")};
 
     return {sol::make_object(lua, true), sol::lua_nil};
@@ -205,7 +169,7 @@ std::tuple<sol::object, sol::object> LuaBindings::luaDisconnect(
 void LuaBindings::luaUpdate()
 {
     SQ_LOG("luaUpdate");
-    engine_.updateGraph(graph_);
+    engine_.updateGraph();
 }
 
 void LuaBindings::luaStart(sol::optional<double> sr, sol::optional<int> bs)
@@ -225,33 +189,31 @@ void LuaBindings::luaStop()
 std::tuple<sol::object, sol::object> LuaBindings::luaSetParam(
     sol::state_view lua, int nodeId, const std::string& name, float value)
 {
-    Node* node = graph_.getNode(nodeId);
-    if (!node)
+    if (!engine_.setParameter(nodeId, name, value))
         return {sol::lua_nil, sol::make_object(lua, "Node " + std::to_string(nodeId) + " not found")};
 
-    node->setParameter(name, value);
     return {sol::make_object(lua, true), sol::lua_nil};
 }
 
 std::tuple<sol::object, sol::object> LuaBindings::luaGetParam(
     sol::state_view lua, int nodeId, const std::string& name)
 {
-    Node* node = graph_.getNode(nodeId);
+    Node* node = engine_.getNode(nodeId);
     if (!node)
         return {sol::lua_nil, sol::make_object(lua, "Node " + std::to_string(nodeId) + " not found")};
 
-    float val = node->getParameter(name);
+    float val = engine_.getParameter(nodeId, name);
     return {sol::make_object(lua, val), sol::lua_nil};
 }
 
 std::tuple<sol::object, sol::object> LuaBindings::luaParams(
     sol::state_view lua, int nodeId)
 {
-    Node* node = graph_.getNode(nodeId);
+    Node* node = engine_.getNode(nodeId);
     if (!node)
         return {sol::lua_nil, sol::make_object(lua, "Node " + std::to_string(nodeId) + " not found")};
 
-    auto names = node->getParameterNames();
+    auto names = engine_.getParameterNames(nodeId);
     sol::table result = lua.create_table();
     for (int i = 0; i < (int)names.size(); ++i)
         result[i + 1] = names[i];
@@ -262,15 +224,13 @@ std::tuple<sol::object, sol::object> LuaBindings::luaParams(
 sol::table LuaBindings::luaNodes(sol::state_view lua)
 {
     sol::table result = lua.create_table();
+    auto nodes = engine_.getNodes();
     int idx = 1;
-    for (const auto& kv : ownedNodes_)
+    for (const auto& kv : nodes)
     {
         sol::table entry = lua.create_table();
         entry["id"] = kv.first;
-
-        auto nameIt = nodeNames_.find(kv.first);
-        entry["name"] = (nameIt != nodeNames_.end()) ? nameIt->second : "unknown";
-
+        entry["name"] = kv.second;
         result[idx++] = entry;
     }
     return result;
@@ -279,7 +239,7 @@ sol::table LuaBindings::luaNodes(sol::state_view lua)
 std::tuple<sol::object, sol::object> LuaBindings::luaPorts(
     sol::state_view lua, int nodeId)
 {
-    Node* node = graph_.getNode(nodeId);
+    Node* node = engine_.getNode(nodeId);
     if (!node)
         return {sol::lua_nil, sol::make_object(lua, "Node " + std::to_string(nodeId) + " not found")};
 
@@ -317,7 +277,7 @@ std::tuple<sol::object, sol::object> LuaBindings::luaPorts(
 sol::table LuaBindings::luaConnections(sol::state_view lua)
 {
     sol::table result = lua.create_table();
-    auto conns = graph_.getConnections();
+    auto conns = engine_.getConnections();
     for (int i = 0; i < (int)conns.size(); ++i)
     {
         sol::table c = lua.create_table();
@@ -334,28 +294,40 @@ sol::table LuaBindings::luaConnections(sol::state_view lua)
 sol::table LuaBindings::luaListMidiInputs(sol::state_view lua)
 {
     sol::table result = lua.create_table();
-    auto devices = juce::MidiInput::getAvailableDevices();
-    for (int i = 0; i < devices.size(); ++i)
-        result[i + 1] = devices[i].name.toStdString();
+    auto devices = engine_.getAvailableMidiInputs();
+    for (int i = 0; i < (int)devices.size(); ++i)
+        result[i + 1] = devices[i];
     return result;
 }
 
 std::tuple<sol::object, sol::object> LuaBindings::luaAddMidiInput(
     sol::state_view lua, const std::string& name)
 {
-    SQ_LOG("luaAddMidiInput: %s", name.c_str());
-
     std::string errorMessage;
-    auto midiNode = MidiInputNode::create(name, errorMessage);
-    if (!midiNode)
+    int id = engine_.addMidiInput(name, errorMessage);
+    if (id < 0)
         return {sol::lua_nil, sol::make_object(lua, errorMessage)};
 
-    Node* raw = midiNode.get();
-    int id = graph_.addNode(raw);
-    ownedNodes_[id] = std::move(midiNode);
-    nodeNames_[id] = name;
-
     return {sol::make_object(lua, id), sol::lua_nil};
+}
+
+sol::table LuaBindings::luaRefreshMidiInputs(sol::state_view lua)
+{
+    auto refreshResult = engine_.refreshMidiInputs();
+
+    sol::table result = lua.create_table();
+
+    sol::table added = lua.create_table();
+    for (int i = 0; i < (int)refreshResult.added.size(); ++i)
+        added[i + 1] = refreshResult.added[i];
+    result["added"] = added;
+
+    sol::table removed = lua.create_table();
+    for (int i = 0; i < (int)refreshResult.removed.size(); ++i)
+        removed[i + 1] = refreshResult.removed[i];
+    result["removed"] = removed;
+
+    return result;
 }
 
 } // namespace squeeze
