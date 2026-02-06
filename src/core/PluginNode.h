@@ -37,6 +37,7 @@ public:
     std::vector<std::string> getParameterNames() const override;
     float getParameter(const std::string& name) const override;
     void setParameter(const std::string& name, float value) override;
+    void setParameterByIndex(int index, float value) override;
 
     // Plugin-specific queries
     const juce::String& getName() const;

@@ -136,6 +136,13 @@ void PluginNode::setParameter(const std::string& name, float value)
         params[it->second]->setValue(value);
 }
 
+void PluginNode::setParameterByIndex(int index, float value)
+{
+    auto& params = processor_->getParameters();
+    if (index >= 0 && index < params.size())
+        params[index]->setValue(value);
+}
+
 const juce::String& PluginNode::getName() const
 {
     return name_;

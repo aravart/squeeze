@@ -31,6 +31,7 @@ public:
     virtual std::vector<std::string> getParameterNames() const { return {}; }
     virtual float getParameter(const std::string& name) const { return 0.0f; }
     virtual void setParameter(const std::string& name, float value) {}
+    virtual void setParameterByIndex(int index, float value) {}
 };
 
 } // namespace squeeze

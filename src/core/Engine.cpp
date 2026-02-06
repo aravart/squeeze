@@ -127,6 +127,7 @@ GraphSnapshot* Engine::buildSnapshot(const Graph& graph,
 
         snap->audioOutputs.emplace_back(outChannels, blockSize);
         snap->midiOutputs.emplace_back();
+        snap->midiOutputs.back().ensureSize(256);
     }
 
     snap->silenceBuffer.setSize(maxChannels, blockSize);
@@ -178,8 +179,7 @@ void Engine::processBlock(juce::AudioBuffer<float>& outputBuffer,
             case Command::Type::setParameter:
             {
                 if (cmd.node)
-                    cmd.node->setParameter(std::to_string(cmd.paramIndex),
-                                           cmd.paramValue);
+                    cmd.node->setParameterByIndex(cmd.paramIndex, cmd.paramValue);
                 break;
             }
         }
