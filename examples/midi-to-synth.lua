@@ -17,39 +17,37 @@ end
 -- Open the first MIDI device
 local midi_name = devices[1]
 print("\nOpening: " .. midi_name)
-local midi_id, err = sq.add_midi_input(midi_name)
-if not midi_id then
+local midi, err = sq.add_midi_input(midi_name)
+if not midi then
     print("Error: " .. err)
     return
 end
-print("MIDI node id=" .. midi_id)
+print("MIDI node id=" .. midi.id)
 
 -- Find and load the first instrument plugin
 local plugins = sq.list_plugins()
-local synth_id = nil
-local synth_name = nil
+local synth = nil
 
 for _, name in ipairs(plugins) do
     local info = sq.plugin_info(name)
     if info and info.instrument then
-        local id, serr = sq.add_plugin(name)
-        if id then
-            synth_id = id
-            synth_name = name
+        local node, serr = sq.add_plugin(name)
+        if node then
+            synth = node
             break
         end
     end
 end
 
-if not synth_id then
+if not synth then
     print("No loadable instrument plugins found.")
     return
 end
 
-print("Loaded synth: " .. synth_name .. " (id=" .. synth_id .. ")")
+print("Loaded synth: " .. synth.name .. " (id=" .. synth.id .. ")")
 
 -- Print ports
-local ports = sq.ports(synth_id)
+local ports = synth:ports()
 print("  Inputs:")
 for _, p in ipairs(ports.inputs) do
     print("    " .. p.name .. " (" .. p.type .. ", " .. p.channels .. "ch)")
@@ -60,12 +58,12 @@ for _, p in ipairs(ports.outputs) do
 end
 
 -- Connect MIDI output to synth MIDI input
-local conn, cerr = sq.connect(midi_id, "midi_out", synth_id, "midi_in")
+local conn, cerr = sq.connect(midi, "midi_out", synth, "midi_in")
 if not conn then
     print("Connect error: " .. cerr)
     return
 end
-print("\nConnected: " .. midi_name .. " -> " .. synth_name)
+print("\nConnected: " .. midi.name .. " -> " .. synth.name)
 
 -- Push graph and start audio
 sq.update()

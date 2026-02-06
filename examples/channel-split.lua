@@ -25,30 +25,30 @@ for _, n in ipairs(midi_nodes) do
 end
 
 -- Load plugins
-local lofi_id, err1 = sq.add_plugin("Pure LoFi")
-if not lofi_id then
+local lofi, err1 = sq.add_plugin("Pure LoFi")
+if not lofi then
     print("Failed to load Pure LoFi: " .. err1)
     return
 end
-print("Loaded Pure LoFi (id=" .. lofi_id .. ")")
+print("Loaded Pure LoFi (id=" .. lofi.id .. ")")
 
-local xo_id, err2 = sq.add_plugin("XO")
-if not xo_id then
+local xo, err2 = sq.add_plugin("XO")
+if not xo then
     print("Failed to load XO: " .. err2)
     return
 end
-print("Loaded XO (id=" .. xo_id .. ")")
+print("Loaded XO (id=" .. xo.id .. ")")
 
 -- Connect each MIDI input -> Pure LoFi (ch 1) and -> XO (ch 10)
 for _, n in ipairs(midi_nodes) do
-    local c1, e1 = sq.connect(n.id, "midi_out", lofi_id, "midi_in", 1)
+    local c1, e1 = sq.connect(n.id, "midi_out", lofi, "midi_in", 1)
     if c1 then
         print(n.name .. " ch 1 -> Pure LoFi")
     else
         print(n.name .. " -> Pure LoFi failed: " .. e1)
     end
 
-    local c2, e2 = sq.connect(n.id, "midi_out", xo_id, "midi_in", 10)
+    local c2, e2 = sq.connect(n.id, "midi_out", xo, "midi_in", 10)
     if c2 then
         print(n.name .. " ch 10 -> XO")
     else

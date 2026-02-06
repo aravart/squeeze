@@ -94,6 +94,7 @@ target_compile_definitions(squeeze_core PUBLIC
     JUCE_USE_CURL=0
     JUCE_DISPLAY_SPLASH_SCREEN=0
     JUCE_PLUGINHOST_VST3=1
+    JUCE_MODAL_LOOPS_PERMITTED=1
 )
 
 # --- Squeeze Lua Library ---
@@ -147,4 +148,5 @@ target_link_libraries(Squeeze PRIVATE
     juce::juce_audio_formats
     juce::juce_audio_processors
     juce::juce_audio_utils
+    juce::juce_gui_basics
 )
