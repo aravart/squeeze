@@ -35,8 +35,10 @@ void LuaBindings::bind(sol::state& lua)
 
     sq.set_function("connect", [this](sol::this_state s,
             int srcId, const std::string& srcPort,
-            int dstId, const std::string& dstPort) {
-        return luaConnect(sol::state_view(s), srcId, srcPort, dstId, dstPort);
+            int dstId, const std::string& dstPort,
+            sol::optional<int> midiChannel) {
+        return luaConnect(sol::state_view(s), srcId, srcPort, dstId, dstPort,
+                          midiChannel.value_or(0));
     });
 
     sq.set_function("disconnect", [this](sol::this_state s, int connId) {
@@ -147,10 +149,11 @@ std::tuple<sol::object, sol::object> LuaBindings::luaRemoveNode(
 std::tuple<sol::object, sol::object> LuaBindings::luaConnect(
     sol::state_view lua,
     int srcId, const std::string& srcPort,
-    int dstId, const std::string& dstPort)
+    int dstId, const std::string& dstPort,
+    int midiChannel)
 {
     std::string error;
-    int connId = engine_.connect(srcId, srcPort, dstId, dstPort, error);
+    int connId = engine_.connect(srcId, srcPort, dstId, dstPort, error, midiChannel);
     if (connId < 0)
         return {sol::lua_nil, sol::make_object(lua, error)};
 
@@ -286,6 +289,7 @@ sol::table LuaBindings::luaConnections(sol::state_view lua)
         c["src_port"] = conns[i].source.portName;
         c["dst"] = conns[i].dest.nodeId;
         c["dst_port"] = conns[i].dest.portName;
+        c["channel"] = conns[i].midiChannel;
         result[i + 1] = c;
     }
     return result;

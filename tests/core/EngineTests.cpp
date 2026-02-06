@@ -900,3 +900,117 @@ TEST_CASE("Engine getGraph returns internal graph reference")
 
     REQUIRE(graph.getNodeCount() == 1);
 }
+
+// ============================================================
+// MIDI channel filtering
+// ============================================================
+
+TEST_CASE("MIDI channel filter passes matching channel")
+{
+    Scheduler sched;
+    Engine engine(sched);
+    engine.prepareForTesting(44100.0, 64);
+
+    TestMidiSourceNode midiSrc;
+    TestSynthNode synth;
+    midiSrc.prepare(44100.0, 64);
+    synth.prepare(44100.0, 64);
+
+    juce::MidiBuffer events;
+    events.addEvent(juce::MidiMessage::noteOn(3, 60, 0.8f), 0);
+    midiSrc.setEvents(events);
+
+    Graph graph;
+    int midiId = graph.addNode(&midiSrc);
+    int synthId = graph.addNode(&synth);
+    graph.connect({midiId, PortDirection::output, "midi"},
+                  {synthId, PortDirection::input, "midi"},
+                  3);  // filter to channel 3
+
+    engine.updateGraph(graph);
+
+    juce::AudioBuffer<float> output(2, 64);
+    runBlock(engine, sched, output, 64);
+
+    int midiCount = 0;
+    for (const auto& m : synth.lastMidiReceived)
+    {
+        (void)m;
+        midiCount++;
+    }
+    REQUIRE(midiCount == 1);
+}
+
+TEST_CASE("MIDI channel filter blocks non-matching channel")
+{
+    Scheduler sched;
+    Engine engine(sched);
+    engine.prepareForTesting(44100.0, 64);
+
+    TestMidiSourceNode midiSrc;
+    TestSynthNode synth;
+    midiSrc.prepare(44100.0, 64);
+    synth.prepare(44100.0, 64);
+
+    juce::MidiBuffer events;
+    events.addEvent(juce::MidiMessage::noteOn(1, 60, 0.8f), 0);
+    midiSrc.setEvents(events);
+
+    Graph graph;
+    int midiId = graph.addNode(&midiSrc);
+    int synthId = graph.addNode(&synth);
+    graph.connect({midiId, PortDirection::output, "midi"},
+                  {synthId, PortDirection::input, "midi"},
+                  3);  // filter to channel 3, but event is on channel 1
+
+    engine.updateGraph(graph);
+
+    juce::AudioBuffer<float> output(2, 64);
+    runBlock(engine, sched, output, 64);
+
+    int midiCount = 0;
+    for (const auto& m : synth.lastMidiReceived)
+    {
+        (void)m;
+        midiCount++;
+    }
+    REQUIRE(midiCount == 0);
+}
+
+TEST_CASE("MIDI channel 0 passes all channels")
+{
+    Scheduler sched;
+    Engine engine(sched);
+    engine.prepareForTesting(44100.0, 64);
+
+    TestMidiSourceNode midiSrc;
+    TestSynthNode synth;
+    midiSrc.prepare(44100.0, 64);
+    synth.prepare(44100.0, 64);
+
+    juce::MidiBuffer events;
+    events.addEvent(juce::MidiMessage::noteOn(1, 60, 0.8f), 0);
+    events.addEvent(juce::MidiMessage::noteOn(5, 64, 0.6f), 10);
+    events.addEvent(juce::MidiMessage::noteOn(10, 67, 0.7f), 20);
+    midiSrc.setEvents(events);
+
+    Graph graph;
+    int midiId = graph.addNode(&midiSrc);
+    int synthId = graph.addNode(&synth);
+    graph.connect({midiId, PortDirection::output, "midi"},
+                  {synthId, PortDirection::input, "midi"},
+                  0);  // channel 0 = all pass
+
+    engine.updateGraph(graph);
+
+    juce::AudioBuffer<float> output(2, 64);
+    runBlock(engine, sched, output, 64);
+
+    int midiCount = 0;
+    for (const auto& m : synth.lastMidiReceived)
+    {
+        (void)m;
+        midiCount++;
+    }
+    REQUIRE(midiCount == 3);
+}

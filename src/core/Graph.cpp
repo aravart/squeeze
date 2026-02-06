@@ -63,9 +63,16 @@ const PortDescriptor* Graph::findPort(Node* node, PortDirection direction,
     return nullptr;
 }
 
-int Graph::connect(PortAddress source, PortAddress dest)
+int Graph::connect(PortAddress source, PortAddress dest, int midiChannel)
 {
     lastError_.clear();
+
+    // Validate midiChannel range
+    if (midiChannel < 0 || midiChannel > 16)
+    {
+        lastError_ = "MIDI channel must be 0-16 (0 = all channels)";
+        return -1;
+    }
 
     // Validate nodes exist
     Node* srcNode = getNode(source.nodeId);
@@ -128,10 +135,10 @@ int Graph::connect(PortAddress source, PortAddress dest)
     }
 
     int id = nextConnectionId_++;
-    connections_.push_back({id, source, dest});
-    SQ_LOG("connect: %d:%s -> %d:%s (conn=%d)",
+    connections_.push_back({id, source, dest, midiChannel});
+    SQ_LOG("connect: %d:%s -> %d:%s (conn=%d, ch=%d)",
            source.nodeId, source.portName.c_str(),
-           dest.nodeId, dest.portName.c_str(), id);
+           dest.nodeId, dest.portName.c_str(), id, midiChannel);
     return id;
 }
 

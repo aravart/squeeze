@@ -26,6 +26,7 @@ struct GraphSnapshot {
         int audioSourceIndex;
         int midiSourceIndex;
         bool isAudioLeaf;  // true if no other node reads this node's audio output
+        int midiChannelFilter = 0;  // 0 = all, 1-16 = filter
     };
 
     std::vector<NodeSlot> slots;
@@ -33,6 +34,7 @@ struct GraphSnapshot {
     std::vector<juce::MidiBuffer> midiOutputs;
     juce::AudioBuffer<float> silenceBuffer;
     juce::MidiBuffer emptyMidi;
+    juce::MidiBuffer filteredMidi;  // scratch buffer for channel filtering
 };
 
 class Engine : public juce::AudioIODeviceCallback {
@@ -75,7 +77,8 @@ public:
 
     // Graph topology
     int connect(int srcId, const std::string& srcPort,
-                int dstId, const std::string& dstPort, std::string& error);
+                int dstId, const std::string& dstPort, std::string& error,
+                int midiChannel = 0);
     bool disconnect(int connId);
     std::vector<Connection> getConnections() const;
 

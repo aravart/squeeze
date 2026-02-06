@@ -28,7 +28,8 @@ private:
     std::tuple<sol::object, sol::object> luaAddPlugin(sol::state_view lua, const std::string& name);
     std::tuple<sol::object, sol::object> luaRemoveNode(sol::state_view lua, int id);
     std::tuple<sol::object, sol::object> luaConnect(sol::state_view lua,
-        int srcId, const std::string& srcPort, int dstId, const std::string& dstPort);
+        int srcId, const std::string& srcPort, int dstId, const std::string& dstPort,
+        int midiChannel);
     std::tuple<sol::object, sol::object> luaDisconnect(sol::state_view lua, int connId);
     void luaUpdate();
     void luaStart(sol::optional<double> sr, sol::optional<int> bs);

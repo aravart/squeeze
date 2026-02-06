@@ -659,3 +659,73 @@ TEST_CASE("LuaBindings refresh_midi_inputs returns table with added and removed 
     REQUIRE(tbl["added"].get_type() == sol::type::table);
     REQUIRE(tbl["removed"].get_type() == sol::type::table);
 }
+
+// ============================================================
+// MIDI channel filtering via Lua
+// ============================================================
+
+TEST_CASE("LuaBindings connect accepts optional 5th channel argument")
+{
+    LuaFixture f;
+
+    auto synth = makeTestPluginNode(0, 2, true);
+    auto effect = makeTestPluginNode(2, 2, false);
+    int synthId = f.bindings.addTestNode(std::move(synth), "Synth");
+    int fxId = f.bindings.addTestNode(std::move(effect), "FX");
+
+    f.lua["src_id"] = synthId;
+    f.lua["dst_id"] = fxId;
+
+    auto result = f.lua.safe_script(
+        "return sq.connect(src_id, 'out', dst_id, 'in', 5)",
+        sol::script_pass_on_error);
+    REQUIRE(result.valid());
+
+    int connId = result;
+    REQUIRE(connId >= 0);
+}
+
+TEST_CASE("LuaBindings connect defaults to channel 0 when not provided")
+{
+    LuaFixture f;
+
+    auto synth = makeTestPluginNode(0, 2, true);
+    auto effect = makeTestPluginNode(2, 2, false);
+    int synthId = f.bindings.addTestNode(std::move(synth), "Synth");
+    int fxId = f.bindings.addTestNode(std::move(effect), "FX");
+
+    f.lua["src_id"] = synthId;
+    f.lua["dst_id"] = fxId;
+
+    f.lua.safe_script("sq.connect(src_id, 'out', dst_id, 'in')");
+
+    auto result = f.lua.safe_script("return sq.connections()", sol::script_pass_on_error);
+    sol::table conns = result;
+    sol::table c = conns[1];
+    REQUIRE(c["channel"].get<int>() == 0);
+}
+
+TEST_CASE("LuaBindings connections returns channel field")
+{
+    LuaFixture f;
+
+    auto synth = makeTestPluginNode(0, 2, true);
+    auto effect = makeTestPluginNode(2, 2, false);
+    int synthId = f.bindings.addTestNode(std::move(synth), "Synth");
+    int fxId = f.bindings.addTestNode(std::move(effect), "FX");
+
+    f.lua["src_id"] = synthId;
+    f.lua["dst_id"] = fxId;
+
+    f.lua.safe_script("sq.connect(src_id, 'out', dst_id, 'in', 7)");
+
+    auto result = f.lua.safe_script("return sq.connections()", sol::script_pass_on_error);
+    sol::table conns = result;
+    REQUIRE(conns.size() == 1);
+
+    sol::table c = conns[1];
+    REQUIRE(c["id"].get<int>() >= 0);
+    REQUIRE(c["src"].get<int>() == synthId);
+    REQUIRE(c["dst"].get<int>() == fxId);
+    REQUIRE(c["channel"].get<int>() == 7);
+}

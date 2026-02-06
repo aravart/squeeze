@@ -731,3 +731,67 @@ TEST_CASE("MIDI source into synth into effect chain orders correctly")
     REQUIRE(isBefore(order, idMidi, idSynth));
     REQUIRE(isBefore(order, idSynth, idEffect));
 }
+
+// ============================================================
+// MIDI channel on connections
+// ============================================================
+
+TEST_CASE("Graph connect stores midiChannel and getConnections returns it")
+{
+    Graph graph;
+    MidiSourceNode src;
+    SynthNode synth;
+
+    int idSrc = graph.addNode(&src);
+    int idSynth = graph.addNode(&synth);
+
+    int connId = graph.connect(
+        {idSrc, PortDirection::output, "midi"},
+        {idSynth, PortDirection::input, "midi"},
+        3);
+    REQUIRE(connId >= 0);
+
+    auto conns = graph.getConnections();
+    REQUIRE(conns.size() == 1);
+    REQUIRE(conns[0].midiChannel == 3);
+}
+
+TEST_CASE("Graph connect default midiChannel is 0")
+{
+    Graph graph;
+    MidiSourceNode src;
+    SynthNode synth;
+
+    int idSrc = graph.addNode(&src);
+    int idSynth = graph.addNode(&synth);
+
+    int connId = graph.connect(
+        {idSrc, PortDirection::output, "midi"},
+        {idSynth, PortDirection::input, "midi"});
+    REQUIRE(connId >= 0);
+
+    auto conns = graph.getConnections();
+    REQUIRE(conns[0].midiChannel == 0);
+}
+
+TEST_CASE("Graph connect rejects midiChannel outside 0-16 range")
+{
+    Graph graph;
+    MidiSourceNode src;
+    SynthNode synth;
+
+    int idSrc = graph.addNode(&src);
+    int idSynth = graph.addNode(&synth);
+
+    REQUIRE(graph.connect(
+        {idSrc, PortDirection::output, "midi"},
+        {idSynth, PortDirection::input, "midi"},
+        17) == -1);
+
+    REQUIRE(graph.connect(
+        {idSrc, PortDirection::output, "midi"},
+        {idSynth, PortDirection::input, "midi"},
+        -1) == -1);
+
+    REQUIRE(graph.getConnections().empty());
+}

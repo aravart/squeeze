@@ -255,13 +255,14 @@ Engine::MidiRefreshResult Engine::refreshMidiInputs()
 // ============================================================
 
 int Engine::connect(int srcId, const std::string& srcPort,
-                    int dstId, const std::string& dstPort, std::string& error)
+                    int dstId, const std::string& dstPort, std::string& error,
+                    int midiChannel)
 {
-    SQ_LOG("connect: %d:%s -> %d:%s", srcId, srcPort.c_str(), dstId, dstPort.c_str());
+    SQ_LOG("connect: %d:%s -> %d:%s (ch=%d)", srcId, srcPort.c_str(), dstId, dstPort.c_str(), midiChannel);
     PortAddress source{srcId, PortDirection::output, srcPort};
     PortAddress dest{dstId, PortDirection::input, dstPort};
 
-    int connId = graph_.connect(source, dest);
+    int connId = graph_.connect(source, dest, midiChannel);
     if (connId < 0)
     {
         error = graph_.getLastError();
@@ -370,6 +371,7 @@ GraphSnapshot* Engine::buildSnapshot(const Graph& graph,
 
         int audioSrc = -1;
         int midiSrc = -1;
+        int midiChFilter = 0;
 
         // Find incoming connections for this node
         for (const auto& conn : connections)
@@ -388,13 +390,16 @@ GraphSnapshot* Engine::buildSnapshot(const Graph& graph,
                     if (p.signalType == SignalType::audio)
                         audioSrc = srcIndex;
                     else if (p.signalType == SignalType::midi)
+                    {
                         midiSrc = srcIndex;
+                        midiChFilter = conn.midiChannel;
+                    }
                     break;
                 }
             }
         }
 
-        snap->slots.push_back({node, audioSrc, midiSrc, false});
+        snap->slots.push_back({node, audioSrc, midiSrc, false, midiChFilter});
 
         // Determine output channel count from this node's output ports
         int outChannels = 2;
@@ -417,6 +422,7 @@ GraphSnapshot* Engine::buildSnapshot(const Graph& graph,
 
     snap->silenceBuffer.setSize(maxChannels, blockSize);
     snap->silenceBuffer.clear();
+    snap->filteredMidi.ensureSize(256);
 
     // Determine which slots are audio leaves (no other slot reads their audio output)
     std::unordered_set<int> hasAudioConsumer;
@@ -495,10 +501,23 @@ void Engine::processBlock(juce::AudioBuffer<float>& outputBuffer,
                 ? snap.audioOutputs[slot.audioSourceIndex]
                 : snap.silenceBuffer;
 
-        juce::MidiBuffer& midiIn =
+        juce::MidiBuffer* midiInPtr =
             (slot.midiSourceIndex >= 0)
-                ? snap.midiOutputs[slot.midiSourceIndex]
-                : snap.emptyMidi;
+                ? &snap.midiOutputs[slot.midiSourceIndex]
+                : &snap.emptyMidi;
+
+        // Apply MIDI channel filter if set
+        if (slot.midiSourceIndex >= 0 && slot.midiChannelFilter > 0)
+        {
+            snap.filteredMidi.clear();
+            for (const auto metadata : *midiInPtr)
+            {
+                auto msg = metadata.getMessage();
+                if (msg.getChannel() == slot.midiChannelFilter)
+                    snap.filteredMidi.addEvent(msg, metadata.samplePosition);
+            }
+            midiInPtr = &snap.filteredMidi;
+        }
 
         // Clear outputs
         snap.audioOutputs[i].clear();
@@ -506,7 +525,7 @@ void Engine::processBlock(juce::AudioBuffer<float>& outputBuffer,
 
         // Process
         ProcessContext ctx{audioIn, snap.audioOutputs[i],
-                          midiIn, snap.midiOutputs[i],
+                          *midiInPtr, snap.midiOutputs[i],
                           numSamples};
         slot.node->process(ctx);
     }
