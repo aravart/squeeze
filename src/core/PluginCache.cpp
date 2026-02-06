@@ -1,6 +1,8 @@
 #include "core/PluginCache.h"
 #include "core/Logger.h"
 
+#include <algorithm>
+
 namespace squeeze {
 
 bool PluginCache::loadFromFile(const juce::File& xmlFile)
@@ -50,6 +52,7 @@ std::vector<juce::String> PluginCache::getAvailablePluginNames() const
     std::vector<juce::String> names;
     for (const auto& desc : types_)
         names.push_back(desc.name);
+    std::sort(names.begin(), names.end());
     return names;
 }
 
