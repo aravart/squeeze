@@ -37,6 +37,8 @@ std::unique_ptr<PluginNode> PluginNode::create(
     auto node = std::make_unique<PluginNode>(
         std::move(instance), numIn, numOut, midi);
 
+    node->prepare(sampleRate, blockSize);
+
     SQ_LOG("PluginNode::create: %s (%din/%dout, midi=%d)",
            description.name.toRawUTF8(), numIn, numOut, (int)midi);
     return node;
