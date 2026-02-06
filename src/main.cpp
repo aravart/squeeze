@@ -1,10 +1,13 @@
 #include <juce_core/juce_core.h>
 
-#define SOL_ALL_SAFETIES_ON 1
-#include <sol/sol.hpp>
+#include "core/LuaBindings.h"
+#include "core/Engine.h"
+#include "core/Scheduler.h"
 
 #include <atomic>
 #include <csignal>
+
+using namespace squeeze;
 
 static std::atomic<bool> running{true};
 
@@ -59,17 +62,11 @@ static void runRepl(sol::state& lua)
     std::cout << std::endl;
 }
 
-static void runEngine()
-{
-    std::cout << "Engine running. Press Ctrl+C to stop." << std::endl;
-    while (running.load())
-        juce::Thread::sleep(100);
-}
-
 static void printUsage()
 {
     std::cout << "Usage: squeeze [options] [script.lua]\n"
               << "  -i          Interactive mode (REPL)\n"
+              << "  -c FILE     Plugin cache XML file\n"
               << "  -h, --help  Show this help\n"
               << "\n"
               << "With no arguments, runs the engine until Ctrl+C.\n"
@@ -82,6 +79,7 @@ int main(int argc, char* argv[])
     std::signal(SIGTERM, signalHandler);
 
     std::string scriptPath;
+    std::string cachePath;
     bool interactive = false;
 
     for (int i = 1; i < argc; ++i)
@@ -89,6 +87,8 @@ int main(int argc, char* argv[])
         std::string arg = argv[i];
         if (arg == "-i")
             interactive = true;
+        else if (arg == "-c" && i + 1 < argc)
+            cachePath = argv[++i];
         else if (arg == "-h" || arg == "--help")
         {
             printUsage();
@@ -104,9 +104,26 @@ int main(int argc, char* argv[])
             scriptPath = arg;
     }
 
+    // Create engine components
+    Scheduler scheduler;
+    Engine engine(scheduler);
+
+    // Create Lua bindings and register the sq API
+    LuaBindings bindings(engine, scheduler);
+
+    if (!cachePath.empty())
+    {
+        if (bindings.loadPluginCache(cachePath))
+            std::cout << "Plugin cache loaded: " << cachePath << std::endl;
+        else
+            std::cerr << "Warning: failed to load plugin cache: " << cachePath << std::endl;
+    }
+
     sol::state lua;
     lua.open_libraries(sol::lib::base, sol::lib::string, sol::lib::math,
                        sol::lib::table, sol::lib::io, sol::lib::os);
+
+    bindings.bind(lua);
 
     std::cout << "Squeeze 0.1.0 | "
               << juce::SystemStats::getJUCEVersion()
@@ -120,14 +137,23 @@ int main(int argc, char* argv[])
         {
             sol::error err = result;
             std::cerr << "Error: " << err.what() << std::endl;
+            engine.stop();
+            scheduler.collectGarbage();
             return 1;
         }
     }
 
     if (interactive)
         runRepl(lua);
-    else
-        runEngine();
+    else if (scriptPath.empty())
+    {
+        std::cout << "Engine running. Press Ctrl+C to stop." << std::endl;
+        while (running.load())
+            juce::Thread::sleep(100);
+    }
+
+    engine.stop();
+    scheduler.collectGarbage();
 
     std::cout << "Goodbye." << std::endl;
     return 0;

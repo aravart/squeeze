@@ -81,6 +81,19 @@ target_compile_definitions(squeeze_core PUBLIC
     JUCE_DISPLAY_SPLASH_SCREEN=0
 )
 
+# --- Squeeze Lua Library ---
+add_library(squeeze_lua STATIC
+    src/core/LuaBindings.cpp
+)
+
+target_include_directories(squeeze_lua PUBLIC src)
+
+target_link_libraries(squeeze_lua PUBLIC
+    squeeze_core
+    lua_static
+    sol2
+)
+
 # --- Tests ---
 add_executable(squeeze_tests
     tests/core/PortTests.cpp
@@ -89,10 +102,11 @@ add_executable(squeeze_tests
     tests/core/SchedulerTests.cpp
     tests/core/EngineTests.cpp
     tests/core/PluginNodeTests.cpp
+    tests/core/LuaBindingsTests.cpp
 )
 
 target_link_libraries(squeeze_tests PRIVATE
-    squeeze_core
+    squeeze_lua
     Catch2::Catch2WithMain
 )
 
@@ -110,11 +124,9 @@ target_sources(Squeeze PRIVATE
 )
 
 target_link_libraries(Squeeze PRIVATE
-    squeeze_core
+    squeeze_lua
     juce::juce_audio_devices
     juce::juce_audio_formats
     juce::juce_audio_processors
     juce::juce_audio_utils
-    lua_static
-    sol2
 )
