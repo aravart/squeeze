@@ -39,7 +39,7 @@ void Logger::log(const char* file, int line, const char* fmt, ...)
     vsnprintf(userMsg, sizeof(userMsg), fmt, args);
     va_end(args);
 
-    fprintf(stderr, "[%06ld][CT] %s:%d %s\n", elapsedMs(), basename(file), line, userMsg);
+    fprintf(stderr, "\033[2m[%06ld][CT] %s:%d %s\033[0m\n", elapsedMs(), basename(file), line, userMsg);
 }
 
 void Logger::logRT(const char* file, int line, const char* fmt, ...)
@@ -62,7 +62,7 @@ void Logger::drain()
 {
     LogEntry entry;
     while (rtQueue_.tryPop(entry))
-        fprintf(stderr, "%s\n", entry.message);
+        fprintf(stderr, "\033[2m%s\033[0m\n", entry.message);
 }
 
 } // namespace squeeze
