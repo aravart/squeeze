@@ -53,6 +53,11 @@ private:
     std::tuple<sol::object, sol::object> luaAddMidiInput(sol::state_view lua, const std::string& name);
     sol::table luaRefreshMidiInputs(sol::state_view lua);
 
+    // Performance monitoring API
+    sol::table luaPerf(sol::state_view lua);
+    void luaPerfNodes(bool enable);
+    void luaPerfReset();
+
     // Buffer API
     std::tuple<sol::object, sol::object> luaLoadBuffer(sol::state_view lua, const std::string& filePath);
     std::tuple<sol::object, sol::object> luaCreateBuffer(sol::state_view lua,

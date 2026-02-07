@@ -71,6 +71,28 @@ void Engine::prepareForTesting(double sampleRate, int blockSize)
     std::lock_guard<std::mutex> lock(controlMutex_);
     sampleRate_.store(sampleRate);
     blockSize_.store(blockSize);
+    perfMonitor_.prepare(sampleRate, blockSize);
+}
+
+PerfMonitor& Engine::getPerfMonitor()
+{
+    return perfMonitor_;
+}
+
+PerfSnapshot Engine::getPerfSnapshot()
+{
+    std::lock_guard<std::mutex> lock(controlMutex_);
+    auto snap = perfMonitor_.getSnapshot();
+
+    // Fill in MIDI device names from nodeNames_
+    for (auto& m : snap.midi)
+    {
+        auto it = nodeNames_.find(m.nodeId);
+        if (it != nodeNames_.end())
+            m.deviceName = it->second;
+    }
+
+    return snap;
 }
 
 Graph& Engine::getGraph()
@@ -498,7 +520,8 @@ GraphSnapshot* Engine::buildSnapshot(const Graph& graph,
             }
         }
 
-        snap->slots.push_back({node, audioSrc, std::move(midiSources), false});
+        auto* midiInput = dynamic_cast<MidiInputNode*>(node);
+        snap->slots.push_back({node, nodeId, audioSrc, std::move(midiSources), false, midiInput});
 
         // Determine output channel count from this node's output ports
         int outChannels = 2;
@@ -557,6 +580,8 @@ void Engine::processBlock(juce::AudioBuffer<float>& outputBuffer,
                           juce::MidiBuffer& outputMidi,
                           int numSamples)
 {
+    perfMonitor_.beginCallback();
+
     // 1. Drain scheduler
     scheduler_.processPending([this](const Command& cmd) {
         switch (cmd.type)
@@ -584,6 +609,7 @@ void Engine::processBlock(juce::AudioBuffer<float>& outputBuffer,
     {
         outputBuffer.clear();
         outputMidi.clear();
+        perfMonitor_.endCallback();
         return;
     }
 
@@ -648,11 +674,13 @@ void Engine::processBlock(juce::AudioBuffer<float>& outputBuffer,
         snap.audioOutputs[i].clear();
         snap.midiOutputs[i].clear();
 
-        // Process
+        // Process with per-node timing
+        perfMonitor_.beginNode(i, slot.nodeId);
         ProcessContext ctx{audioIn, snap.audioOutputs[i],
                           *midiInPtr, snap.midiOutputs[i],
                           numSamples};
         slot.node->process(ctx);
+        perfMonitor_.endNode(i);
     }
 
     // 4. Sum all audio leaf nodes to device output
@@ -671,6 +699,21 @@ void Engine::processBlock(juce::AudioBuffer<float>& outputBuffer,
             for (int s = 0; s < numSamples; ++s)
                 outputBuffer.addSample(ch, s, leafAudio.getSample(ch, s));
     }
+
+    // 5. Report MIDI queue health
+    for (int i = 0; i < (int)snap.slots.size(); ++i)
+    {
+        if (snap.slots[i].midiInputNode)
+        {
+            auto* mn = snap.slots[i].midiInputNode;
+            perfMonitor_.reportMidiQueue(
+                snap.slots[i].nodeId,
+                mn->getQueueFillLevel(),
+                mn->getDroppedCount());
+        }
+    }
+
+    perfMonitor_.endCallback();
 }
 
 // JUCE AudioIODeviceCallback
@@ -693,6 +736,7 @@ void Engine::audioDeviceAboutToStart(juce::AudioIODevice* device)
     sampleRate_.store(sr);
     blockSize_.store(bs);
     running_.store(true);
+    perfMonitor_.prepare(sr, bs);
     SQ_LOG("audioDeviceAboutToStart: sr=%.0f bs=%d", sr, bs);
 
     // Re-prepare all nodes with the device's actual sample rate and block size

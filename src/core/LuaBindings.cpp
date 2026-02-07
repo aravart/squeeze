@@ -1,6 +1,9 @@
 #include "core/LuaBindings.h"
 #include "core/Logger.h"
 
+#include <chrono>
+#include <thread>
+
 namespace squeeze {
 
 LuaBindings::LuaBindings(Engine& engine)
@@ -116,6 +119,18 @@ void LuaBindings::bind(sol::state& lua)
 
     sq.set_function("buffer_info", [this](sol::this_state s, int id) {
         return luaBufferInfo(sol::state_view(s), id);
+    });
+
+    sq.set_function("perf", [this](sol::this_state s) {
+        return luaPerf(sol::state_view(s));
+    });
+
+    sq.set_function("perf_nodes", [this](bool enable) {
+        luaPerfNodes(enable);
+    });
+
+    sq.set_function("perf_reset", [this]() {
+        luaPerfReset();
     });
 
     sq.set_function("param_info", [this](sol::this_state s, int nodeId) {
@@ -513,6 +528,71 @@ std::tuple<sol::object, sol::object> LuaBindings::luaBufferInfo(
     info["length_seconds"] = buf->getLengthInSeconds();
 
     return {sol::make_object(lua, info), sol::lua_nil};
+}
+
+// ============================================================
+// Performance monitoring API
+// ============================================================
+
+sol::table LuaBindings::luaPerf(sol::state_view lua)
+{
+    // Auto-enable on first call so sq.perf() just works in the REPL.
+    // Sleep one publish window (~100ms) so data is available immediately.
+    if (!engine_.getPerfMonitor().isEnabled())
+    {
+        engine_.getPerfMonitor().enable();
+        std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    }
+
+    auto snap = engine_.getPerfSnapshot();
+
+    sol::table result = lua.create_table();
+    result["cpu"] = snap.cpuLoadPercent;
+    result["callback_avg_us"] = snap.callbackAvgUs;
+    result["callback_peak_us"] = snap.callbackPeakUs;
+    result["xruns"] = snap.xrunCount;
+    result["budget_us"] = snap.bufferDurationUs;
+    result["sample_rate"] = snap.sampleRate;
+    result["block_size"] = snap.blockSize;
+
+    sol::table nodes = lua.create_table();
+    for (int i = 0; i < (int)snap.nodes.size(); ++i)
+    {
+        sol::table n = lua.create_table();
+        n["id"] = snap.nodes[i].nodeId;
+        n["avg_us"] = snap.nodes[i].avgUs;
+        n["peak_us"] = snap.nodes[i].peakUs;
+        nodes[i + 1] = n;
+    }
+    result["nodes"] = nodes;
+
+    sol::table midi = lua.create_table();
+    for (int i = 0; i < (int)snap.midi.size(); ++i)
+    {
+        sol::table m = lua.create_table();
+        m["id"] = snap.midi[i].nodeId;
+        m["device"] = snap.midi[i].deviceName;
+        m["fill"] = snap.midi[i].fillLevel;
+        m["peak_fill"] = snap.midi[i].peakFillLevel;
+        m["dropped"] = snap.midi[i].droppedCount;
+        midi[i + 1] = m;
+    }
+    result["midi"] = midi;
+
+    return result;
+}
+
+void LuaBindings::luaPerfNodes(bool enable)
+{
+    if (enable)
+        engine_.getPerfMonitor().enableNodeProfiling();
+    else
+        engine_.getPerfMonitor().disableNodeProfiling();
+}
+
+void LuaBindings::luaPerfReset()
+{
+    engine_.getPerfMonitor().resetCounters();
 }
 
 } // namespace squeeze

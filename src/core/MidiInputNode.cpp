@@ -85,6 +85,16 @@ const std::string& MidiInputNode::getDeviceName() const
     return deviceName_;
 }
 
+int MidiInputNode::getQueueFillLevel() const
+{
+    return midiQueue_.size();
+}
+
+int MidiInputNode::getDroppedCount() const
+{
+    return droppedCount_.load(std::memory_order_relaxed);
+}
+
 void MidiInputNode::handleIncomingMidiMessage(juce::MidiInput* /*source*/,
                                                const juce::MidiMessage& message)
 {
@@ -103,7 +113,8 @@ void MidiInputNode::handleIncomingMidiMessage(juce::MidiInput* /*source*/,
         event.data[i] = raw[i];
 
     // Drop on overflow (lock-free, no block)
-    midiQueue_.tryPush(event);
+    if (!midiQueue_.tryPush(event))
+        droppedCount_.fetch_add(1, std::memory_order_relaxed);
 
     if (message.isNoteOn())
         SQ_LOG_RT_TRACE("MIDI [%s] note-on  ch=%d note=%d vel=%d",

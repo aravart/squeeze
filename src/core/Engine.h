@@ -3,6 +3,7 @@
 #include "core/Buffer.h"
 #include "core/Graph.h"
 #include "core/Node.h"
+#include "core/PerfMonitor.h"
 #include "core/PluginCache.h"
 #include "core/Scheduler.h"
 
@@ -26,10 +27,12 @@ class MidiInputNode;
 struct GraphSnapshot {
     struct NodeSlot {
         Node* node;
+        int nodeId;
         int audioSourceIndex;
         struct MidiSource { int slotIndex; int channelFilter; };
         std::vector<MidiSource> midiSources;
         bool isAudioLeaf;  // true if no other node reads this node's audio output
+        MidiInputNode* midiInputNode;  // non-null if this is a MidiInputNode
     };
 
     std::vector<NodeSlot> slots;
@@ -128,6 +131,10 @@ public:
     // For testing: set sample rate/block size without opening a device
     void prepareForTesting(double sampleRate, int blockSize);
 
+    // Performance monitoring
+    PerfMonitor& getPerfMonitor();
+    PerfSnapshot getPerfSnapshot();
+
     // Access internal graph (for LuaBindings / testing)
     Graph& getGraph();
 
@@ -143,6 +150,7 @@ private:
 
     mutable std::mutex controlMutex_;
     Scheduler& scheduler_;
+    PerfMonitor perfMonitor_;
     juce::AudioDeviceManager deviceManager_;
     GraphSnapshot* activeSnapshot_ = nullptr;
     std::atomic<double> sampleRate_{0.0};

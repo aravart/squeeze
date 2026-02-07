@@ -5,6 +5,7 @@
 
 #include <juce_audio_devices/juce_audio_devices.h>
 
+#include <atomic>
 #include <memory>
 #include <string>
 
@@ -34,6 +35,10 @@ public:
 
     const std::string& getDeviceName() const;
 
+    // Queue monitoring (callable from audio thread, RT-safe)
+    int getQueueFillLevel() const;
+    int getDroppedCount() const;
+
     // juce::MidiInputCallback (called on MIDI thread)
     void handleIncomingMidiMessage(juce::MidiInput* source,
                                    const juce::MidiMessage& message) override;
@@ -42,6 +47,7 @@ private:
     std::string deviceName_;
     std::unique_ptr<juce::MidiInput> device_;
     SPSCQueue<MidiEvent, 1024> midiQueue_;
+    std::atomic<int> droppedCount_{0};
 };
 
 } // namespace squeeze
