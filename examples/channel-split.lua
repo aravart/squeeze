@@ -1,7 +1,19 @@
 -- channel-split.lua
--- Route MIDI channel 1 to Pure LoFi and channel 10 to XO.
--- All auto-loaded MIDI input nodes are connected to both plugins.
+-- Route each MIDI channel to a different plugin.
+-- All auto-loaded MIDI input nodes are connected to all plugins.
 -- Usage: ./Squeeze -d examples/channel-split.lua -i
+
+-- ============================================================
+-- Configuration: plugin name -> MIDI channel
+-- ============================================================
+
+local plugins = {
+    { name = "Pure LoFi",         channel = 1 },
+    { name = "Wurli V3",                channel = 10 },
+    { name = "Augmented STRINGS", channel = 2 },
+}
+
+-- ============================================================
 
 -- Collect all MIDI input nodes (auto-loaded at startup)
 midi_nodes = {}
@@ -25,53 +37,34 @@ for _, n in ipairs(midi_nodes) do
 end
 
 -- Load plugins
-lofi, err1 = sq.add_plugin("Pure LoFi")
-if not lofi then
-    print("Failed to load Pure LoFi: " .. err1)
-    return
-end
-print("Loaded Pure LoFi (id=" .. lofi.id .. ")")
-
-xo, err2 = sq.add_plugin("XO")
-if not xo then
-    print("Failed to load XO: " .. err2)
-    return
-end
-print("Loaded XO (id=" .. xo.id .. ")")
-
-bass, err3 = sq.add_plugin("Augmented STRINGS")
-if not bass then
-    print("Failed to load Augmented STRINGS: " .. err3)
-    return
-end
-print("Loaded Augmented STRINGS (id=" .. bass.id .. ")")
-
--- Connect each MIDI input -> Pure LoFi (ch 1) and -> XO (ch 10)
-for _, n in ipairs(midi_nodes) do
-    local c1, e1 = sq.connect(n.id, "midi_out", lofi, "midi_in", 1)
-    if c1 then
-        print(n.name .. " ch 1 -> Pure LoFi")
-    else
-        print(n.name .. " -> Pure LoFi failed: " .. e1)
+local nodes = {}
+for _, p in ipairs(plugins) do
+    local node, err = sq.add_plugin(p.name)
+    if not node then
+        print("Failed to load " .. p.name .. ": " .. err)
+        return
     end
+    print("Loaded " .. p.name .. " (id=" .. node.id .. ")")
+    table.insert(nodes, { node = node, channel = p.channel, name = p.name })
+end
 
-    local c2, e2 = sq.connect(n.id, "midi_out", xo, "midi_in", 10)
-    if c2 then
-        print(n.name .. " ch 10 -> XO")
-    else
-        print(n.name .. " -> XO failed: " .. e2)
-    end
-
-    local c3, e3 = sq.connect(n.id, "midi_out", bass, "midi_in", 2)
-    if c3 then
-        print(n.name .. " ch 2 -> Augmented STRINGS")
-    else
-        print(n.name .. " -> Augmented STRINGS failed: " .. e3)
+-- Connect each MIDI input to each plugin on its channel
+for _, midi in ipairs(midi_nodes) do
+    for _, p in ipairs(nodes) do
+        local c, e = sq.connect(midi.id, "midi_out", p.node, "midi_in", p.channel)
+        if c then
+            print(midi.name .. " ch " .. p.channel .. " -> " .. p.name)
+        else
+            print(midi.name .. " -> " .. p.name .. " failed: " .. e)
+        end
     end
 end
 
--- Start audio (opens device and rebuilds graph with correct sr/bs)
+-- Start audio
 sq.start(44100, 512)
 
-print("\nPlaying! Channel 1 -> Pure LoFi, Channel 10 -> XO")
+print("\nPlaying!")
+for _, p in ipairs(nodes) do
+    print("  Channel " .. p.channel .. " -> " .. p.name)
+end
 print("Use the REPL to adjust, or Ctrl+C to quit.")
