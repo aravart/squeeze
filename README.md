@@ -45,28 +45,17 @@ Options:
 ## Lua API
 
 ```lua
--- Load and connect plugins
+local kb    = sq.add_midi_input("Arturia KeyStep 37")
 local synth = sq.add_plugin("Dexed")
-local reverb = sq.add_plugin("Valhalla Room")
-sq.connect(synth, "out", reverb, "in")
+local verb  = sq.add_plugin("Valhalla Room")
 
--- MIDI routing with channel filtering
-local midi = sq.add_midi_input("Arturia KeyStep 37")
-sq.connect(midi, "midi", synth, "midi", 1)  -- channel 1 only
+sq.patch {
+    kb >> synth >> verb,
+}
 
--- Parameters
-sq.set_param(reverb, "Mix", 0.4)
-print(sq.get_param(reverb, "Mix"))
+synth.Feedback = 0.6
+verb.Mix = 0.4
 
--- Buffers
-local kick = sq.load_buffer("samples/kick.wav")
-local rec = sq.create_buffer(2, 44100 * 10, 44100, "loop")
-
--- Inspect
-for _, n in ipairs(sq.nodes()) do print(n.id, n.name) end
-for _, b in ipairs(sq.buffers()) do print(b.id, b.name) end
-
-sq.update()
 sq.start()
 ```
 
