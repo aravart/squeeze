@@ -142,6 +142,8 @@ juce_add_console_app(Squeeze
 
 target_sources(Squeeze PRIVATE
     src/main.cpp
+    src/app/Repl.cpp
+    src/app/EditorManager.cpp
 )
 
 target_link_libraries(Squeeze PRIVATE
