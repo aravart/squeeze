@@ -13,6 +13,7 @@ extern "C" {
 #include <linenoise.h>
 }
 
+#include <algorithm>
 #include <atomic>
 #include <csignal>
 #include <map>
@@ -61,16 +62,23 @@ static void printTable(sol::state_view lua, const sol::table& tbl, int indent)
             std::cout << std::endl;
         }
     } else {
-        int idx = 0;
+        // Collect keys and sort them for stable output
+        std::vector<std::pair<std::string, sol::object>> entries;
         for (auto& kv : tbl) {
-            std::cout << pad;
+            std::string key;
             if (kv.first.is<std::string>())
-                std::cout << kv.first.as<std::string>();
+                key = kv.first.as<std::string>();
             else
-                std::cout << "[" << kv.first.as<double>() << "]";
-            std::cout << " = ";
-            printValue(lua, kv.second, indent + 2);
-            if (++idx < count) std::cout << ",";
+                key = "[" + std::to_string(kv.first.as<double>()) + "]";
+            entries.push_back({key, kv.second});
+        }
+        std::sort(entries.begin(), entries.end(),
+                  [](const auto& a, const auto& b) { return a.first < b.first; });
+
+        for (int i = 0; i < (int)entries.size(); ++i) {
+            std::cout << pad << entries[i].first << " = ";
+            printValue(lua, entries[i].second, indent + 2);
+            if (i + 1 < (int)entries.size()) std::cout << ",";
             std::cout << std::endl;
         }
     }
@@ -298,6 +306,22 @@ end
 
 function PluginNode:params()
     return sq.params(self.id)
+end
+
+function PluginNode:param_info()
+    return sq.param_info(self.id)
+end
+
+function PluginNode:param_text(name_or_index)
+    return sq.param_text(self.id, name_or_index)
+end
+
+function PluginNode:set_param_i(index, value)
+    return sq.set_param_i(self.id, index, value)
+end
+
+function PluginNode:get_param_i(index)
+    return sq.get_param_i(self.id, index)
 end
 
 function PluginNode:ports()

@@ -106,6 +106,10 @@ TEST_CASE("LuaBindings bind creates sq table with all functions")
     REQUIRE(sq["set_param"].get_type() == sol::type::function);
     REQUIRE(sq["get_param"].get_type() == sol::type::function);
     REQUIRE(sq["params"].get_type() == sol::type::function);
+    REQUIRE(sq["param_info"].get_type() == sol::type::function);
+    REQUIRE(sq["param_text"].get_type() == sol::type::function);
+    REQUIRE(sq["set_param_i"].get_type() == sol::type::function);
+    REQUIRE(sq["get_param_i"].get_type() == sol::type::function);
     REQUIRE(sq["nodes"].get_type() == sol::type::function);
     REQUIRE(sq["ports"].get_type() == sol::type::function);
     REQUIRE(sq["connections"].get_type() == sol::type::function);
@@ -728,4 +732,137 @@ TEST_CASE("LuaBindings connections returns channel field")
     REQUIRE(c["src"].get<int>() == synthId);
     REQUIRE(c["dst"].get<int>() == fxId);
     REQUIRE(c["channel"].get<int>() == 7);
+}
+
+// ============================================================
+// param_info
+// ============================================================
+
+TEST_CASE("LuaBindings param_info returns descriptor table for a node")
+{
+    LuaFixture f;
+
+    auto node = makeTestPluginNode(2, 2, false);
+    int id = f.bindings.addTestNode(std::move(node), "FX");
+
+    f.lua["node_id"] = id;
+    auto result = f.lua.safe_script("return sq.param_info(node_id)", sol::script_pass_on_error);
+    REQUIRE(result.valid());
+
+    sol::table info = result;
+    REQUIRE(info.size() == 2);
+
+    sol::table first = info[1];
+    REQUIRE(first["name"].get<std::string>() == "Gain");
+    REQUIRE(first["index"].get<int>() == 0);
+    REQUIRE(first["automatable"].get<bool>() == true);
+}
+
+TEST_CASE("LuaBindings param_info returns nil for invalid node")
+{
+    LuaFixture f;
+
+    auto result = f.lua.safe_script(
+        "local v, err = sq.param_info(9999)\n"
+        "return v, err",
+        sol::script_pass_on_error);
+    REQUIRE(result.valid());
+
+    sol::object val = result;
+    REQUIRE(val.get_type() == sol::type::lua_nil);
+}
+
+// ============================================================
+// param_text
+// ============================================================
+
+TEST_CASE("LuaBindings param_text returns display text by name")
+{
+    LuaFixture f;
+
+    auto node = makeTestPluginNode(2, 2, false);
+    int id = f.bindings.addTestNode(std::move(node), "FX");
+
+    f.lua["node_id"] = id;
+    auto result = f.lua.safe_script("return sq.param_text(node_id, 'Gain')", sol::script_pass_on_error);
+    REQUIRE(result.valid());
+
+    std::string text = result;
+    REQUIRE_FALSE(text.empty());
+}
+
+TEST_CASE("LuaBindings param_text returns display text by index")
+{
+    LuaFixture f;
+
+    auto node = makeTestPluginNode(2, 2, false);
+    int id = f.bindings.addTestNode(std::move(node), "FX");
+
+    f.lua["node_id"] = id;
+    auto result = f.lua.safe_script("return sq.param_text(node_id, 0)", sol::script_pass_on_error);
+    REQUIRE(result.valid());
+
+    std::string text = result;
+    REQUIRE_FALSE(text.empty());
+}
+
+TEST_CASE("LuaBindings param_text returns nil for invalid node")
+{
+    LuaFixture f;
+
+    auto result = f.lua.safe_script(
+        "local v, err = sq.param_text(9999, 0)\n"
+        "return v, err",
+        sol::script_pass_on_error);
+    REQUIRE(result.valid());
+
+    sol::object val = result;
+    REQUIRE(val.get_type() == sol::type::lua_nil);
+}
+
+// ============================================================
+// set_param_i / get_param_i
+// ============================================================
+
+TEST_CASE("LuaBindings set_param_i and get_param_i work by index")
+{
+    LuaFixture f;
+
+    auto node = makeTestPluginNode(2, 2, false);
+    int id = f.bindings.addTestNode(std::move(node), "FX");
+
+    f.lua["node_id"] = id;
+    f.lua.safe_script("sq.set_param_i(node_id, 0, 0.75)");
+
+    auto result = f.lua.safe_script("return sq.get_param_i(node_id, 0)", sol::script_pass_on_error);
+    float val = result;
+    REQUIRE_THAT(val, WithinAbs(0.75f, 1e-3));
+}
+
+TEST_CASE("LuaBindings set_param_i returns nil for invalid node")
+{
+    LuaFixture f;
+
+    auto result = f.lua.safe_script(
+        "local v, err = sq.set_param_i(9999, 0, 0.5)\n"
+        "return v, err",
+        sol::script_pass_on_error);
+    REQUIRE(result.valid());
+
+    sol::object val = result;
+    REQUIRE(val.get_type() == sol::type::lua_nil);
+}
+
+TEST_CASE("LuaBindings get_param_i returns nil for invalid node")
+{
+    LuaFixture f;
+
+    auto result = f.lua.safe_script(
+        "local v, err = sq.get_param_i(9999, 0)\n"
+        "return v, err",
+        sol::script_pass_on_error);
+    REQUIRE(result.valid());
+
+    sol::object val = result;
+    REQUIRE(val.get_type() == sol::type::lua_nil);
 }

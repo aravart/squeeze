@@ -87,10 +87,17 @@ public:
     // Legacy overload for tests with external graphs
     void updateGraph(const Graph& graph);
 
-    // Parameters
-    bool setParameter(int nodeId, const std::string& name, float value);
-    float getParameter(int nodeId, const std::string& name) const;
-    std::vector<std::string> getParameterNames(int nodeId) const;
+    // Parameters (index-based)
+    bool setParameter(int nodeId, int paramIndex, float value);
+    float getParameter(int nodeId, int paramIndex) const;
+
+    // Parameters (name-based convenience)
+    bool setParameterByName(int nodeId, const std::string& name, float value);
+    float getParameterByName(int nodeId, const std::string& name) const;
+
+    // Parameter discovery + display
+    std::vector<ParameterDescriptor> getParameterDescriptors(int nodeId) const;
+    std::string getParameterText(int nodeId, int paramIndex) const;
 
     // Processing (public for testing without a device)
     void processBlock(juce::AudioBuffer<float>& outputBuffer,

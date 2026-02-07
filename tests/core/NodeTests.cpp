@@ -43,15 +43,22 @@ public:
         return {{"out", PortDirection::output, SignalType::audio, 2}};
     }
 
-    std::vector<std::string> getParameterNames() const override { return {"gain"}; }
+    std::vector<ParameterDescriptor> getParameterDescriptors() const override {
+        return {{"gain", 0, 1.0f, 0, true, false, "", ""}};
+    }
 
-    float getParameter(const std::string& name) const override {
-        if (name == "gain") return gain;
+    float getParameter(int index) const override {
+        if (index == 0) return gain;
         return 0.0f;
     }
 
-    void setParameter(const std::string& name, float value) override {
-        if (name == "gain") gain = value;
+    void setParameter(int index, float value) override {
+        if (index == 0) gain = value;
+    }
+
+    std::string getParameterText(int index) const override {
+        if (index == 0) return std::to_string(gain);
+        return "";
     }
 };
 
@@ -219,7 +226,7 @@ TEST_CASE("GainNode applies gain to audio")
 {
     GainNode node;
     node.prepare(44100.0, 4);
-    node.setParameter("gain", 0.5f);
+    node.setParameter(0, 0.5f);
 
     juce::AudioBuffer<float> input(2, 4);
     juce::AudioBuffer<float> output(2, 4);
@@ -242,7 +249,7 @@ TEST_CASE("GainNode at zero gain produces silence")
 {
     GainNode node;
     node.prepare(44100.0, 4);
-    node.setParameter("gain", 0.0f);
+    node.setParameter(0, 0.0f);
 
     juce::AudioBuffer<float> input(2, 4);
     juce::AudioBuffer<float> output(2, 4);
@@ -329,55 +336,136 @@ TEST_CASE("Node processes silence correctly")
 }
 
 // ============================================================
-// Parameters
+// Parameters — descriptors
 // ============================================================
 
-TEST_CASE("GainNode exposes gain parameter")
+TEST_CASE("GainNode exposes one parameter descriptor")
 {
     GainNode node;
-    auto names = node.getParameterNames();
+    auto descs = node.getParameterDescriptors();
 
-    REQUIRE(names.size() == 1);
-    REQUIRE(names[0] == "gain");
+    REQUIRE(descs.size() == 1);
+    REQUIRE(descs[0].name == "gain");
+    REQUIRE(descs[0].index == 0);
+    REQUIRE_THAT(descs[0].defaultValue, WithinAbs(1.0f, 1e-6));
+    REQUIRE(descs[0].numSteps == 0);
+    REQUIRE(descs[0].automatable == true);
+    REQUIRE(descs[0].boolean == false);
 }
+
+TEST_CASE("Parameter descriptors are stable across calls")
+{
+    GainNode node;
+    auto first = node.getParameterDescriptors();
+    auto second = node.getParameterDescriptors();
+
+    REQUIRE(first.size() == second.size());
+    REQUIRE(first[0].name == second[0].name);
+    REQUIRE(first[0].index == second[0].index);
+}
+
+// ============================================================
+// Parameters — index-based access
+// ============================================================
 
 TEST_CASE("GainNode parameter defaults to 1.0")
 {
     GainNode node;
-    REQUIRE_THAT(node.getParameter("gain"), WithinAbs(1.0f, 1e-6));
+    REQUIRE_THAT(node.getParameter(0), WithinAbs(1.0f, 1e-6));
 }
 
-TEST_CASE("GainNode parameter can be set and read back")
+TEST_CASE("GainNode parameter can be set and read back by index")
 {
     GainNode node;
-    node.setParameter("gain", 0.75f);
-    REQUIRE_THAT(node.getParameter("gain"), WithinAbs(0.75f, 1e-6));
+    node.setParameter(0, 0.75f);
+    REQUIRE_THAT(node.getParameter(0), WithinAbs(0.75f, 1e-6));
 }
 
-TEST_CASE("Unknown parameter returns 0.0")
+TEST_CASE("Unknown parameter index returns 0.0")
 {
     GainNode node;
-    REQUIRE_THAT(node.getParameter("nonexistent"), WithinAbs(0.0f, 1e-6));
+    REQUIRE_THAT(node.getParameter(99), WithinAbs(0.0f, 1e-6));
 }
 
-TEST_CASE("Setting unknown parameter is a no-op")
+TEST_CASE("Setting unknown parameter index is a no-op")
 {
     GainNode node;
-    node.setParameter("nonexistent", 99.0f);
-    // Should not crash, and known parameter is unaffected
-    REQUIRE_THAT(node.getParameter("gain"), WithinAbs(1.0f, 1e-6));
+    node.setParameter(99, 42.0f);
+    REQUIRE_THAT(node.getParameter(0), WithinAbs(1.0f, 1e-6));
 }
 
-TEST_CASE("Node with no parameters returns empty list")
+// ============================================================
+// Parameters — name-based convenience
+// ============================================================
+
+TEST_CASE("GainNode parameter can be set and read by name")
+{
+    GainNode node;
+    REQUIRE(node.setParameterByName("gain", 0.5f));
+    REQUIRE_THAT(node.getParameterByName("gain"), WithinAbs(0.5f, 1e-6));
+}
+
+TEST_CASE("setParameterByName returns false for unknown name")
+{
+    GainNode node;
+    REQUIRE_FALSE(node.setParameterByName("nonexistent", 0.5f));
+}
+
+TEST_CASE("getParameterByName returns 0.0 for unknown name")
+{
+    GainNode node;
+    REQUIRE_THAT(node.getParameterByName("nonexistent"), WithinAbs(0.0f, 1e-6));
+}
+
+TEST_CASE("findParameterIndex returns correct index")
+{
+    GainNode node;
+    REQUIRE(node.findParameterIndex("gain") == 0);
+}
+
+TEST_CASE("findParameterIndex returns -1 for unknown name")
+{
+    GainNode node;
+    REQUIRE(node.findParameterIndex("nonexistent") == -1);
+}
+
+// ============================================================
+// Parameters — display text
+// ============================================================
+
+TEST_CASE("GainNode getParameterText returns non-empty string")
+{
+    GainNode node;
+    auto text = node.getParameterText(0);
+    REQUIRE_FALSE(text.empty());
+}
+
+TEST_CASE("GainNode getParameterText returns empty for unknown index")
+{
+    GainNode node;
+    REQUIRE(node.getParameterText(99).empty());
+}
+
+// ============================================================
+// Parameters — nodes with no parameters
+// ============================================================
+
+TEST_CASE("Node with no parameters returns empty descriptors")
 {
     PassthroughNode node;
-    REQUIRE(node.getParameterNames().empty());
+    REQUIRE(node.getParameterDescriptors().empty());
 }
 
-TEST_CASE("Node with no parameters returns 0.0 for any name")
+TEST_CASE("Node with no parameters returns 0.0 for any index")
 {
     PassthroughNode node;
-    REQUIRE_THAT(node.getParameter("anything"), WithinAbs(0.0f, 1e-6));
+    REQUIRE_THAT(node.getParameter(0), WithinAbs(0.0f, 1e-6));
+}
+
+TEST_CASE("Node with no parameters findParameterIndex returns -1")
+{
+    PassthroughNode node;
+    REQUIRE(node.findParameterIndex("anything") == -1);
 }
 
 // ============================================================

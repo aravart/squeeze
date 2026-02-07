@@ -106,43 +106,63 @@ std::vector<PortDescriptor> PluginNode::getOutputPorts() const
     return ports;
 }
 
-std::vector<std::string> PluginNode::getParameterNames() const
+std::vector<ParameterDescriptor> PluginNode::getParameterDescriptors() const
 {
-    std::vector<std::string> names;
-    for (const auto& [name, index] : paramNameToIndex_)
-        names.push_back(name);
-    return names;
+    std::vector<ParameterDescriptor> result;
+    auto& params = processor_->getParameters();
+
+    for (int i = 0; i < params.size(); ++i)
+    {
+        auto* p = params[i];
+        ParameterDescriptor desc;
+        desc.name = p->getName(256).toStdString();
+        desc.index = i;
+        desc.defaultValue = p->getDefaultValue();
+        desc.numSteps = p->getNumSteps();
+        desc.automatable = p->isAutomatable();
+        desc.boolean = p->isBoolean();
+        desc.label = p->getLabel().toStdString();
+        desc.group = "";
+
+        // Check if numSteps indicates continuous (JUCE returns large values for continuous)
+        if (desc.numSteps > 1000)
+            desc.numSteps = 0;
+
+        result.push_back(std::move(desc));
+    }
+
+    return result;
 }
 
-float PluginNode::getParameter(const std::string& name) const
+float PluginNode::getParameter(int index) const
 {
-    auto it = paramNameToIndex_.find(name);
-    if (it == paramNameToIndex_.end())
-        return 0.0f;
-
     auto& params = processor_->getParameters();
-    if (it->second < params.size())
-        return params[it->second]->getValue();
-
+    if (index >= 0 && index < params.size())
+        return params[index]->getValue();
     return 0.0f;
 }
 
-void PluginNode::setParameter(const std::string& name, float value)
-{
-    auto it = paramNameToIndex_.find(name);
-    if (it == paramNameToIndex_.end())
-        return;
-
-    auto& params = processor_->getParameters();
-    if (it->second < params.size())
-        params[it->second]->setValue(value);
-}
-
-void PluginNode::setParameterByIndex(int index, float value)
+void PluginNode::setParameter(int index, float value)
 {
     auto& params = processor_->getParameters();
     if (index >= 0 && index < params.size())
         params[index]->setValue(value);
+}
+
+std::string PluginNode::getParameterText(int index) const
+{
+    auto& params = processor_->getParameters();
+    if (index >= 0 && index < params.size())
+        return params[index]->getCurrentValueAsText().toStdString();
+    return "";
+}
+
+int PluginNode::findParameterIndex(const std::string& name) const
+{
+    auto it = paramNameToIndex_.find(name);
+    if (it != paramNameToIndex_.end())
+        return it->second;
+    return -1;
 }
 
 const juce::String& PluginNode::getName() const

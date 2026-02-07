@@ -339,32 +339,59 @@ void Engine::updateGraph(const Graph& graph)
 // Parameters
 // ============================================================
 
-bool Engine::setParameter(int nodeId, const std::string& name, float value)
+bool Engine::setParameter(int nodeId, int paramIndex, float value)
 {
     Node* node = graph_.getNode(nodeId);
     if (!node)
         return false;
 
-    node->setParameter(name, value);
+    node->setParameter(paramIndex, value);
     return true;
 }
 
-float Engine::getParameter(int nodeId, const std::string& name) const
+float Engine::getParameter(int nodeId, int paramIndex) const
 {
     Node* node = graph_.getNode(nodeId);
     if (!node)
         return 0.0f;
 
-    return node->getParameter(name);
+    return node->getParameter(paramIndex);
 }
 
-std::vector<std::string> Engine::getParameterNames(int nodeId) const
+bool Engine::setParameterByName(int nodeId, const std::string& name, float value)
+{
+    Node* node = graph_.getNode(nodeId);
+    if (!node)
+        return false;
+
+    return node->setParameterByName(name, value);
+}
+
+float Engine::getParameterByName(int nodeId, const std::string& name) const
+{
+    Node* node = graph_.getNode(nodeId);
+    if (!node)
+        return 0.0f;
+
+    return node->getParameterByName(name);
+}
+
+std::vector<ParameterDescriptor> Engine::getParameterDescriptors(int nodeId) const
 {
     Node* node = graph_.getNode(nodeId);
     if (!node)
         return {};
 
-    return node->getParameterNames();
+    return node->getParameterDescriptors();
+}
+
+std::string Engine::getParameterText(int nodeId, int paramIndex) const
+{
+    Node* node = graph_.getNode(nodeId);
+    if (!node)
+        return "";
+
+    return node->getParameterText(paramIndex);
 }
 
 // ============================================================
@@ -499,7 +526,7 @@ void Engine::processBlock(juce::AudioBuffer<float>& outputBuffer,
             case Command::Type::setParameter:
             {
                 if (cmd.node)
-                    cmd.node->setParameterByIndex(cmd.paramIndex, cmd.paramValue);
+                    cmd.node->setParameter(cmd.paramIndex, cmd.paramValue);
                 break;
             }
         }

@@ -34,10 +34,12 @@ public:
     std::vector<PortDescriptor> getInputPorts() const override;
     std::vector<PortDescriptor> getOutputPorts() const override;
 
-    std::vector<std::string> getParameterNames() const override;
-    float getParameter(const std::string& name) const override;
-    void setParameter(const std::string& name, float value) override;
-    void setParameterByIndex(int index, float value) override;
+    // Parameter interface (index-based)
+    std::vector<ParameterDescriptor> getParameterDescriptors() const override;
+    float getParameter(int index) const override;
+    void setParameter(int index, float value) override;
+    std::string getParameterText(int index) const override;
+    int findParameterIndex(const std::string& name) const override;
 
     // Plugin-specific queries
     const juce::String& getName() const;

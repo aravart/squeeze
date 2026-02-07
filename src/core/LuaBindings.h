@@ -39,6 +39,13 @@ private:
     std::tuple<sol::object, sol::object> luaGetParam(sol::state_view lua,
         int nodeId, const std::string& name);
     std::tuple<sol::object, sol::object> luaParams(sol::state_view lua, int nodeId);
+    std::tuple<sol::object, sol::object> luaParamInfo(sol::state_view lua, int nodeId);
+    std::tuple<sol::object, sol::object> luaParamText(sol::state_view lua,
+        int nodeId, sol::object nameOrIndex);
+    std::tuple<sol::object, sol::object> luaSetParamI(sol::state_view lua,
+        int nodeId, int index, float value);
+    std::tuple<sol::object, sol::object> luaGetParamI(sol::state_view lua,
+        int nodeId, int index);
     sol::table luaNodes(sol::state_view lua);
     std::tuple<sol::object, sol::object> luaPorts(sol::state_view lua, int nodeId);
     sol::table luaConnections(sol::state_view lua);

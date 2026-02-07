@@ -94,6 +94,22 @@ void LuaBindings::bind(sol::state& lua)
     sq.set_function("refresh_midi_inputs", [this](sol::this_state s) {
         return luaRefreshMidiInputs(sol::state_view(s));
     });
+
+    sq.set_function("param_info", [this](sol::this_state s, int nodeId) {
+        return luaParamInfo(sol::state_view(s), nodeId);
+    });
+
+    sq.set_function("param_text", [this](sol::this_state s, int nodeId, sol::object nameOrIndex) {
+        return luaParamText(sol::state_view(s), nodeId, nameOrIndex);
+    });
+
+    sq.set_function("set_param_i", [this](sol::this_state s, int nodeId, int index, float value) {
+        return luaSetParamI(sol::state_view(s), nodeId, index, value);
+    });
+
+    sq.set_function("get_param_i", [this](sol::this_state s, int nodeId, int index) {
+        return luaGetParamI(sol::state_view(s), nodeId, index);
+    });
 }
 
 // ============================================================
@@ -192,8 +208,8 @@ void LuaBindings::luaStop()
 std::tuple<sol::object, sol::object> LuaBindings::luaSetParam(
     sol::state_view lua, int nodeId, const std::string& name, float value)
 {
-    if (!engine_.setParameter(nodeId, name, value))
-        return {sol::lua_nil, sol::make_object(lua, "Node " + std::to_string(nodeId) + " not found")};
+    if (!engine_.setParameterByName(nodeId, name, value))
+        return {sol::lua_nil, sol::make_object(lua, "Node " + std::to_string(nodeId) + " not found or unknown param")};
 
     return {sol::make_object(lua, true), sol::lua_nil};
 }
@@ -205,7 +221,7 @@ std::tuple<sol::object, sol::object> LuaBindings::luaGetParam(
     if (!node)
         return {sol::lua_nil, sol::make_object(lua, "Node " + std::to_string(nodeId) + " not found")};
 
-    float val = engine_.getParameter(nodeId, name);
+    float val = engine_.getParameterByName(nodeId, name);
     return {sol::make_object(lua, val), sol::lua_nil};
 }
 
@@ -216,12 +232,85 @@ std::tuple<sol::object, sol::object> LuaBindings::luaParams(
     if (!node)
         return {sol::lua_nil, sol::make_object(lua, "Node " + std::to_string(nodeId) + " not found")};
 
-    auto names = engine_.getParameterNames(nodeId);
+    auto descs = engine_.getParameterDescriptors(nodeId);
     sol::table result = lua.create_table();
-    for (int i = 0; i < (int)names.size(); ++i)
-        result[i + 1] = names[i];
+    for (int i = 0; i < (int)descs.size(); ++i)
+        result[i + 1] = descs[i].name;
 
     return {sol::make_object(lua, result), sol::lua_nil};
+}
+
+std::tuple<sol::object, sol::object> LuaBindings::luaParamInfo(
+    sol::state_view lua, int nodeId)
+{
+    Node* node = engine_.getNode(nodeId);
+    if (!node)
+        return {sol::lua_nil, sol::make_object(lua, "Node " + std::to_string(nodeId) + " not found")};
+
+    auto descs = engine_.getParameterDescriptors(nodeId);
+    sol::table result = lua.create_table();
+    for (int i = 0; i < (int)descs.size(); ++i)
+    {
+        sol::table entry = lua.create_table();
+        entry["name"] = descs[i].name;
+        entry["index"] = descs[i].index;
+        entry["default"] = descs[i].defaultValue;
+        entry["steps"] = descs[i].numSteps;
+        entry["automatable"] = descs[i].automatable;
+        entry["boolean"] = descs[i].boolean;
+        entry["label"] = descs[i].label;
+        entry["group"] = descs[i].group;
+        result[i + 1] = entry;
+    }
+
+    return {sol::make_object(lua, result), sol::lua_nil};
+}
+
+std::tuple<sol::object, sol::object> LuaBindings::luaParamText(
+    sol::state_view lua, int nodeId, sol::object nameOrIndex)
+{
+    Node* node = engine_.getNode(nodeId);
+    if (!node)
+        return {sol::lua_nil, sol::make_object(lua, "Node " + std::to_string(nodeId) + " not found")};
+
+    int paramIndex = -1;
+    if (nameOrIndex.is<int>())
+    {
+        paramIndex = nameOrIndex.as<int>();
+    }
+    else if (nameOrIndex.is<std::string>())
+    {
+        paramIndex = node->findParameterIndex(nameOrIndex.as<std::string>());
+        if (paramIndex < 0)
+            return {sol::lua_nil, sol::make_object(lua, "Unknown parameter: " + nameOrIndex.as<std::string>())};
+    }
+    else
+    {
+        return {sol::lua_nil, sol::make_object(lua, "Expected string or number")};
+    }
+
+    auto text = engine_.getParameterText(nodeId, paramIndex);
+    return {sol::make_object(lua, text), sol::lua_nil};
+}
+
+std::tuple<sol::object, sol::object> LuaBindings::luaSetParamI(
+    sol::state_view lua, int nodeId, int index, float value)
+{
+    if (!engine_.setParameter(nodeId, index, value))
+        return {sol::lua_nil, sol::make_object(lua, "Node " + std::to_string(nodeId) + " not found")};
+
+    return {sol::make_object(lua, true), sol::lua_nil};
+}
+
+std::tuple<sol::object, sol::object> LuaBindings::luaGetParamI(
+    sol::state_view lua, int nodeId, int index)
+{
+    Node* node = engine_.getNode(nodeId);
+    if (!node)
+        return {sol::lua_nil, sol::make_object(lua, "Node " + std::to_string(nodeId) + " not found")};
+
+    float val = engine_.getParameter(nodeId, index);
+    return {sol::make_object(lua, val), sol::lua_nil};
 }
 
 sol::table LuaBindings::luaNodes(sol::state_view lua)

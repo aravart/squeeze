@@ -766,7 +766,7 @@ TEST_CASE("Engine updateGraph no-arg pushes internal graph to audio thread")
 // Engine::setParameter / getParameter / getParameterNames
 // ============================================================
 
-TEST_CASE("Engine setParameter and getParameter work through Engine API")
+TEST_CASE("Engine setParameterByName and getParameterByName work through Engine API")
 {
     Scheduler sched;
     Engine engine(sched);
@@ -775,14 +775,25 @@ TEST_CASE("Engine setParameter and getParameter work through Engine API")
     auto node = makeEngineTestNode(2, 2, false);
     int id = engine.addNode(std::move(node), "FX");
 
-    auto names = engine.getParameterNames(id);
-    REQUIRE(names.size() == 1);
-    REQUIRE(names[0] == "Gain");
+    REQUIRE_THAT(engine.getParameterByName(id, "Gain"), WithinAbs(0.5f, 1e-3));
 
-    REQUIRE_THAT(engine.getParameter(id, "Gain"), WithinAbs(0.5f, 1e-3));
+    REQUIRE(engine.setParameterByName(id, "Gain", 0.75f));
+    REQUIRE_THAT(engine.getParameterByName(id, "Gain"), WithinAbs(0.75f, 1e-3));
+}
 
-    REQUIRE(engine.setParameter(id, "Gain", 0.75f));
-    REQUIRE_THAT(engine.getParameter(id, "Gain"), WithinAbs(0.75f, 1e-3));
+TEST_CASE("Engine setParameter and getParameter work by index")
+{
+    Scheduler sched;
+    Engine engine(sched);
+    engine.prepareForTesting(44100.0, 512);
+
+    auto node = makeEngineTestNode(2, 2, false);
+    int id = engine.addNode(std::move(node), "FX");
+
+    REQUIRE_THAT(engine.getParameter(id, 0), WithinAbs(0.5f, 1e-3));
+
+    REQUIRE(engine.setParameter(id, 0, 0.75f));
+    REQUIRE_THAT(engine.getParameter(id, 0), WithinAbs(0.75f, 1e-3));
 }
 
 TEST_CASE("Engine setParameter returns false for invalid node ID")
@@ -790,15 +801,59 @@ TEST_CASE("Engine setParameter returns false for invalid node ID")
     Scheduler sched;
     Engine engine(sched);
 
-    REQUIRE_FALSE(engine.setParameter(9999, "Gain", 0.5f));
+    REQUIRE_FALSE(engine.setParameter(9999, 0, 0.5f));
 }
 
-TEST_CASE("Engine getParameterNames returns empty for invalid node ID")
+TEST_CASE("Engine setParameterByName returns false for invalid node ID")
 {
     Scheduler sched;
     Engine engine(sched);
 
-    REQUIRE(engine.getParameterNames(9999).empty());
+    REQUIRE_FALSE(engine.setParameterByName(9999, "Gain", 0.5f));
+}
+
+TEST_CASE("Engine getParameterDescriptors returns descriptors for a PluginNode")
+{
+    Scheduler sched;
+    Engine engine(sched);
+    engine.prepareForTesting(44100.0, 512);
+
+    auto node = makeEngineTestNode(2, 2, false);
+    int id = engine.addNode(std::move(node), "FX");
+
+    auto descs = engine.getParameterDescriptors(id);
+    REQUIRE(descs.size() == 1);
+    REQUIRE(descs[0].name == "Gain");
+    REQUIRE(descs[0].index == 0);
+}
+
+TEST_CASE("Engine getParameterDescriptors returns empty for invalid node ID")
+{
+    Scheduler sched;
+    Engine engine(sched);
+
+    REQUIRE(engine.getParameterDescriptors(9999).empty());
+}
+
+TEST_CASE("Engine getParameterText returns display text")
+{
+    Scheduler sched;
+    Engine engine(sched);
+    engine.prepareForTesting(44100.0, 512);
+
+    auto node = makeEngineTestNode(2, 2, false);
+    int id = engine.addNode(std::move(node), "FX");
+
+    auto text = engine.getParameterText(id, 0);
+    REQUIRE_FALSE(text.empty());
+}
+
+TEST_CASE("Engine getParameterText returns empty for invalid node ID")
+{
+    Scheduler sched;
+    Engine engine(sched);
+
+    REQUIRE(engine.getParameterText(9999, 0).empty());
 }
 
 // ============================================================

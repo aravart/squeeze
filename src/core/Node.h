@@ -17,6 +17,17 @@ struct ProcessContext {
     int numSamples;
 };
 
+struct ParameterDescriptor {
+    std::string name;
+    int index;
+    float defaultValue;
+    int numSteps;       // 0 = continuous
+    bool automatable;
+    bool boolean;
+    std::string label;  // unit: "dB", "Hz", "%"
+    std::string group;  // "" = ungrouped
+};
+
 class Node {
 public:
     virtual ~Node() = default;
@@ -28,10 +39,39 @@ public:
     virtual std::vector<PortDescriptor> getInputPorts() const = 0;
     virtual std::vector<PortDescriptor> getOutputPorts() const = 0;
 
-    virtual std::vector<std::string> getParameterNames() const { return {}; }
-    virtual float getParameter(const std::string& name) const { return 0.0f; }
-    virtual void setParameter(const std::string& name, float value) {}
-    virtual void setParameterByIndex(int index, float value) {}
+    // Parameter interface (index-based virtuals)
+    virtual std::vector<ParameterDescriptor> getParameterDescriptors() const { return {}; }
+    virtual float getParameter(int index) const { return 0.0f; }
+    virtual void setParameter(int index, float value) { (void)index; (void)value; }
+    virtual std::string getParameterText(int index) const { (void)index; return ""; }
+
+    // Virtual so PluginNode can override with O(1) map lookup
+    virtual int findParameterIndex(const std::string& name) const
+    {
+        auto descs = getParameterDescriptors();
+        for (const auto& d : descs)
+        {
+            if (d.name == name)
+                return d.index;
+        }
+        return -1;
+    }
+
+    // Non-virtual name-based convenience
+    float getParameterByName(const std::string& name) const
+    {
+        int idx = findParameterIndex(name);
+        if (idx < 0) return 0.0f;
+        return getParameter(idx);
+    }
+
+    bool setParameterByName(const std::string& name, float value)
+    {
+        int idx = findParameterIndex(name);
+        if (idx < 0) return false;
+        setParameter(idx, value);
+        return true;
+    }
 };
 
 } // namespace squeeze

@@ -448,67 +448,105 @@ TEST_CASE("PluginNode process forwards MIDI to plugin")
 // PluginNode parameter tests
 // ============================================================
 
-TEST_CASE("PluginNode getParameterNames returns plugin parameter names")
+TEST_CASE("PluginNode getParameterDescriptors returns plugin parameter descriptors")
 {
     auto* raw = new TestProcessor(2, 2, false);
     auto node = std::make_unique<PluginNode>(
         std::unique_ptr<juce::AudioProcessor>(raw), 2, 2, false);
 
-    auto names = node->getParameterNames();
-    REQUIRE(names.size() == 2);
+    auto descs = node->getParameterDescriptors();
+    REQUIRE(descs.size() == 2);
 
     bool hasGain = false, hasMix = false;
-    for (const auto& name : names) {
-        if (name == "Gain") hasGain = true;
-        if (name == "Mix") hasMix = true;
+    for (const auto& d : descs) {
+        if (d.name == "Gain") hasGain = true;
+        if (d.name == "Mix") hasMix = true;
     }
     REQUIRE(hasGain);
     REQUIRE(hasMix);
 }
 
-TEST_CASE("PluginNode getParameter returns normalized value")
+TEST_CASE("PluginNode getParameter by index returns normalized value")
 {
     auto* raw = new TestProcessor(2, 2, false);
     auto node = std::make_unique<PluginNode>(
         std::unique_ptr<juce::AudioProcessor>(raw), 2, 2, false);
 
-    // Default gain is 0.5
-    float val = node->getParameter("Gain");
+    // Default gain is 0.5 (index 0)
+    float val = node->getParameter(0);
     REQUIRE_THAT(val, WithinAbs(0.5f, 1e-3));
 }
 
-TEST_CASE("PluginNode setParameter sets normalized value")
+TEST_CASE("PluginNode setParameter by index sets normalized value")
 {
     auto* raw = new TestProcessor(2, 2, false);
     auto node = std::make_unique<PluginNode>(
         std::unique_ptr<juce::AudioProcessor>(raw), 2, 2, false);
 
-    node->setParameter("Gain", 0.75f);
+    node->setParameter(0, 0.75f);
 
-    float val = node->getParameter("Gain");
+    float val = node->getParameter(0);
     REQUIRE_THAT(val, WithinAbs(0.75f, 1e-3));
 }
 
-TEST_CASE("PluginNode getParameter with unknown name returns 0.0")
+TEST_CASE("PluginNode getParameterByName returns correct value")
 {
     auto* raw = new TestProcessor(2, 2, false);
     auto node = std::make_unique<PluginNode>(
         std::unique_ptr<juce::AudioProcessor>(raw), 2, 2, false);
 
-    REQUIRE_THAT(node->getParameter("nonexistent"), WithinAbs(0.0f, 1e-6));
+    REQUIRE_THAT(node->getParameterByName("Gain"), WithinAbs(0.5f, 1e-3));
 }
 
-TEST_CASE("PluginNode setParameter with unknown name is no-op")
+TEST_CASE("PluginNode getParameterByName with unknown name returns 0.0")
 {
     auto* raw = new TestProcessor(2, 2, false);
     auto node = std::make_unique<PluginNode>(
         std::unique_ptr<juce::AudioProcessor>(raw), 2, 2, false);
 
-    // Should not crash or modify anything
-    node->setParameter("nonexistent", 0.5f);
+    REQUIRE_THAT(node->getParameterByName("nonexistent"), WithinAbs(0.0f, 1e-6));
+}
+
+TEST_CASE("PluginNode setParameterByName with unknown name returns false")
+{
+    auto* raw = new TestProcessor(2, 2, false);
+    auto node = std::make_unique<PluginNode>(
+        std::unique_ptr<juce::AudioProcessor>(raw), 2, 2, false);
+
+    REQUIRE_FALSE(node->setParameterByName("nonexistent", 0.5f));
 
     // Existing parameters remain unchanged
-    REQUIRE_THAT(node->getParameter("Gain"), WithinAbs(0.5f, 1e-3));
+    REQUIRE_THAT(node->getParameterByName("Gain"), WithinAbs(0.5f, 1e-3));
+}
+
+TEST_CASE("PluginNode findParameterIndex returns correct index")
+{
+    auto* raw = new TestProcessor(2, 2, false);
+    auto node = std::make_unique<PluginNode>(
+        std::unique_ptr<juce::AudioProcessor>(raw), 2, 2, false);
+
+    REQUIRE(node->findParameterIndex("Gain") == 0);
+    REQUIRE(node->findParameterIndex("Mix") == 1);
+    REQUIRE(node->findParameterIndex("nonexistent") == -1);
+}
+
+TEST_CASE("PluginNode getParameterText returns display text")
+{
+    auto* raw = new TestProcessor(2, 2, false);
+    auto node = std::make_unique<PluginNode>(
+        std::unique_ptr<juce::AudioProcessor>(raw), 2, 2, false);
+
+    auto text = node->getParameterText(0);
+    REQUIRE_FALSE(text.empty());
+}
+
+TEST_CASE("PluginNode getParameterText returns empty for out-of-range index")
+{
+    auto* raw = new TestProcessor(2, 2, false);
+    auto node = std::make_unique<PluginNode>(
+        std::unique_ptr<juce::AudioProcessor>(raw), 2, 2, false);
+
+    REQUIRE(node->getParameterText(99).empty());
 }
 
 TEST_CASE("PluginNode getName returns plugin name")
