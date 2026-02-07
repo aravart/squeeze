@@ -2,7 +2,8 @@
 
 ## Responsibilities
 - Provide debug logging with millisecond timestamps to stderr
-- Gate all logging behind an atomic enable/disable flag (disabled by default)
+- Gate logging behind an atomic level flag (default: `warn`)
+- Support four levels: `off`, `warn`, `debug`, `trace`
 - Support two logging paths: control thread (direct write) and audio thread (lock-free queue)
 - Drain queued RT log entries from the control thread
 
@@ -15,8 +16,8 @@ struct LogEntry {
     char message[256];
 };
 
-// Log levels: 0 = off, 1 = debug (-d), 2 = trace (-dd)
-enum class LogLevel : int { off = 0, debug = 1, trace = 2 };
+// Log levels: 0 = off, 1 = warn (default), 2 = debug (-d), 3 = trace (-dd)
+enum class LogLevel : int { off = 0, warn = 1, debug = 2, trace = 3 };
 
 class Logger {
 public:
@@ -38,7 +39,11 @@ public:
 
 } // namespace squeeze
 
-// Macros — debug level (short-circuit when disabled)
+// Macros — warn level (fires at warn and above, i.e. by default)
+#define SQ_LOG_WARN(fmt, ...)    do { if (squeeze::Logger::getLevel() >= squeeze::LogLevel::warn) squeeze::Logger::log(__FILE__, __LINE__, fmt, ##__VA_ARGS__); } while(0)
+#define SQ_LOG_RT_WARN(fmt, ...) do { if (squeeze::Logger::getLevel() >= squeeze::LogLevel::warn) squeeze::Logger::logRT(__FILE__, __LINE__, fmt, ##__VA_ARGS__); } while(0)
+
+// Macros — debug level (short-circuit when level < debug)
 #define SQ_LOG(fmt, ...)    do { if (squeeze::Logger::isEnabled()) squeeze::Logger::log(__FILE__, __LINE__, fmt, ##__VA_ARGS__); } while(0)
 #define SQ_LOG_RT(fmt, ...) do { if (squeeze::Logger::isEnabled()) squeeze::Logger::logRT(__FILE__, __LINE__, fmt, ##__VA_ARGS__); } while(0)
 
@@ -48,7 +53,8 @@ public:
 ```
 
 ## Invariants
-- Default state is disabled; no output unless explicitly enabled
+- Default level is `warn` — warning messages (e.g. xruns) are emitted without any flags
+- `isEnabled()` returns true when level >= `debug` (preserves existing semantics for debug/trace callers)
 - `isEnabled()` uses relaxed atomic load (safe to call from any thread)
 - `log()` writes one complete line to stderr per call
 - `logRT()` never allocates, never blocks, never does I/O
@@ -69,7 +75,7 @@ public:
 ## Error Conditions
 - Queue full on `logRT()`: entry is silently dropped (no crash, no block)
 - `drain()` on empty queue: returns immediately
-- `log()`/`logRT()` when disabled: macros short-circuit, no formatting occurs
+- `log()`/`logRT()` when level is below macro threshold: macros short-circuit, no formatting occurs
 
 ## Does NOT Handle
 - Log file output — stderr only
@@ -90,17 +96,22 @@ public:
 ## Example Usage
 
 ```cpp
+// Default level is warn — no flags needed for warnings
+
 // In main.cpp
 Logger::setLevel(LogLevel::debug);  // -d flag
 Logger::setLevel(LogLevel::trace);  // -dd flag
 
-// In Engine.cpp (control thread) — fires at debug level
+// In PerfMonitor.cpp (audio thread) — fires at warn level (always, unless off)
+SQ_LOG_RT_WARN("xrun: %dus (budget %dus), total %d", durationUs, budgetUs, count);
+
+// In Engine.cpp (control thread) — fires at debug level (-d or -dd)
 SQ_LOG("updateGraph: %d nodes", graph.getNodeCount());
 
 // In Engine.cpp (audio thread, inside processBlock) — fires at debug level
 SQ_LOG_RT("snapshot swap");
 
-// In MidiInputNode.cpp — fires only at trace level
+// In MidiInputNode.cpp — fires only at trace level (-dd)
 SQ_LOG_RT_TRACE("MIDI [%s] note-on ch=%d note=%d vel=%d", ...);
 
 // In main loop

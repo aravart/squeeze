@@ -4,7 +4,7 @@
 
 namespace squeeze {
 
-std::atomic<int> Logger::level_{0};
+std::atomic<int> Logger::level_{1};
 SPSCQueue<LogEntry, 1024> Logger::rtQueue_;
 std::chrono::steady_clock::time_point Logger::startTime_ = std::chrono::steady_clock::now();
 

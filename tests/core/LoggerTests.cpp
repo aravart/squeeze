@@ -6,6 +6,14 @@
 
 using namespace squeeze;
 
+TEST_CASE("Logger default level is warn")
+{
+    // Reset to default by setting warn (the compiled-in default)
+    Logger::setLevel(LogLevel::warn);
+    REQUIRE(Logger::getLevel() == LogLevel::warn);
+    REQUIRE_FALSE(Logger::isEnabled());  // isEnabled means >= debug
+}
+
 TEST_CASE("Logger is disabled by default")
 {
     Logger::disable();  // reset state
@@ -112,6 +120,10 @@ TEST_CASE("Logger setLevel and getLevel")
     Logger::disable();
     REQUIRE(Logger::getLevel() == LogLevel::off);
 
+    Logger::setLevel(LogLevel::warn);
+    REQUIRE(Logger::getLevel() == LogLevel::warn);
+    REQUIRE_FALSE(Logger::isEnabled());  // isEnabled means >= debug
+
     Logger::setLevel(LogLevel::debug);
     REQUIRE(Logger::getLevel() == LogLevel::debug);
     REQUIRE(Logger::isEnabled());
@@ -165,4 +177,51 @@ TEST_CASE("SQ_LOG_TRACE is a no-op when logging is off")
     SQ_LOG_TRACE("should not appear: %d", 1);
     SQ_LOG_RT_TRACE("should not appear: %d", 2);
     Logger::drain();
+}
+
+TEST_CASE("SQ_LOG_WARN fires at warn level")
+{
+    Logger::setLevel(LogLevel::warn);
+    SQ_LOG_WARN("warn CT message: %d", 42);
+    Logger::disable();
+}
+
+TEST_CASE("SQ_LOG_RT_WARN fires at warn level and drains")
+{
+    Logger::setLevel(LogLevel::warn);
+    Logger::drain();
+
+    SQ_LOG_RT_WARN("warn RT message: %d", 77);
+    Logger::drain();  // should write without crashing
+
+    Logger::disable();
+}
+
+TEST_CASE("SQ_LOG_WARN and SQ_LOG_RT_WARN are no-ops when level is off")
+{
+    Logger::disable();
+    SQ_LOG_WARN("should not appear: %d", 1);
+    SQ_LOG_RT_WARN("should not appear: %d", 2);
+    Logger::drain();
+}
+
+TEST_CASE("SQ_LOG (debug) is a no-op at warn level")
+{
+    Logger::setLevel(LogLevel::warn);
+    Logger::drain();
+
+    SQ_LOG("should not appear at warn: %d", 99);
+    SQ_LOG_RT("should not appear at warn: %d", 100);
+
+    // Nothing should have been queued for RT
+    Logger::drain();
+    Logger::disable();
+}
+
+TEST_CASE("warn level in setLevel/getLevel round-trip")
+{
+    Logger::setLevel(LogLevel::warn);
+    REQUIRE(Logger::getLevel() == LogLevel::warn);
+    REQUIRE_FALSE(Logger::isEnabled());  // isEnabled means >= debug
+    Logger::disable();
 }

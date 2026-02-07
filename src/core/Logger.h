@@ -13,8 +13,8 @@ struct LogEntry {
     char message[256];
 };
 
-// Log levels: 0 = off, 1 = debug (-d), 2 = trace (-dd)
-enum class LogLevel : int { off = 0, debug = 1, trace = 2 };
+// Log levels: 0 = off, 1 = warn (default), 2 = debug (-d), 3 = trace (-dd)
+enum class LogLevel : int { off = 0, warn = 1, debug = 2, trace = 3 };
 
 class Logger {
 public:
@@ -42,6 +42,12 @@ private:
 };
 
 } // namespace squeeze
+
+#define SQ_LOG_WARN(fmt, ...) \
+    do { if (squeeze::Logger::getLevel() >= squeeze::LogLevel::warn) squeeze::Logger::log(__FILE__, __LINE__, fmt, ##__VA_ARGS__); } while(0)
+
+#define SQ_LOG_RT_WARN(fmt, ...) \
+    do { if (squeeze::Logger::getLevel() >= squeeze::LogLevel::warn) squeeze::Logger::logRT(__FILE__, __LINE__, fmt, ##__VA_ARGS__); } while(0)
 
 #define SQ_LOG(fmt, ...) \
     do { if (squeeze::Logger::isEnabled()) squeeze::Logger::log(__FILE__, __LINE__, fmt, ##__VA_ARGS__); } while(0)
