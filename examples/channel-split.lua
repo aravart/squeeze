@@ -39,6 +39,13 @@ if not xo then
 end
 print("Loaded XO (id=" .. xo.id .. ")")
 
+bass, err3 = sq.add_plugin("Augmented STRINGS")
+if not bass then
+    print("Failed to load Augmented STRINGS: " .. err3)
+    return
+end
+print("Loaded Augmented STRINGS (id=" .. bass.id .. ")")
+
 -- Connect each MIDI input -> Pure LoFi (ch 1) and -> XO (ch 10)
 for _, n in ipairs(midi_nodes) do
     local c1, e1 = sq.connect(n.id, "midi_out", lofi, "midi_in", 1)
@@ -53,6 +60,13 @@ for _, n in ipairs(midi_nodes) do
         print(n.name .. " ch 10 -> XO")
     else
         print(n.name .. " -> XO failed: " .. e2)
+    end
+
+    local c3, e3 = sq.connect(n.id, "midi_out", bass, "midi_in", 2)
+    if c3 then
+        print(n.name .. " ch 2 -> Augmented STRINGS")
+    else
+        print(n.name .. " -> Augmented STRINGS failed: " .. e3)
     end
 end
 
