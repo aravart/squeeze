@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/Buffer.h"
 #include "core/Graph.h"
 #include "core/Node.h"
 #include "core/PluginCache.h"
@@ -7,6 +8,7 @@
 
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_audio_devices/juce_audio_devices.h>
+#include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_audio_processors/juce_audio_processors.h>
 
 #include <atomic>
@@ -99,6 +101,15 @@ public:
     std::vector<ParameterDescriptor> getParameterDescriptors(int nodeId) const;
     std::string getParameterText(int nodeId, int paramIndex) const;
 
+    // Buffer management (control thread)
+    int loadBuffer(const std::string& filePath, std::string& errorMessage);
+    int createBuffer(int numChannels, int lengthInSamples, double sampleRate,
+                     const std::string& name, std::string& errorMessage);
+    bool removeBuffer(int id);
+    Buffer* getBuffer(int id) const;
+    std::string getBufferName(int id) const;
+    std::vector<std::pair<int, std::string>> getBuffers() const;
+
     // Processing (public for testing without a device)
     void processBlock(juce::AudioBuffer<float>& outputBuffer,
                       juce::MidiBuffer& outputMidi,
@@ -138,6 +149,12 @@ private:
     std::unordered_map<int, std::string> nodeNames_;
     std::unordered_map<std::string, int> midiDeviceNodes_;
     std::vector<std::unique_ptr<Node>> pendingDeletions_;
+
+    // Buffer ownership
+    juce::AudioFormatManager audioFormatManager_;
+    std::unordered_map<int, std::unique_ptr<Buffer>> ownedBuffers_;
+    std::unordered_map<int, std::string> bufferNames_;
+    int nextBufferId_ = 0;
 };
 
 } // namespace squeeze

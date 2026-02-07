@@ -53,6 +53,14 @@ private:
     std::tuple<sol::object, sol::object> luaAddMidiInput(sol::state_view lua, const std::string& name);
     sol::table luaRefreshMidiInputs(sol::state_view lua);
 
+    // Buffer API
+    std::tuple<sol::object, sol::object> luaLoadBuffer(sol::state_view lua, const std::string& filePath);
+    std::tuple<sol::object, sol::object> luaCreateBuffer(sol::state_view lua,
+        int numChannels, int lengthInSamples, double sampleRate, const std::string& name);
+    std::tuple<sol::object, sol::object> luaRemoveBuffer(sol::state_view lua, int id);
+    sol::table luaBuffers(sol::state_view lua);
+    std::tuple<sol::object, sol::object> luaBufferInfo(sol::state_view lua, int id);
+
     Engine& engine_;
 };
 

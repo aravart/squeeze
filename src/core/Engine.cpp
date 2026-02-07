@@ -1,4 +1,5 @@
 #include "core/Engine.h"
+#include "core/Buffer.h"
 #include "core/Logger.h"
 #include "core/MidiInputNode.h"
 #include "core/PluginNode.h"
@@ -12,6 +13,7 @@ Engine::Engine(Scheduler& scheduler)
     : scheduler_(scheduler)
 {
     formatManager_.addDefaultFormats();
+    audioFormatManager_.registerBasicFormats();
 }
 
 Engine::~Engine()
@@ -658,6 +660,79 @@ void Engine::audioDeviceStopped()
 {
     SQ_LOG("audioDeviceStopped");
     running_.store(false);
+}
+
+// ============================================================
+// Buffer management
+// ============================================================
+
+int Engine::loadBuffer(const std::string& filePath, std::string& errorMessage)
+{
+    SQ_LOG("loadBuffer: %s", filePath.c_str());
+
+    auto buffer = Buffer::loadFromFile(filePath, audioFormatManager_, errorMessage);
+    if (!buffer)
+        return -1;
+
+    int id = nextBufferId_++;
+    bufferNames_[id] = buffer->getName();
+    ownedBuffers_[id] = std::move(buffer);
+    return id;
+}
+
+int Engine::createBuffer(int numChannels, int lengthInSamples, double sampleRate,
+                         const std::string& name, std::string& errorMessage)
+{
+    SQ_LOG("createBuffer: '%s' %d ch, %d samples, %.0f Hz",
+           name.c_str(), numChannels, lengthInSamples, sampleRate);
+
+    auto buffer = Buffer::createEmpty(numChannels, lengthInSamples, sampleRate, name);
+    if (!buffer)
+    {
+        errorMessage = "Invalid buffer parameters";
+        return -1;
+    }
+
+    int id = nextBufferId_++;
+    bufferNames_[id] = name;
+    ownedBuffers_[id] = std::move(buffer);
+    return id;
+}
+
+bool Engine::removeBuffer(int id)
+{
+    SQ_LOG("removeBuffer: id=%d", id);
+    auto it = ownedBuffers_.find(id);
+    if (it == ownedBuffers_.end())
+        return false;
+
+    ownedBuffers_.erase(it);
+    bufferNames_.erase(id);
+    return true;
+}
+
+Buffer* Engine::getBuffer(int id) const
+{
+    auto it = ownedBuffers_.find(id);
+    return (it != ownedBuffers_.end()) ? it->second.get() : nullptr;
+}
+
+std::string Engine::getBufferName(int id) const
+{
+    auto it = bufferNames_.find(id);
+    return (it != bufferNames_.end()) ? it->second : "";
+}
+
+std::vector<std::pair<int, std::string>> Engine::getBuffers() const
+{
+    std::vector<std::pair<int, std::string>> result;
+    for (const auto& kv : ownedBuffers_)
+    {
+        auto nameIt = bufferNames_.find(kv.first);
+        std::string name = (nameIt != bufferNames_.end()) ? nameIt->second : "";
+        result.push_back({kv.first, name});
+    }
+    return result;
 }
 
 } // namespace squeeze

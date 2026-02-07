@@ -866,3 +866,163 @@ TEST_CASE("LuaBindings get_param_i returns nil for invalid node")
     sol::object val = result;
     REQUIRE(val.get_type() == sol::type::lua_nil);
 }
+
+// ============================================================
+// Buffer API
+// ============================================================
+
+TEST_CASE("LuaBindings bind creates sq table with buffer functions")
+{
+    LuaFixture f;
+
+    sol::table sq = f.lua["sq"];
+    REQUIRE(sq["load_buffer"].get_type() == sol::type::function);
+    REQUIRE(sq["create_buffer"].get_type() == sol::type::function);
+    REQUIRE(sq["remove_buffer"].get_type() == sol::type::function);
+    REQUIRE(sq["buffers"].get_type() == sol::type::function);
+    REQUIRE(sq["buffer_info"].get_type() == sol::type::function);
+}
+
+TEST_CASE("LuaBindings create_buffer creates a buffer and returns ID")
+{
+    LuaFixture f;
+
+    auto result = f.lua.safe_script(
+        "return sq.create_buffer(2, 44100, 44100, 'test-buf')",
+        sol::script_pass_on_error);
+    REQUIRE(result.valid());
+
+    int id = result;
+    REQUIRE(id >= 0);
+}
+
+TEST_CASE("LuaBindings create_buffer returns nil for invalid params")
+{
+    LuaFixture f;
+
+    auto result = f.lua.safe_script(
+        "local v, err = sq.create_buffer(0, 44100, 44100, 'bad')\n"
+        "return v, err",
+        sol::script_pass_on_error);
+    REQUIRE(result.valid());
+
+    sol::object val = result;
+    REQUIRE(val.get_type() == sol::type::lua_nil);
+}
+
+TEST_CASE("LuaBindings create_buffer name is optional")
+{
+    LuaFixture f;
+
+    auto result = f.lua.safe_script(
+        "return sq.create_buffer(1, 100, 44100)",
+        sol::script_pass_on_error);
+    REQUIRE(result.valid());
+
+    int id = result;
+    REQUIRE(id >= 0);
+}
+
+TEST_CASE("LuaBindings remove_buffer removes a buffer")
+{
+    LuaFixture f;
+
+    f.lua.safe_script("buf_id = sq.create_buffer(1, 100, 44100, 'temp')");
+
+    auto result = f.lua.safe_script(
+        "return sq.remove_buffer(buf_id)",
+        sol::script_pass_on_error);
+    REQUIRE(result.valid());
+
+    bool ok = result;
+    REQUIRE(ok);
+
+    // Should return nil after removal
+    auto result2 = f.lua.safe_script(
+        "local v, err = sq.buffer_info(buf_id)\n"
+        "return v, err",
+        sol::script_pass_on_error);
+    REQUIRE(result2.valid());
+
+    sol::object val = result2;
+    REQUIRE(val.get_type() == sol::type::lua_nil);
+}
+
+TEST_CASE("LuaBindings remove_buffer returns nil for invalid ID")
+{
+    LuaFixture f;
+
+    auto result = f.lua.safe_script(
+        "local v, err = sq.remove_buffer(9999)\n"
+        "return v, err",
+        sol::script_pass_on_error);
+    REQUIRE(result.valid());
+
+    sol::object val = result;
+    REQUIRE(val.get_type() == sol::type::lua_nil);
+}
+
+TEST_CASE("LuaBindings buffers returns list of buffers")
+{
+    LuaFixture f;
+
+    f.lua.safe_script("sq.create_buffer(1, 100, 44100, 'a')");
+    f.lua.safe_script("sq.create_buffer(2, 200, 48000, 'b')");
+
+    auto result = f.lua.safe_script("return sq.buffers()", sol::script_pass_on_error);
+    REQUIRE(result.valid());
+
+    sol::table bufs = result;
+    REQUIRE(bufs.size() == 2);
+
+    // Each entry should have id and name
+    sol::table first = bufs[1];
+    REQUIRE(first["id"].get_type() == sol::type::number);
+    REQUIRE(first["name"].get_type() == sol::type::string);
+}
+
+TEST_CASE("LuaBindings buffer_info returns detailed info")
+{
+    LuaFixture f;
+
+    f.lua.safe_script("buf_id = sq.create_buffer(2, 44100, 44100, 'my-buf')");
+
+    auto result = f.lua.safe_script("return sq.buffer_info(buf_id)", sol::script_pass_on_error);
+    REQUIRE(result.valid());
+
+    sol::table info = result;
+    REQUIRE(info["name"].get<std::string>() == "my-buf");
+    REQUIRE(info["channels"].get<int>() == 2);
+    REQUIRE(info["length"].get<int>() == 44100);
+    REQUIRE_THAT(info["sample_rate"].get<double>(), WithinAbs(44100.0, 0.01));
+    REQUIRE(info["file_path"].get<std::string>().empty());
+    REQUIRE_THAT(info["length_seconds"].get<double>(), WithinAbs(1.0, 0.001));
+}
+
+TEST_CASE("LuaBindings buffer_info returns nil for invalid ID")
+{
+    LuaFixture f;
+
+    auto result = f.lua.safe_script(
+        "local v, err = sq.buffer_info(9999)\n"
+        "return v, err",
+        sol::script_pass_on_error);
+    REQUIRE(result.valid());
+
+    sol::object val = result;
+    REQUIRE(val.get_type() == sol::type::lua_nil);
+}
+
+TEST_CASE("LuaBindings load_buffer returns nil for nonexistent file")
+{
+    LuaFixture f;
+
+    auto result = f.lua.safe_script(
+        "local v, err = sq.load_buffer('/no/such/file.wav')\n"
+        "return v, err",
+        sol::script_pass_on_error);
+    REQUIRE(result.valid());
+
+    sol::object val = result;
+    REQUIRE(val.get_type() == sol::type::lua_nil);
+}

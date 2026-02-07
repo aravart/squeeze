@@ -95,6 +95,29 @@ void LuaBindings::bind(sol::state& lua)
         return luaRefreshMidiInputs(sol::state_view(s));
     });
 
+    sq.set_function("load_buffer", [this](sol::this_state s, const std::string& filePath) {
+        return luaLoadBuffer(sol::state_view(s), filePath);
+    });
+
+    sq.set_function("create_buffer", [this](sol::this_state s,
+            int numChannels, int lengthInSamples, double sampleRate,
+            sol::optional<std::string> name) {
+        return luaCreateBuffer(sol::state_view(s), numChannels, lengthInSamples,
+                               sampleRate, name.value_or(""));
+    });
+
+    sq.set_function("remove_buffer", [this](sol::this_state s, int id) {
+        return luaRemoveBuffer(sol::state_view(s), id);
+    });
+
+    sq.set_function("buffers", [this](sol::this_state s) {
+        return luaBuffers(sol::state_view(s));
+    });
+
+    sq.set_function("buffer_info", [this](sol::this_state s, int id) {
+        return luaBufferInfo(sol::state_view(s), id);
+    });
+
     sq.set_function("param_info", [this](sol::this_state s, int nodeId) {
         return luaParamInfo(sol::state_view(s), nodeId);
     });
@@ -421,6 +444,75 @@ sol::table LuaBindings::luaRefreshMidiInputs(sol::state_view lua)
     result["removed"] = removed;
 
     return result;
+}
+
+// ============================================================
+// Buffer API
+// ============================================================
+
+std::tuple<sol::object, sol::object> LuaBindings::luaLoadBuffer(
+    sol::state_view lua, const std::string& filePath)
+{
+    std::string errorMessage;
+    int id = engine_.loadBuffer(filePath, errorMessage);
+    if (id < 0)
+        return {sol::lua_nil, sol::make_object(lua, errorMessage)};
+
+    return {sol::make_object(lua, id), sol::lua_nil};
+}
+
+std::tuple<sol::object, sol::object> LuaBindings::luaCreateBuffer(
+    sol::state_view lua, int numChannels, int lengthInSamples,
+    double sampleRate, const std::string& name)
+{
+    std::string errorMessage;
+    int id = engine_.createBuffer(numChannels, lengthInSamples, sampleRate, name, errorMessage);
+    if (id < 0)
+        return {sol::lua_nil, sol::make_object(lua, errorMessage)};
+
+    return {sol::make_object(lua, id), sol::lua_nil};
+}
+
+std::tuple<sol::object, sol::object> LuaBindings::luaRemoveBuffer(
+    sol::state_view lua, int id)
+{
+    if (!engine_.removeBuffer(id))
+        return {sol::lua_nil, sol::make_object(lua, "Buffer " + std::to_string(id) + " not found")};
+
+    return {sol::make_object(lua, true), sol::lua_nil};
+}
+
+sol::table LuaBindings::luaBuffers(sol::state_view lua)
+{
+    sol::table result = lua.create_table();
+    auto bufs = engine_.getBuffers();
+    int idx = 1;
+    for (const auto& kv : bufs)
+    {
+        sol::table entry = lua.create_table();
+        entry["id"] = kv.first;
+        entry["name"] = kv.second;
+        result[idx++] = entry;
+    }
+    return result;
+}
+
+std::tuple<sol::object, sol::object> LuaBindings::luaBufferInfo(
+    sol::state_view lua, int id)
+{
+    Buffer* buf = engine_.getBuffer(id);
+    if (!buf)
+        return {sol::lua_nil, sol::make_object(lua, "Buffer " + std::to_string(id) + " not found")};
+
+    sol::table info = lua.create_table();
+    info["name"] = buf->getName();
+    info["channels"] = buf->getNumChannels();
+    info["length"] = buf->getLengthInSamples();
+    info["sample_rate"] = buf->getSampleRate();
+    info["file_path"] = buf->getFilePath();
+    info["length_seconds"] = buf->getLengthInSeconds();
+
+    return {sol::make_object(lua, info), sol::lua_nil};
 }
 
 } // namespace squeeze

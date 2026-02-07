@@ -1,7 +1,10 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
+#include "core/Buffer.h"
 #include "core/Engine.h"
 #include "core/PluginNode.h"
+
+#include <juce_audio_formats/juce_audio_formats.h>
 
 using namespace squeeze;
 using Catch::Matchers::WithinAbs;
@@ -1171,4 +1174,186 @@ TEST_CASE("Multiple MIDI sources with channel filters merge correctly")
     REQUIRE(midiCount == 2);
     REQUIRE(std::find(receivedNotes.begin(), receivedNotes.end(), 60) != receivedNotes.end());
     REQUIRE(std::find(receivedNotes.begin(), receivedNotes.end(), 72) != receivedNotes.end());
+}
+
+// ============================================================
+// Helper: write a WAV file for buffer tests
+// ============================================================
+
+static juce::File createEngineTestWav(int numChannels, int numSamples,
+                                       double sampleRate, float fillValue = 0.5f)
+{
+    auto tempFile = juce::File::getSpecialLocation(
+        juce::File::tempDirectory).getChildFile("squeeze_engine_test.wav");
+
+    juce::WavAudioFormat wav;
+    std::unique_ptr<juce::AudioFormatWriter> writer(
+        wav.createWriterFor(new juce::FileOutputStream(tempFile),
+                            sampleRate, numChannels, 16, {}, 0));
+    REQUIRE(writer != nullptr);
+
+    juce::AudioBuffer<float> data(numChannels, numSamples);
+    for (int ch = 0; ch < numChannels; ++ch)
+        for (int s = 0; s < numSamples; ++s)
+            data.setSample(ch, s, fillValue);
+
+    writer->writeFromAudioSampleBuffer(data, 0, numSamples);
+    writer.reset();
+    return tempFile;
+}
+
+// ============================================================
+// Engine buffer management
+// ============================================================
+
+TEST_CASE("Engine loadBuffer loads a file and returns valid ID")
+{
+    Scheduler sched;
+    Engine engine(sched);
+    engine.prepareForTesting(44100.0, 512);
+
+    auto tempFile = createEngineTestWav(2, 1000, 44100.0);
+
+    std::string err;
+    int id = engine.loadBuffer(tempFile.getFullPathName().toStdString(), err);
+    REQUIRE(id >= 0);
+    CHECK(err.empty());
+
+    Buffer* buf = engine.getBuffer(id);
+    REQUIRE(buf != nullptr);
+    CHECK(buf->getNumChannels() == 2);
+    CHECK(buf->getLengthInSamples() == 1000);
+
+    tempFile.deleteFile();
+}
+
+TEST_CASE("Engine loadBuffer returns -1 for nonexistent file")
+{
+    Scheduler sched;
+    Engine engine(sched);
+
+    std::string err;
+    int id = engine.loadBuffer("/no/such/file.wav", err);
+    REQUIRE(id == -1);
+    CHECK(!err.empty());
+}
+
+TEST_CASE("Engine createBuffer creates an empty buffer")
+{
+    Scheduler sched;
+    Engine engine(sched);
+
+    std::string err;
+    int id = engine.createBuffer(2, 44100, 44100.0, "recording", err);
+    REQUIRE(id >= 0);
+    CHECK(err.empty());
+
+    Buffer* buf = engine.getBuffer(id);
+    REQUIRE(buf != nullptr);
+    CHECK(buf->getNumChannels() == 2);
+    CHECK(buf->getLengthInSamples() == 44100);
+    CHECK(buf->getName() == "recording");
+    CHECK(buf->writePosition.load() == 0);
+}
+
+TEST_CASE("Engine createBuffer returns -1 for invalid params")
+{
+    Scheduler sched;
+    Engine engine(sched);
+
+    std::string err;
+    int id = engine.createBuffer(0, 44100, 44100.0, "bad", err);
+    REQUIRE(id == -1);
+    CHECK(!err.empty());
+}
+
+TEST_CASE("Engine buffer IDs are monotonically increasing")
+{
+    Scheduler sched;
+    Engine engine(sched);
+
+    std::string err;
+    int id1 = engine.createBuffer(1, 100, 44100.0, "a", err);
+    int id2 = engine.createBuffer(1, 100, 44100.0, "b", err);
+    int id3 = engine.createBuffer(1, 100, 44100.0, "c", err);
+
+    REQUIRE(id1 >= 0);
+    REQUIRE(id2 > id1);
+    REQUIRE(id3 > id2);
+}
+
+TEST_CASE("Engine removeBuffer removes a buffer")
+{
+    Scheduler sched;
+    Engine engine(sched);
+
+    std::string err;
+    int id = engine.createBuffer(1, 100, 44100.0, "temp", err);
+    REQUIRE(id >= 0);
+
+    REQUIRE(engine.removeBuffer(id));
+    CHECK(engine.getBuffer(id) == nullptr);
+    CHECK(engine.getBufferName(id).empty());
+}
+
+TEST_CASE("Engine removeBuffer returns false for invalid ID")
+{
+    Scheduler sched;
+    Engine engine(sched);
+
+    REQUIRE_FALSE(engine.removeBuffer(9999));
+}
+
+TEST_CASE("Engine buffer IDs are never reused after removal")
+{
+    Scheduler sched;
+    Engine engine(sched);
+
+    std::string err;
+    int id1 = engine.createBuffer(1, 100, 44100.0, "a", err);
+    engine.removeBuffer(id1);
+    int id2 = engine.createBuffer(1, 100, 44100.0, "b", err);
+
+    REQUIRE(id2 > id1);
+}
+
+TEST_CASE("Engine getBufferName returns name or empty")
+{
+    Scheduler sched;
+    Engine engine(sched);
+
+    std::string err;
+    int id = engine.createBuffer(1, 100, 44100.0, "myname", err);
+    CHECK(engine.getBufferName(id) == "myname");
+    CHECK(engine.getBufferName(9999).empty());
+}
+
+TEST_CASE("Engine getBuffers returns all buffers")
+{
+    Scheduler sched;
+    Engine engine(sched);
+
+    std::string err;
+    int id1 = engine.createBuffer(1, 100, 44100.0, "buf1", err);
+    int id2 = engine.createBuffer(1, 100, 44100.0, "buf2", err);
+
+    auto bufs = engine.getBuffers();
+    REQUIRE(bufs.size() == 2);
+
+    bool found1 = false, found2 = false;
+    for (const auto& kv : bufs)
+    {
+        if (kv.first == id1 && kv.second == "buf1") found1 = true;
+        if (kv.first == id2 && kv.second == "buf2") found2 = true;
+    }
+    CHECK(found1);
+    CHECK(found2);
+}
+
+TEST_CASE("Engine getBuffer returns nullptr for invalid ID")
+{
+    Scheduler sched;
+    Engine engine(sched);
+
+    CHECK(engine.getBuffer(9999) == nullptr);
 }
