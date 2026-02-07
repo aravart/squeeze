@@ -328,7 +328,11 @@ void Engine::updateGraph(const Graph& graph)
     Command cmd;
     cmd.type = Command::Type::swapGraph;
     cmd.ptr = snapshot;
-    scheduler_.sendCommand(cmd);
+    if (!scheduler_.sendCommand(cmd))
+    {
+        SQ_LOG("updateGraph: command queue full, snapshot dropped");
+        delete snapshot;
+    }
 }
 
 // ============================================================
@@ -535,7 +539,7 @@ void Engine::processBlock(juce::AudioBuffer<float>& outputBuffer,
                 for (const auto metadata : *midiInPtr)
                 {
                     auto msg = metadata.getMessage();
-                    if (msg.getChannel() == ms.channelFilter)
+                    if (msg.getChannel() == 0 || msg.getChannel() == ms.channelFilter)
                         snap.filteredMidi.addEvent(msg, metadata.samplePosition);
                 }
                 midiInPtr = &snap.filteredMidi;
@@ -558,7 +562,7 @@ void Engine::processBlock(juce::AudioBuffer<float>& outputBuffer,
                     for (const auto metadata : srcBuf)
                     {
                         auto msg = metadata.getMessage();
-                        if (msg.getChannel() == ms.channelFilter)
+                        if (msg.getChannel() == 0 || msg.getChannel() == ms.channelFilter)
                             snap.filteredMidi.addEvent(msg, metadata.samplePosition);
                     }
                 }
@@ -609,12 +613,18 @@ void Engine::audioDeviceIOCallbackWithContext(
 
 void Engine::audioDeviceAboutToStart(juce::AudioIODevice* device)
 {
-    sampleRate_.store(device->getCurrentSampleRate());
-    blockSize_.store(device->getCurrentBufferSizeSamples());
+    double sr = device->getCurrentSampleRate();
+    int bs = device->getCurrentBufferSizeSamples();
+    sampleRate_.store(sr);
+    blockSize_.store(bs);
     running_.store(true);
-    SQ_LOG("audioDeviceAboutToStart: sr=%.0f bs=%d",
-           device->getCurrentSampleRate(),
-           device->getCurrentBufferSizeSamples());
+    SQ_LOG("audioDeviceAboutToStart: sr=%.0f bs=%d", sr, bs);
+
+    // Re-prepare all nodes with the device's actual sample rate and block size
+    for (auto& [id, node] : ownedNodes_)
+        node->prepare(sr, bs);
+
+    updateGraph();
 }
 
 void Engine::audioDeviceStopped()

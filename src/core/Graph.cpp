@@ -46,23 +46,6 @@ int Graph::getNodeCount() const
     return static_cast<int>(nodes_.size());
 }
 
-const PortDescriptor* Graph::findPort(Node* node, PortDirection direction,
-                                      const std::string& name) const
-{
-    const auto& ports = (direction == PortDirection::output)
-        ? node->getOutputPorts()
-        : node->getInputPorts();
-
-    // We need stable storage — getInputPorts/getOutputPorts return by value.
-    // Search by iterating and comparing.
-    for (const auto& p : ports)
-    {
-        if (p.name == name && p.direction == direction)
-            return &p;  // WARNING: pointer to temporary — see below
-    }
-    return nullptr;
-}
-
 int Graph::connect(PortAddress source, PortAddress dest, int midiChannel)
 {
     lastError_.clear();

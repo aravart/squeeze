@@ -188,22 +188,22 @@ static void closeEditorWindow(int nodeId)
 
 // Run a function on the message thread, blocking until complete.
 // If already on the message thread, runs directly.
+// Returns false if the timeout (5s) expires.
 template <typename Fn>
-static void runOnMessageThread(Fn&& fn)
+static bool runOnMessageThread(Fn&& fn)
 {
     if (juce::MessageManager::getInstance()->isThisTheMessageThread())
     {
         fn();
+        return true;
     }
-    else
-    {
-        juce::WaitableEvent done;
-        juce::MessageManager::callAsync([&]() {
-            fn();
-            done.signal();
-        });
-        done.wait();
-    }
+
+    juce::WaitableEvent done;
+    juce::MessageManager::callAsync([&]() {
+        fn();
+        done.signal();
+    });
+    return done.wait(5000);
 }
 
 static std::tuple<sol::object, sol::object> openEditor(
@@ -232,7 +232,7 @@ static std::tuple<sol::object, sol::object> openEditor(
     std::string errorMsg;
     bool success = false;
 
-    runOnMessageThread([&]() {
+    bool dispatched = runOnMessageThread([&]() {
         auto* editor = processor->createEditorIfNeeded();
         if (!editor)
         {
@@ -248,9 +248,11 @@ static std::tuple<sol::object, sol::object> openEditor(
         success = true;
     });
 
+    if (!dispatched)
+        return {sol::lua_nil, sol::make_object(lua, "GUI unavailable (timeout)")};
+
     if (!success)
-        return {sol::lua_nil, sol::make_object(lua,
-            errorMsg.empty() ? "GUI unavailable" : errorMsg)};
+        return {sol::lua_nil, sol::make_object(lua, errorMsg)};
 
     return {sol::make_object(lua, true), sol::lua_nil};
 }
@@ -263,9 +265,8 @@ static std::tuple<sol::object, sol::object> closeEditor(
         return {sol::lua_nil, sol::make_object(lua,
             "No editor open for node " + std::to_string(nodeId))};
 
-    runOnMessageThread([&]() {
-        editorWindows.erase(it);
-    });
+    if (!runOnMessageThread([&]() { editorWindows.erase(it); }))
+        return {sol::lua_nil, sol::make_object(lua, "GUI unavailable (timeout)")};
 
     return {sol::make_object(lua, true), sol::lua_nil};
 }

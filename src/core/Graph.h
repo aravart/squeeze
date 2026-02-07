@@ -32,8 +32,6 @@ public:
     std::string getLastError() const;
 
 private:
-    const PortDescriptor* findPort(Node* node, PortDirection direction,
-                                   const std::string& name) const;
     bool wouldCreateCycle(int srcNodeId, int dstNodeId) const;
 
     std::unordered_map<int, Node*> nodes_;
