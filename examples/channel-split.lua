@@ -37,7 +37,7 @@ for _, n in ipairs(midi_nodes) do
 end
 
 -- Load plugins
-local nodes = {}
+nodes = {}
 for _, p in ipairs(plugins) do
     local node, err = sq.add_plugin(p.name)
     if not node then
