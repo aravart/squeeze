@@ -382,17 +382,22 @@ Engine.processBlock(512):
 
 ## Thread Model
 
-| Thread | Responsibilities | Blocking Allowed |
-|--------|------------------|------------------|
-| Audio | Engine.processBlock, Node.process | NO |
-| Control | Lua VM, command processing, subscriptions | Yes |
-| Network | WebSocket/OSC I/O | Yes |
-| GUI (optional) | Plugin editors for debugging | Yes |
+| Thread | Responsibilities | Locks Engine Mutex? | Blocking Allowed |
+|--------|------------------|---------------------|------------------|
+| Audio | Engine.processBlock, Node.process | **Never** | NO |
+| Control / REPL | Lua VM, Engine control-plane calls | Yes | Yes |
+| Control / OSC | OSC message handling, Engine calls | Yes | Yes |
+| Control / WebSocket | WebSocket request handling, Engine calls | Yes | Yes |
+| MIDI callback | MidiInputNode SPSC write | **Never** | No |
+| GUI / Message thread | Plugin editor windows | **Never** | Yes |
+| Audio setup | audioDeviceAboutToStart | Yes | Yes |
 
 **Communication:**
-- Control → Audio: lock-free SPSC queue (Scheduler)
+- Control → Audio: lock-free SPSC queue (Scheduler). Engine's `controlMutex_` ensures only one control thread calls `sendCommand()` at a time, preserving the SPSC single-producer invariant.
 - Audio → Control: lock-free SPSC queue (feedback, meter data)
-- Network → Control: thread-safe queue or callback on control thread
+- Network → Engine: direct method calls, serialized by Engine's `controlMutex_`
+
+**Lock ordering:** Engine `controlMutex_` must never be held when acquiring `MessageManagerLock`. See `docs/specs/ConcurrencyModel.md`.
 
 ---
 
@@ -472,7 +477,7 @@ audio-engine/
 
 | Date | Decision | Rationale |
 |------|----------|-----------|
-| | | |
+| 2026-02-07 | Engine control-plane mutex (Option B) | Each gateway calls Engine directly; Engine serializes with `std::mutex`. Simpler than a shared command queue, doesn't constrain gateway async semantics, negligible contention. |
 
 ---
 

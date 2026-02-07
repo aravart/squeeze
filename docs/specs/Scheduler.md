@@ -108,6 +108,6 @@ public:
 
 ## Thread Safety
 
-- `sendCommand()` and `collectGarbage()`: control thread only
+- `sendCommand()` and `collectGarbage()`: control thread only. With multiple control threads (REPL, OSC, WebSocket), Engine's `controlMutex_` ensures only one thread calls `sendCommand()` at a time, maintaining the SPSC single-producer invariant. See [ConcurrencyModel](ConcurrencyModel.md).
 - `processPending()` and `sendGarbage()`: audio thread only
 - The SPSC queues enforce single-producer / single-consumer by design

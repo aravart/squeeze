@@ -123,6 +123,7 @@ public:
 
 | Member | Type | Purpose |
 |--------|------|---------|
+| `controlMutex_` | `std::mutex` | Serializes all control-plane access (see [ConcurrencyModel](ConcurrencyModel.md)) |
 | `graph_` | `Graph` | Internal graph topology |
 | `cache_` | `PluginCache` | Plugin description lookup |
 | `formatManager_` | `AudioPluginFormatManager` | Plugin instantiation (initialized with default formats in constructor) |
@@ -237,6 +238,8 @@ The no-arg `updateGraph()` pushes the internal `graph_`. The `updateGraph(const 
 
 ## Thread Safety
 
-- `start()`, `stop()`, `updateGraph()`, `addNode()`, `removeNode()`, `connect()`, `disconnect()`, all parameter methods, all MIDI methods, `loadPluginCache()`: control thread only
-- `processBlock()`: audio thread (or test thread)
-- `getSampleRate()`, `getBlockSize()`, `isRunning()`: safe from any thread (atomic reads)
+All control-plane methods are serialized by `controlMutex_` and may be called from any thread (REPL, OSC, WebSocket, etc.). See [ConcurrencyModel](ConcurrencyModel.md) for the full thread model and lock ordering rules.
+
+**Methods that lock `controlMutex_`:** `loadPluginCache`, `getAvailablePluginNames`, `findPluginByName`, `addNode`, `removeNode`, `getNode`, `getNodeName`, `getNodes`, `addPlugin`, `getAvailableMidiInputs`, `addMidiInput`, `autoLoadMidiInputs`, `refreshMidiInputs`, `connect`, `disconnect`, `getConnections`, `updateGraph` (both overloads), all parameter methods, all buffer methods, `prepareForTesting`, `audioDeviceAboutToStart`.
+
+**Methods that do NOT lock:** `start()` (delegates to `audioDeviceAboutToStart` which locks), `stop()` (atomic + deviceManager only), `isRunning()`, `getSampleRate()`, `getBlockSize()` (atomic reads), `processBlock()` / `audioDeviceIOCallbackWithContext()` (audio thread — never locks), `audioDeviceStopped()` (atomic only), `getGraph()` (test-only reference return).

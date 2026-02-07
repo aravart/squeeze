@@ -13,6 +13,7 @@
 
 #include <atomic>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -134,6 +135,13 @@ private:
     static GraphSnapshot* buildSnapshot(const Graph& graph,
                                         double sampleRate, int blockSize);
 
+    // Locked helpers (must be called with controlMutex_ held)
+    int addNodeLocked(std::unique_ptr<Node> node, const std::string& name);
+    int addMidiInputLocked(const std::string& deviceName, std::string& errorMessage);
+    void updateGraphLocked();
+    void updateGraphLocked(const Graph& graph);
+
+    mutable std::mutex controlMutex_;
     Scheduler& scheduler_;
     juce::AudioDeviceManager deviceManager_;
     GraphSnapshot* activeSnapshot_ = nullptr;

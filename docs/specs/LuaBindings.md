@@ -138,9 +138,12 @@ Implemented as `std::tuple<sol::object, sol::object>` where the second element i
 
 ## Thread Safety
 
-- All Lua API methods are called from the control thread (the REPL thread)
-- `update()` triggers Engine to send a graph snapshot to the audio thread via the Scheduler's SPSC queue
-- No Lua API method is safe to call from the audio thread
+- All Lua API methods are called from the REPL thread, which owns the `sol::state`. The Lua VM itself is **not** thread-safe — only one thread may call into it.
+- Engine's `controlMutex_` serializes the underlying Engine operations, so LuaBindings does not need its own synchronization.
+- OSC and WebSocket gateways call Engine directly (not through Lua). They never touch the Lua VM.
+- `update()` triggers Engine to send a graph snapshot to the audio thread via the Scheduler's SPSC queue.
+- No Lua API method is safe to call from the audio thread.
+- See [ConcurrencyModel](ConcurrencyModel.md) for the full thread model.
 
 ## Example Usage
 

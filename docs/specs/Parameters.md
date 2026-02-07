@@ -433,12 +433,13 @@ sq.off_param_change()  -- removes global
 ## Thread Safety
 
 - `getParameterDescriptors()`: any thread (immutable after construction)
-- `getParameter(index)`: control thread (reads current value from node)
-- `setParameter(index, value)`: control thread (writes directly to node state)
-- `getParameterText(index)`: control thread (may query plugin state)
+- `getParameter(index)`: control thread (reads current value from node). Engine's `controlMutex_` serializes access when called through Engine API.
+- `setParameter(index, value)`: control thread (writes directly to node state). Engine's `controlMutex_` serializes access when called through Engine API.
+- `getParameterText(index)`: control thread (may query plugin state). Engine's `controlMutex_` serializes access.
 - Audio-thread parameter access: only via Scheduler commands (ramps) or inside `process()` reading the node's own internal state
 - Change notifications: always fired on control thread
 - Snapshot capture/restore: control thread only
+- Multiple control threads (REPL, OSC, WebSocket) may call parameter methods concurrently; Engine's mutex ensures serialization. See [ConcurrencyModel](ConcurrencyModel.md).
 
 ## Phasing
 

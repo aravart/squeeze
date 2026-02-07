@@ -87,7 +87,7 @@ All errors are reported via `getLastError()` after a failed operation.
 
 ## Thread Safety
 
-Graph is not thread-safe. It is used exclusively from the control thread. Engine takes a snapshot of the execution order and connection info for the audio thread.
+Graph is not thread-safe. All access is serialized by Engine's `controlMutex_`. Multiple control threads (REPL, OSC, WebSocket) may trigger Graph operations through Engine, but the mutex ensures only one executes at a time. Engine takes a snapshot of the execution order and connection info for the audio thread. See [ConcurrencyModel](ConcurrencyModel.md).
 
 ## Example Usage
 

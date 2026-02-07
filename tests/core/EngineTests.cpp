@@ -6,6 +6,9 @@
 
 #include <juce_audio_formats/juce_audio_formats.h>
 
+#include <thread>
+#include <atomic>
+
 using namespace squeeze;
 using Catch::Matchers::WithinAbs;
 
@@ -1356,4 +1359,99 @@ TEST_CASE("Engine getBuffer returns nullptr for invalid ID")
     Engine engine(sched);
 
     CHECK(engine.getBuffer(9999) == nullptr);
+}
+
+// ============================================================
+// Concurrency tests
+// ============================================================
+
+TEST_CASE("Two threads adding nodes concurrently")
+{
+    Scheduler sched;
+    Engine engine(sched);
+    engine.prepareForTesting(44100.0, 512);
+
+    const int nodesPerThread = 50;
+
+    auto addNodes = [&](int offset) {
+        for (int i = 0; i < nodesPerThread; ++i)
+        {
+            auto node = makeEngineTestNode(0, 2, true);
+            engine.addNode(std::move(node), "Node_" + std::to_string(offset + i));
+        }
+    };
+
+    std::thread t1(addNodes, 0);
+    std::thread t2(addNodes, 1000);
+
+    t1.join();
+    t2.join();
+
+    auto nodes = engine.getNodes();
+    REQUIRE(nodes.size() == nodesPerThread * 2);
+}
+
+TEST_CASE("processBlock does not deadlock while control thread adds nodes")
+{
+    Scheduler sched;
+    Engine engine(sched);
+    engine.prepareForTesting(44100.0, 64);
+
+    std::atomic<bool> stop{false};
+
+    // Simulate audio thread calling processBlock in a tight loop
+    std::thread audioThread([&]() {
+        juce::AudioBuffer<float> output(2, 64);
+        juce::MidiBuffer midi;
+        while (!stop.load())
+        {
+            engine.processBlock(output, midi, 64);
+        }
+    });
+
+    // Control thread adds nodes and updates graph
+    for (int i = 0; i < 50; ++i)
+    {
+        auto node = std::make_unique<ConstNode>(0.1f);
+        node->prepare(44100.0, 64);
+        engine.addNode(std::move(node), "N" + std::to_string(i));
+        engine.updateGraph();
+    }
+
+    stop.store(true);
+    audioThread.join();
+
+    REQUIRE(engine.getNodes().size() == 50);
+}
+
+TEST_CASE("Concurrent readers and writers do not crash")
+{
+    Scheduler sched;
+    Engine engine(sched);
+    engine.prepareForTesting(44100.0, 512);
+
+    std::atomic<bool> stop{false};
+
+    // Reader thread: repeatedly queries nodes and connections
+    std::thread reader([&]() {
+        while (!stop.load())
+        {
+            auto nodes = engine.getNodes();
+            auto conns = engine.getConnections();
+            (void)nodes;
+            (void)conns;
+        }
+    });
+
+    // Writer thread: adds nodes
+    for (int i = 0; i < 50; ++i)
+    {
+        auto node = makeEngineTestNode(0, 2, true);
+        engine.addNode(std::move(node), "W" + std::to_string(i));
+    }
+
+    stop.store(true);
+    reader.join();
+
+    REQUIRE(engine.getNodes().size() == 50);
 }

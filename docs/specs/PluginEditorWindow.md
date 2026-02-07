@@ -94,6 +94,7 @@ The main thread runs a GUI message pump instead of a sleep loop. The REPL runs o
 - closeButtonPressed: message thread; uses callAsync to defer map removal
 - Editor window map: mutated under MessageManagerLock or on message thread only
 - Main thread: dispatchNextMessageOnSystemQueue loop
+- **Lock ordering rule**: Engine `controlMutex_` must never be held when acquiring `MessageManagerLock`. The EditorManager calls `engine.getNode(id)` (acquires+releases mutex), *then* acquires `MessageManagerLock` — never simultaneously. See [ConcurrencyModel](ConcurrencyModel.md).
 
 ## Example Usage
 

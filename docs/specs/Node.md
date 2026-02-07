@@ -80,6 +80,7 @@ public:
 - `process()` is called from the audio thread
 - `getInputPorts()` / `getOutputPorts()` are safe from any thread (immutable after construction)
 - `getParameter()` / `setParameter()` are called from the control thread; audio-thread parameter reads happen inside `process()` via the node's own internal state
+- Multiple control threads (REPL, OSC, WebSocket) may trigger Node methods through Engine. Engine's `controlMutex_` serializes all such access. See [ConcurrencyModel](ConcurrencyModel.md).
 
 ## Example Usage
 

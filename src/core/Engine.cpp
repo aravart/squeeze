@@ -68,6 +68,7 @@ int Engine::getBlockSize() const { return blockSize_.load(); }
 
 void Engine::prepareForTesting(double sampleRate, int blockSize)
 {
+    std::lock_guard<std::mutex> lock(controlMutex_);
     sampleRate_.store(sampleRate);
     blockSize_.store(blockSize);
 }
@@ -83,11 +84,13 @@ Graph& Engine::getGraph()
 
 bool Engine::loadPluginCache(const std::string& xmlPath)
 {
+    std::lock_guard<std::mutex> lock(controlMutex_);
     return cache_.loadFromFile(juce::File(xmlPath));
 }
 
 std::vector<std::string> Engine::getAvailablePluginNames() const
 {
+    std::lock_guard<std::mutex> lock(controlMutex_);
     auto names = cache_.getAvailablePluginNames();
     std::vector<std::string> result;
     result.reserve(names.size());
@@ -98,6 +101,7 @@ std::vector<std::string> Engine::getAvailablePluginNames() const
 
 const juce::PluginDescription* Engine::findPluginByName(const std::string& name) const
 {
+    std::lock_guard<std::mutex> lock(controlMutex_);
     return cache_.findByName(juce::String(name));
 }
 
@@ -105,7 +109,7 @@ const juce::PluginDescription* Engine::findPluginByName(const std::string& name)
 // Node management
 // ============================================================
 
-int Engine::addNode(std::unique_ptr<Node> node, const std::string& name)
+int Engine::addNodeLocked(std::unique_ptr<Node> node, const std::string& name)
 {
     Node* raw = node.get();
     int id = graph_.addNode(raw);
@@ -114,8 +118,15 @@ int Engine::addNode(std::unique_ptr<Node> node, const std::string& name)
     return id;
 }
 
+int Engine::addNode(std::unique_ptr<Node> node, const std::string& name)
+{
+    std::lock_guard<std::mutex> lock(controlMutex_);
+    return addNodeLocked(std::move(node), name);
+}
+
 bool Engine::removeNode(int id)
 {
+    std::lock_guard<std::mutex> lock(controlMutex_);
     SQ_LOG("removeNode: id=%d", id);
     auto it = ownedNodes_.find(id);
     if (it == ownedNodes_.end())
@@ -139,24 +150,27 @@ bool Engine::removeNode(int id)
     nodeNames_.erase(id);
 
     // Push updated graph so audio thread stops referencing removed node
-    updateGraph();
+    updateGraphLocked();
 
     return true;
 }
 
 Node* Engine::getNode(int id) const
 {
+    std::lock_guard<std::mutex> lock(controlMutex_);
     return graph_.getNode(id);
 }
 
 std::string Engine::getNodeName(int id) const
 {
+    std::lock_guard<std::mutex> lock(controlMutex_);
     auto it = nodeNames_.find(id);
     return (it != nodeNames_.end()) ? it->second : "";
 }
 
 std::vector<std::pair<int, std::string>> Engine::getNodes() const
 {
+    std::lock_guard<std::mutex> lock(controlMutex_);
     std::vector<std::pair<int, std::string>> result;
     for (const auto& kv : ownedNodes_)
     {
@@ -173,6 +187,7 @@ std::vector<std::pair<int, std::string>> Engine::getNodes() const
 
 int Engine::addPlugin(const std::string& name, std::string& errorMessage)
 {
+    std::lock_guard<std::mutex> lock(controlMutex_);
     SQ_LOG("addPlugin: %s", name.c_str());
     auto* desc = cache_.findByName(juce::String(name));
     if (!desc)
@@ -181,8 +196,8 @@ int Engine::addPlugin(const std::string& name, std::string& errorMessage)
         return -1;
     }
 
-    double sr = getSampleRate();
-    int bs = getBlockSize();
+    double sr = sampleRate_.load();
+    int bs = blockSize_.load();
     if (sr <= 0.0) sr = 44100.0;
     if (bs <= 0) bs = 512;
 
@@ -194,7 +209,7 @@ int Engine::addPlugin(const std::string& name, std::string& errorMessage)
         return -1;
     }
 
-    return addNode(std::move(pluginNode), name);
+    return addNodeLocked(std::move(pluginNode), name);
 }
 
 // ============================================================
@@ -203,6 +218,7 @@ int Engine::addPlugin(const std::string& name, std::string& errorMessage)
 
 std::vector<std::string> Engine::getAvailableMidiInputs() const
 {
+    std::lock_guard<std::mutex> lock(controlMutex_);
     std::vector<std::string> result;
     auto devices = juce::MidiInput::getAvailableDevices();
     for (int i = 0; i < devices.size(); ++i)
@@ -210,7 +226,7 @@ std::vector<std::string> Engine::getAvailableMidiInputs() const
     return result;
 }
 
-int Engine::addMidiInput(const std::string& deviceName, std::string& errorMessage)
+int Engine::addMidiInputLocked(const std::string& deviceName, std::string& errorMessage)
 {
     SQ_LOG("addMidiInput: %s", deviceName.c_str());
 
@@ -218,13 +234,20 @@ int Engine::addMidiInput(const std::string& deviceName, std::string& errorMessag
     if (!midiNode)
         return -1;
 
-    int id = addNode(std::move(midiNode), deviceName);
+    int id = addNodeLocked(std::move(midiNode), deviceName);
     midiDeviceNodes_[deviceName] = id;
     return id;
 }
 
+int Engine::addMidiInput(const std::string& deviceName, std::string& errorMessage)
+{
+    std::lock_guard<std::mutex> lock(controlMutex_);
+    return addMidiInputLocked(deviceName, errorMessage);
+}
+
 void Engine::autoLoadMidiInputs()
 {
+    std::lock_guard<std::mutex> lock(controlMutex_);
     auto devices = juce::MidiInput::getAvailableDevices();
     for (int i = 0; i < devices.size(); ++i)
     {
@@ -232,7 +255,7 @@ void Engine::autoLoadMidiInputs()
         if (midiDeviceNodes_.find(name) == midiDeviceNodes_.end())
         {
             std::string err;
-            int id = addMidiInput(name, err);
+            int id = addMidiInputLocked(name, err);
             if (id >= 0)
                 SQ_LOG("autoLoadMidiInputs: loaded '%s' as node %d", name.c_str(), id);
             else
@@ -243,6 +266,7 @@ void Engine::autoLoadMidiInputs()
 
 Engine::MidiRefreshResult Engine::refreshMidiInputs()
 {
+    std::lock_guard<std::mutex> lock(controlMutex_);
     MidiRefreshResult result;
 
     // Build set of currently available device names
@@ -257,7 +281,7 @@ Engine::MidiRefreshResult Engine::refreshMidiInputs()
         if (midiDeviceNodes_.find(name) == midiDeviceNodes_.end())
         {
             std::string err;
-            int id = addMidiInput(name, err);
+            int id = addMidiInputLocked(name, err);
             if (id >= 0)
                 result.added.push_back(name);
         }
@@ -272,7 +296,7 @@ Engine::MidiRefreshResult Engine::refreshMidiInputs()
 
     // Push updated graph if anything changed
     if (!result.added.empty())
-        updateGraph();
+        updateGraphLocked();
 
     return result;
 }
@@ -285,6 +309,7 @@ int Engine::connect(int srcId, const std::string& srcPort,
                     int dstId, const std::string& dstPort, std::string& error,
                     int midiChannel)
 {
+    std::lock_guard<std::mutex> lock(controlMutex_);
     SQ_LOG("connect: %d:%s -> %d:%s (ch=%d)", srcId, srcPort.c_str(), dstId, dstPort.c_str(), midiChannel);
     PortAddress source{srcId, PortDirection::output, srcPort};
     PortAddress dest{dstId, PortDirection::input, dstPort};
@@ -301,12 +326,14 @@ int Engine::connect(int srcId, const std::string& srcPort,
 
 bool Engine::disconnect(int connId)
 {
+    std::lock_guard<std::mutex> lock(controlMutex_);
     SQ_LOG("disconnect: conn=%d", connId);
     return graph_.disconnect(connId);
 }
 
 std::vector<Connection> Engine::getConnections() const
 {
+    std::lock_guard<std::mutex> lock(controlMutex_);
     return graph_.getConnections();
 }
 
@@ -314,12 +341,12 @@ std::vector<Connection> Engine::getConnections() const
 // Graph push
 // ============================================================
 
-void Engine::updateGraph()
+void Engine::updateGraphLocked()
 {
-    updateGraph(graph_);
+    updateGraphLocked(graph_);
 }
 
-void Engine::updateGraph(const Graph& graph)
+void Engine::updateGraphLocked(const Graph& graph)
 {
     SQ_LOG("updateGraph: %d nodes", graph.getNodeCount());
     double sr = sampleRate_.load();
@@ -337,12 +364,25 @@ void Engine::updateGraph(const Graph& graph)
     }
 }
 
+void Engine::updateGraph()
+{
+    std::lock_guard<std::mutex> lock(controlMutex_);
+    updateGraphLocked();
+}
+
+void Engine::updateGraph(const Graph& graph)
+{
+    std::lock_guard<std::mutex> lock(controlMutex_);
+    updateGraphLocked(graph);
+}
+
 // ============================================================
 // Parameters
 // ============================================================
 
 bool Engine::setParameter(int nodeId, int paramIndex, float value)
 {
+    std::lock_guard<std::mutex> lock(controlMutex_);
     Node* node = graph_.getNode(nodeId);
     if (!node)
         return false;
@@ -353,6 +393,7 @@ bool Engine::setParameter(int nodeId, int paramIndex, float value)
 
 float Engine::getParameter(int nodeId, int paramIndex) const
 {
+    std::lock_guard<std::mutex> lock(controlMutex_);
     Node* node = graph_.getNode(nodeId);
     if (!node)
         return 0.0f;
@@ -362,6 +403,7 @@ float Engine::getParameter(int nodeId, int paramIndex) const
 
 bool Engine::setParameterByName(int nodeId, const std::string& name, float value)
 {
+    std::lock_guard<std::mutex> lock(controlMutex_);
     Node* node = graph_.getNode(nodeId);
     if (!node)
         return false;
@@ -371,6 +413,7 @@ bool Engine::setParameterByName(int nodeId, const std::string& name, float value
 
 float Engine::getParameterByName(int nodeId, const std::string& name) const
 {
+    std::lock_guard<std::mutex> lock(controlMutex_);
     Node* node = graph_.getNode(nodeId);
     if (!node)
         return 0.0f;
@@ -380,6 +423,7 @@ float Engine::getParameterByName(int nodeId, const std::string& name) const
 
 std::vector<ParameterDescriptor> Engine::getParameterDescriptors(int nodeId) const
 {
+    std::lock_guard<std::mutex> lock(controlMutex_);
     Node* node = graph_.getNode(nodeId);
     if (!node)
         return {};
@@ -389,6 +433,7 @@ std::vector<ParameterDescriptor> Engine::getParameterDescriptors(int nodeId) con
 
 std::string Engine::getParameterText(int nodeId, int paramIndex) const
 {
+    std::lock_guard<std::mutex> lock(controlMutex_);
     Node* node = graph_.getNode(nodeId);
     if (!node)
         return "";
@@ -642,6 +687,7 @@ void Engine::audioDeviceIOCallbackWithContext(
 
 void Engine::audioDeviceAboutToStart(juce::AudioIODevice* device)
 {
+    std::lock_guard<std::mutex> lock(controlMutex_);
     double sr = device->getCurrentSampleRate();
     int bs = device->getCurrentBufferSizeSamples();
     sampleRate_.store(sr);
@@ -653,7 +699,7 @@ void Engine::audioDeviceAboutToStart(juce::AudioIODevice* device)
     for (auto& [id, node] : ownedNodes_)
         node->prepare(sr, bs);
 
-    updateGraph();
+    updateGraphLocked();
 }
 
 void Engine::audioDeviceStopped()
@@ -668,6 +714,7 @@ void Engine::audioDeviceStopped()
 
 int Engine::loadBuffer(const std::string& filePath, std::string& errorMessage)
 {
+    std::lock_guard<std::mutex> lock(controlMutex_);
     SQ_LOG("loadBuffer: %s", filePath.c_str());
 
     auto buffer = Buffer::loadFromFile(filePath, audioFormatManager_, errorMessage);
@@ -683,6 +730,7 @@ int Engine::loadBuffer(const std::string& filePath, std::string& errorMessage)
 int Engine::createBuffer(int numChannels, int lengthInSamples, double sampleRate,
                          const std::string& name, std::string& errorMessage)
 {
+    std::lock_guard<std::mutex> lock(controlMutex_);
     SQ_LOG("createBuffer: '%s' %d ch, %d samples, %.0f Hz",
            name.c_str(), numChannels, lengthInSamples, sampleRate);
 
@@ -701,6 +749,7 @@ int Engine::createBuffer(int numChannels, int lengthInSamples, double sampleRate
 
 bool Engine::removeBuffer(int id)
 {
+    std::lock_guard<std::mutex> lock(controlMutex_);
     SQ_LOG("removeBuffer: id=%d", id);
     auto it = ownedBuffers_.find(id);
     if (it == ownedBuffers_.end())
@@ -713,18 +762,21 @@ bool Engine::removeBuffer(int id)
 
 Buffer* Engine::getBuffer(int id) const
 {
+    std::lock_guard<std::mutex> lock(controlMutex_);
     auto it = ownedBuffers_.find(id);
     return (it != ownedBuffers_.end()) ? it->second.get() : nullptr;
 }
 
 std::string Engine::getBufferName(int id) const
 {
+    std::lock_guard<std::mutex> lock(controlMutex_);
     auto it = bufferNames_.find(id);
     return (it != bufferNames_.end()) ? it->second : "";
 }
 
 std::vector<std::pair<int, std::string>> Engine::getBuffers() const
 {
+    std::lock_guard<std::mutex> lock(controlMutex_);
     std::vector<std::pair<int, std::string>> result;
     for (const auto& kv : ownedBuffers_)
     {
