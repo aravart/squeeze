@@ -59,7 +59,7 @@ public:
 
 ## Voice Pool
 
-The pool is a fixed-size `std::vector<SamplerVoice>` allocated once in the constructor. **Pool size equals `maxVoices + 1`** — the extra voice provides crossfade overlap during retrigger and voice stealing (see Crossfade Retrigger below). No allocation occurs after construction.
+The pool is a fixed-size `std::vector<SamplerVoice>` allocated once in the constructor. **Pool size equals `maxVoices * 2`** — the second half provides crossfade overlap during retrigger and voice stealing. In the worst case (full chord retrigger), all `maxVoices` voices enter release simultaneously while `maxVoices` new voices start, requiring `2 * maxVoices` total. No allocation occurs after construction.
 
 All voices share the same `SamplerParams&` reference (passed through from SamplerNode). When SamplerNode updates a parameter, all voices see the new value on the next render call.
 

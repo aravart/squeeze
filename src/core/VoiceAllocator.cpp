@@ -8,7 +8,7 @@ VoiceAllocator::VoiceAllocator(int maxVoices, const SamplerParams& params)
     : maxVoices_(std::max(1, maxVoices))
     , maxActiveVoices_(maxVoices_)
 {
-    int poolSize = maxVoices_ + 1;  // +1 for crossfade overlap
+    int poolSize = maxVoices_ * 2;  // 2x for crossfade overlap (worst case: full chord retrigger)
     voices_.reserve(poolSize);
     for (int i = 0; i < poolSize; ++i)
         voices_.emplace_back(params);

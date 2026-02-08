@@ -505,11 +505,46 @@ TEST_CASE("VoiceAllocator: poly steal crossfades — victim enters release") {
     alloc.noteOn(buf.get(), 64, 1.0f);
     REQUIRE(alloc.getActiveVoiceCount() == 2);
 
-    // Pool has 3 voices (2+1). Both playing, 1 idle.
+    // Pool has 4 voices (2*2). Both playing, 2 idle.
     // Third note triggers steal: victim (oldest playing) enters release
     alloc.noteOn(buf.get(), 67, 1.0f);
     // Victim is now releasing, new note is playing
     REQUIRE(alloc.getActiveVoiceCount() == 3);  // 2 playing + 1 releasing
+}
+
+TEST_CASE("VoiceAllocator: poly full-chord retrigger — all voices crossfade") {
+    SamplerParams params;
+    params.ampAttack = 0.0f;
+    params.ampHold = 0.0f;
+    params.ampDecay = 0.0f;
+    params.ampSustain = 1.0f;
+    params.ampRelease = 0.5f;  // long release
+    VoiceAllocator alloc(4, params);
+    alloc.setMode(VoiceMode::poly);
+    alloc.setStealPolicy(StealPolicy::oldest);
+    alloc.prepare(44100.0, 512);
+
+    auto buf = makeTestBuffer(44100);
+
+    // Play a 4-note chord
+    alloc.noteOn(buf.get(), 60, 1.0f);
+    alloc.noteOn(buf.get(), 64, 1.0f);
+    alloc.noteOn(buf.get(), 67, 1.0f);
+    alloc.noteOn(buf.get(), 72, 1.0f);
+    REQUIRE(alloc.getActiveVoiceCount() == 4);
+
+    // Render a bit
+    juce::AudioBuffer<float> output(2, 64);
+    output.clear();
+    alloc.renderBlock(output, 0, 64);
+
+    // Retrigger entire chord — all 4 old voices enter release,
+    // 4 new voices start. Pool = 8 (4*2), so all fit without hard-cut.
+    alloc.noteOn(buf.get(), 48, 1.0f);
+    alloc.noteOn(buf.get(), 52, 1.0f);
+    alloc.noteOn(buf.get(), 55, 1.0f);
+    alloc.noteOn(buf.get(), 60, 1.0f);
+    REQUIRE(alloc.getActiveVoiceCount() == 8);  // 4 playing + 4 releasing
 }
 
 // --- Sub-block rendering ---
