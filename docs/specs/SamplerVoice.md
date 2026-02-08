@@ -349,6 +349,40 @@ Per sample (within a render call):
 - Interpolation accesses at most 2 samples beyond the playback region boundary (for cubic neighbors); these are clamped to the nearest valid index
 - Filter state is reset on each noteOn
 
+## Numerical Stability & DSP Edge Cases
+
+### Extreme playback rates
+
+MIDI note 127 with rootNote 0 produces +127 semitones = 2^(127/12) ≈ 1534x playback rate. At this rate, each output sample skips ~1534 buffer samples, potentially crossing the loop region multiple times.
+
+**Multi-wrap**: Loop wrapping uses `fmod(overshoot, loopLength)` to correctly compute the final position regardless of how many times the loop boundary is crossed. This handles forward and reverse loop modes. PingPong mode computes the number of boundary crossings to determine the final direction (odd crossings = reversed, even = same).
+
+The audio output at extreme rates is ultrasonic and musically meaningless, but the implementation must not crash, produce NaN, or get stuck.
+
+### Very short loop regions
+
+A 3-sample loop with crossfade clamped to half the loop length = 1 sample of crossfade. This is technically correct but the crossfade is inaudible — the output is a buzzy waveform at the loop's fundamental frequency. No special handling needed; the existing clamp logic keeps crossfade within bounds.
+
+### Read position precision
+
+`readPosition_` is a `double` (52-bit mantissa, 2^52 ≈ 4.5×10^15). At 48 kHz for 24 hours of continuous one-shot playback, the position reaches ~4.15×10^9 samples. This leaves ~43 bits of fractional precision — more than sufficient for cubic interpolation (which only needs the fractional part to ~16 bits). In looping modes, the position wraps within the loop region and never accumulates.
+
+### Filter resonance
+
+`filterResonance` (0.0–1.0) maps to JUCE's `setResonance` parameter as `0.707 + resonance * 19.3`:
+
+- At 0.0: resonance parameter = 0.707 (Butterworth, flat response, standard 12 dB/oct)
+- At 1.0: resonance parameter ≈ 20 (Q ≈ 20, +26 dB peak at cutoff frequency)
+
+The TPT (topology-preserving transform) filter structure is unconditionally stable — it uses trapezoidal integration which preserves the analog prototype's BIBO stability. At Q=20 the output amplitude near the resonant frequency can be 20x the input level, but the filter will not self-oscillate, diverge, or produce NaN/inf. No output clamping is applied; gain management is the responsibility of the user or a downstream limiter.
+
+### Filter cutoff at boundaries
+
+After envelope modulation, effective cutoff is clamped to [20 Hz, 20000 Hz]. At the extremes:
+- 20 Hz lowpass: essentially passes nothing audible but produces no numerical issues
+- 20000 Hz lowpass: passes everything, filter is effectively bypassed
+- The JUCE TPT filter handles all frequencies within [0, sampleRate/2] correctly
+
 ## Error Conditions
 
 - `noteOn` with null buffer: voice remains idle, no crash
@@ -356,7 +390,9 @@ Per sample (within a render call):
 - `loopStart >= loopEnd`: loop is disabled (treated as `loopMode::off`)
 - Buffer with 0 samples: voice remains idle
 - `ampAttack/ampDecay/ampRelease` of 0: the stage is instantaneous (completes in one sample)
+- Negative envelope stage times: clamped to 0 (treated as instant)
 - Filter cutoff out of [20, 20000] after modulation: clamped silently
+- Extreme playback rates (>1000x): loop wrapping uses fmod, output is finite but ultrasonic
 
 ## Does NOT Handle
 

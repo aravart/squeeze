@@ -360,14 +360,14 @@ void SamplerVoice::handleLoopWrap()
     }
 
     // Looping modes
+    double loopLen = static_cast<double>(loopEndSample_ - loopStartSample_);
+
     switch (loopMode) {
         case LoopMode::forward:
             if (readPosition_ >= loopEndSample_) {
                 double overshoot = readPosition_ - loopEndSample_;
-                readPosition_ = loopStartSample_ + overshoot;
-                // Clamp to prevent infinite loop from rounding
-                if (readPosition_ >= loopEndSample_)
-                    readPosition_ = loopStartSample_;
+                // fmod handles multi-wrap at extreme playback rates
+                readPosition_ = loopStartSample_ + std::fmod(overshoot, loopLen);
             }
             // Once inside the loop region, always move forward
             movingForward_ = true;
@@ -376,34 +376,45 @@ void SamplerVoice::handleLoopWrap()
         case LoopMode::reverse:
             if (readPosition_ < loopStartSample_) {
                 double undershoot = loopStartSample_ - readPosition_;
-                readPosition_ = loopEndSample_ - undershoot;
-                if (readPosition_ < loopStartSample_)
-                    readPosition_ = loopEndSample_ - 1;
+                readPosition_ = loopEndSample_ - std::fmod(undershoot, loopLen);
             }
             // Once inside the loop region, always move reverse
             if (readPosition_ >= loopStartSample_ && readPosition_ < loopEndSample_)
                 movingForward_ = false;
             break;
 
-        case LoopMode::pingPong:
+        case LoopMode::pingPong: {
+            // For pingPong, compute direction from number of boundary crossings.
+            // At extreme rates this could cross multiple times per sample.
             if (movingForward_ && readPosition_ >= loopEndSample_) {
                 double overshoot = readPosition_ - loopEndSample_;
-                readPosition_ = loopEndSample_ - overshoot;
-                movingForward_ = false;
-                if (readPosition_ < loopStartSample_) {
-                    readPosition_ = loopStartSample_;
+                int crossings = static_cast<int>(overshoot / loopLen) + 1;
+                double remainder = std::fmod(overshoot, loopLen);
+                if (crossings % 2 == 1) {
+                    // Odd crossings: moving backward
+                    readPosition_ = loopEndSample_ - remainder;
+                    movingForward_ = false;
+                } else {
+                    // Even crossings: still moving forward
+                    readPosition_ = loopStartSample_ + remainder;
                     movingForward_ = true;
                 }
             } else if (!movingForward_ && readPosition_ < loopStartSample_) {
                 double undershoot = loopStartSample_ - readPosition_;
-                readPosition_ = loopStartSample_ + undershoot;
-                movingForward_ = true;
-                if (readPosition_ >= loopEndSample_) {
-                    readPosition_ = loopEndSample_ - 1;
+                int crossings = static_cast<int>(undershoot / loopLen) + 1;
+                double remainder = std::fmod(undershoot, loopLen);
+                if (crossings % 2 == 1) {
+                    // Odd crossings: moving forward
+                    readPosition_ = loopStartSample_ + remainder;
+                    movingForward_ = true;
+                } else {
+                    // Even crossings: still moving backward
+                    readPosition_ = loopEndSample_ - remainder;
                     movingForward_ = false;
                 }
             }
             break;
+        }
 
         case LoopMode::off:
             break;

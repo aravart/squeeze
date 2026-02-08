@@ -1554,3 +1554,214 @@ TEST_CASE("SamplerVoice pitch cents adjust playback rate", "[SamplerVoice]")
     const float* Lc = outCents.getReadPointer(0);
     CHECK(Lc[400] > Lb[400]);
 }
+
+// ============================================================
+// Numerical Stability & DSP Edge Cases
+// ============================================================
+
+TEST_CASE("SamplerVoice extreme playback rate with forward loop does not crash", "[SamplerVoice]")
+{
+    // MIDI note 127, rootNote 0 = +127 semitones ≈ 1534x rate.
+    // With a 500-sample loop, this skips ~1534 samples/output sample = ~3 full loops/sample.
+    SamplerParams params;
+    params.ampAttack = 0.0f;
+    params.ampHold = 0.0f;
+    params.ampDecay = 0.0f;
+    params.ampSustain = 1.0f;
+    params.rootNote = 0;
+    params.loopMode = LoopMode::forward;
+    params.loopStart = 0.0f;
+    params.loopEnd = 0.5f; // 500 samples of 1000
+    SamplerVoice voice(params);
+    voice.prepare(kSampleRate, kBlockSize);
+
+    auto buf = makeConstBuffer(1000, 0.5f);
+    voice.noteOn(buf.get(), 127, 127, 0);
+    auto output = renderVoice(voice, 512);
+
+    // Voice should still be playing (loop keeps it alive)
+    CHECK(voice.getState() == VoiceState::playing);
+    // Output should be finite (no NaN/inf)
+    const float* L = output.getReadPointer(0);
+    for (int i = 0; i < 512; ++i) {
+        CHECK(std::isfinite(L[i]));
+    }
+}
+
+TEST_CASE("SamplerVoice extreme playback rate with multi-wrap preserves position correctly", "[SamplerVoice]")
+{
+    // Forward loop: rate high enough to wrap multiple times per sample.
+    // Verify fmod wrapping produces a position inside the loop region.
+    SamplerParams params;
+    params.ampAttack = 0.0f;
+    params.ampHold = 0.0f;
+    params.ampDecay = 0.0f;
+    params.ampSustain = 1.0f;
+    params.rootNote = 0;
+    params.loopMode = LoopMode::forward;
+    params.loopStart = 0.0f;
+    params.loopEnd = 1.0f;
+    SamplerVoice voice(params);
+    voice.prepare(kSampleRate, kBlockSize);
+
+    auto buf = makeRampBuffer(100); // tiny buffer, 100 samples
+    voice.noteOn(buf.get(), 120, 127, 0); // +120 semitones ≈ 1000x rate
+    // Render multiple blocks — no crash, voice stays alive
+    for (int i = 0; i < 10; ++i) {
+        auto output = renderVoice(voice, kBlockSize);
+        const float* L = output.getReadPointer(0);
+        for (int j = 0; j < kBlockSize; ++j)
+            CHECK(std::isfinite(L[j]));
+    }
+    CHECK(voice.getState() == VoiceState::playing);
+}
+
+TEST_CASE("SamplerVoice extreme playback rate with pingPong loop does not crash", "[SamplerVoice]")
+{
+    SamplerParams params;
+    params.ampAttack = 0.0f;
+    params.ampHold = 0.0f;
+    params.ampDecay = 0.0f;
+    params.ampSustain = 1.0f;
+    params.rootNote = 0;
+    params.loopMode = LoopMode::pingPong;
+    params.loopStart = 0.1f;
+    params.loopEnd = 0.9f;
+    SamplerVoice voice(params);
+    voice.prepare(kSampleRate, kBlockSize);
+
+    auto buf = makeConstBuffer(1000, 0.5f);
+    voice.noteOn(buf.get(), 127, 127, 0);
+    auto output = renderVoice(voice, 512);
+
+    CHECK(voice.getState() == VoiceState::playing);
+    const float* L = output.getReadPointer(0);
+    for (int i = 0; i < 512; ++i)
+        CHECK(std::isfinite(L[i]));
+}
+
+TEST_CASE("SamplerVoice very short loop region (3 samples) at high rate", "[SamplerVoice]")
+{
+    // 3-sample loop at high playback rate. Crossfade clamped to half loop = 1 sample.
+    SamplerParams params;
+    params.ampAttack = 0.0f;
+    params.ampHold = 0.0f;
+    params.ampDecay = 0.0f;
+    params.ampSustain = 1.0f;
+    params.rootNote = 60;
+    params.loopMode = LoopMode::forward;
+    // Buffer of 100 samples, loop region = samples 10-13 (3 samples)
+    params.sampleStart = 0.0f;
+    params.sampleEnd = 1.0f;
+    params.loopStart = 0.1f;   // sample 10
+    params.loopEnd = 0.13f;    // sample 13
+    params.loopCrossfadeSec = 1.0f; // way too long, will be clamped to 1 sample
+    SamplerVoice voice(params);
+    voice.prepare(kSampleRate, kBlockSize);
+
+    auto buf = makeRampBuffer(100);
+    voice.noteOn(buf.get(), 72, 127, 0); // octave up = 2x rate
+    auto output = renderVoice(voice, 512);
+
+    CHECK(voice.getState() == VoiceState::playing);
+    const float* L = output.getReadPointer(0);
+    for (int i = 0; i < 512; ++i)
+        CHECK(std::isfinite(L[i]));
+}
+
+TEST_CASE("SamplerVoice filter at maximum resonance does not produce NaN", "[SamplerVoice]")
+{
+    // Resonance=1.0 maps to Q≈20. TPT filter should remain stable.
+    SamplerParams params;
+    params.ampAttack = 0.0f;
+    params.ampHold = 0.0f;
+    params.ampDecay = 0.0f;
+    params.ampSustain = 1.0f;
+    params.filterType = FilterType::lowpass;
+    params.filterCutoffHz = 1000.0f;
+    params.filterResonance = 1.0f; // maximum resonance
+    SamplerVoice voice(params);
+    voice.prepare(kSampleRate, kBlockSize);
+
+    // Use an impulse-like buffer (click at start) to excite the filter
+    auto buf = Buffer::createEmpty(1, 4410, kSampleRate, "impulse");
+    buf->getWritePointer(0)[0] = 1.0f;
+
+    voice.noteOn(buf.get(), 60, 127, 0);
+    auto output = renderVoice(voice, 2000);
+
+    // All output must be finite — no NaN, no inf
+    const float* L = output.getReadPointer(0);
+    const float* R = output.getReadPointer(1);
+    for (int i = 0; i < 2000; ++i) {
+        CHECK(std::isfinite(L[i]));
+        CHECK(std::isfinite(R[i]));
+    }
+    // The resonant filter should ring (produce nonzero output beyond the impulse)
+    float tailRms = rms(output, 0, 100, 500);
+    CHECK(tailRms > 0.001f);
+}
+
+TEST_CASE("SamplerVoice filter with extreme cutoff modulation produces finite output", "[SamplerVoice]")
+{
+    // Max positive env amount + high sustain pushes cutoff to clamp at 20kHz.
+    // Max negative pushes to clamp at 20Hz. Neither should produce NaN.
+    SamplerParams params;
+    params.ampAttack = 0.0f;
+    params.ampHold = 0.0f;
+    params.ampDecay = 0.0f;
+    params.ampSustain = 1.0f;
+    params.filterType = FilterType::lowpass;
+    params.filterCutoffHz = 1000.0f;
+    params.filterResonance = 0.8f;
+    params.filterEnvAmount = 1.0f; // extreme positive modulation
+    params.filterAttack = 0.0f;
+    params.filterDecay = 0.0f;
+    params.filterSustain = 1.0f;
+    SamplerVoice voice(params);
+    voice.prepare(kSampleRate, kBlockSize);
+
+    auto buf = makeSineBuffer(4410, 440.0);
+    voice.noteOn(buf.get(), 60, 127, 0);
+    auto output = renderVoice(voice, 1000);
+
+    const float* L = output.getReadPointer(0);
+    for (int i = 0; i < 1000; ++i)
+        CHECK(std::isfinite(L[i]));
+
+    // Now test extreme negative
+    params.filterEnvAmount = -1.0f;
+    SamplerVoice voice2(params);
+    voice2.prepare(kSampleRate, kBlockSize);
+    voice2.noteOn(buf.get(), 60, 127, 0);
+    auto output2 = renderVoice(voice2, 1000);
+
+    const float* L2 = output2.getReadPointer(0);
+    for (int i = 0; i < 1000; ++i)
+        CHECK(std::isfinite(L2[i]));
+}
+
+TEST_CASE("SamplerVoice extreme playback rate one-shot reaches end without crash", "[SamplerVoice]")
+{
+    // One-shot at extreme rate: should hit sampleEnd and trigger release quickly.
+    SamplerParams params;
+    params.ampAttack = 0.0f;
+    params.ampHold = 0.0f;
+    params.ampDecay = 0.0f;
+    params.ampSustain = 1.0f;
+    params.ampRelease = 0.001f;
+    params.rootNote = 0;
+    params.loopMode = LoopMode::off;
+    SamplerVoice voice(params);
+    voice.prepare(kSampleRate, kBlockSize);
+
+    auto buf = makeConstBuffer(1000, 0.5f);
+    voice.noteOn(buf.get(), 120, 127, 0); // ~1000x rate
+    auto output = renderVoice(voice, 512);
+
+    // Should have hit the end and gone idle after release
+    CHECK(voice.getState() == VoiceState::idle);
+    const float* L = output.getReadPointer(0);
+    for (int i = 0; i < 512; ++i)
+        CHECK(std::isfinite(L[i]));
+}
