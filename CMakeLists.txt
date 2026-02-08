@@ -79,6 +79,7 @@ add_library(squeeze_core STATIC
     src/core/MidiInputNode.cpp
     src/core/PerfMonitor.cpp
     src/core/Logger.cpp
+    src/core/SamplerVoice.cpp
 )
 
 target_include_directories(squeeze_core PUBLIC src)
@@ -89,6 +90,7 @@ target_link_libraries(squeeze_core PUBLIC
     juce::juce_audio_devices
     juce::juce_audio_formats
     juce::juce_audio_processors
+    juce::juce_dsp
     juce::juce_events
 )
 
@@ -126,6 +128,7 @@ add_executable(squeeze_tests
     tests/core/LuaBindingsTests.cpp
     tests/core/PerfMonitorTests.cpp
     tests/core/LoggerTests.cpp
+    tests/core/SamplerVoiceTests.cpp
 )
 
 target_link_libraries(squeeze_tests PRIVATE
