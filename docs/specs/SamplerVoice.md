@@ -187,9 +187,15 @@ For forward loop, when position is within crossfadeSamples of loopEnd:
   t = distanceToEnd / crossfadeLength          // 1.0 at crossfade start, 0.0 at loop point
   fadeOut = sqrt(t)                             // equal-power
   fadeIn = sqrt(1.0 - t)
-  mirrorPos = loopStart + (crossfadeLength - distanceToEnd)
+  mirrorPos = loopStart + distanceToEnd
   output = fadeOut * sample(position) + fadeIn * sample(mirrorPos)
 ```
+
+The mirror position counts down toward `loopStart` as `distanceToEnd` approaches 0. At the exact wrap point (distanceToEnd=0), `mirrorPos = loopStart` and `fadeIn = 1.0`, so the output is 100% from loopStart — exactly where playback continues after the wrap. This ensures a seamless transition.
+
+### Single-cycle waveforms
+
+For single-cycle waveforms (wavetable oscillator use case), set `loopCrossfadeSec = 0`. These waveforms are phase-matched at their boundaries and loop seamlessly without crossfading. Crossfading a single-cycle waveform blends different phases of the wave, causing harmonic cancellation and timbre changes. The interpolation wrapping (see Cubic Hermite interpolation above) ensures clean looping even at fractional playback rates.
 
 ## Amplitude Envelope (AHDSR)
 
@@ -306,7 +312,7 @@ At `pan = -1.0`: left at 1.0, right at 0.0. At `pan = +1.0`: left at 0.0, right 
 
 ### Rationale
 
-Constant-power pan applied to stereo samples causes a -3 dB level drop at center position (each channel scaled by ~0.707). Balance control preserves the original stereo image at center and only attenuates the opposite channel when panning, which is the expected behavior for stereo samples.
+Users expect that loading a stereo sample with the pan knob at center produces the original mix unaltered — unity gain, passthrough. Constant-power pan at center scales both channels by ~0.707, which is mathematically correct for power summation but audibly changes the level of a pre-mixed stereo signal. Balance control gives center = passthrough (both channels at unity), matching the behavior of Kontakt, Ableton Simpler, and EXS24. Mono buffers use constant-power pan because there is no pre-existing stereo image to preserve.
 
 ## Render Pipeline
 

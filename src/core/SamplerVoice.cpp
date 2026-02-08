@@ -306,6 +306,24 @@ float SamplerVoice::fetchSample(int intIndex, int channel) const
     int bufLen = buffer_->getLengthInSamples();
     int numCh = buffer_->getNumChannels();
     int ch = std::min(channel, numCh - 1);
+
+    // For active loop modes with a valid loop region, wrap within the loop
+    bool loopActive = (params_.loopMode != LoopMode::off)
+                      && (loopStartSample_ < loopEndSample_)
+                      && (state_ == VoiceState::playing);
+
+    if (loopActive) {
+        int loopLen = loopEndSample_ - loopStartSample_;
+        if (intIndex >= loopEndSample_) {
+            intIndex = loopStartSample_ + ((intIndex - loopStartSample_) % loopLen);
+        } else if (intIndex < loopStartSample_) {
+            // Wrap below loopStart: count how far below, mod into loop
+            int below = loopStartSample_ - intIndex;
+            intIndex = loopEndSample_ - (below % loopLen);
+            if (intIndex >= loopEndSample_) intIndex = loopStartSample_;
+        }
+    }
+
     int idx = std::max(0, std::min(intIndex, bufLen - 1));
     return buffer_->getReadPointer(ch)[idx];
 }
@@ -551,7 +569,7 @@ void SamplerVoice::render(juce::AudioBuffer<float>& output, int sampleOffset, in
                 float fadeOut = static_cast<float>(std::sqrt(t));
                 float fadeIn = static_cast<float>(std::sqrt(1.0 - t));
 
-                double mirrorPos = loopStartSample_ + (crossfadeSamples_ - distanceToEnd);
+                double mirrorPos = loopStartSample_ + distanceToEnd;
                 int mirrorInt = static_cast<int>(std::floor(mirrorPos));
                 float mirrorFrac = static_cast<float>(mirrorPos - mirrorInt);
 

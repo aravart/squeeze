@@ -487,6 +487,93 @@ TEST_CASE("SamplerVoice loopStart >= loopEnd disables loop (treated as off)", "[
 }
 
 // ============================================================
+// Single-Cycle Waveform Looping
+// ============================================================
+
+TEST_CASE("SamplerVoice single-cycle waveform loops seamlessly (no crossfade)", "[SamplerVoice]")
+{
+    // A perfect single-cycle sine: sample[0] and sample[N] are phase-matched.
+    // With forward loop and no crossfade, the output should be a continuous sine.
+    int cycleLen = 256;
+    SamplerParams params;
+    params.ampAttack = 0.0f;
+    params.ampHold = 0.0f;
+    params.ampDecay = 0.0f;
+    params.ampSustain = 1.0f;
+    params.loopMode = LoopMode::forward;
+    params.loopStart = 0.0f;
+    params.loopEnd = 1.0f;
+    params.loopCrossfadeSec = 0.0f;
+    params.rootNote = 60;
+    SamplerVoice voice(params);
+    voice.prepare(kSampleRate, kBlockSize);
+
+    // Create a single-cycle sine buffer
+    auto buf = Buffer::createEmpty(1, cycleLen, kSampleRate, "single_cycle");
+    float* data = buf->getWritePointer(0);
+    for (int i = 0; i < cycleLen; ++i)
+        data[i] = static_cast<float>(std::sin(2.0 * M_PI * i / cycleLen));
+
+    voice.noteOn(buf.get(), 60, 127, 0);
+
+    // Render 4 full cycles (4 * 256 = 1024 samples)
+    auto output = renderVoice(voice, cycleLen * 4);
+
+    // Compare cycle 1 with cycles 2, 3, 4 — they should be nearly identical.
+    // This catches interpolation errors at the loop boundary.
+    const float* L = output.getReadPointer(0);
+    for (int cycle = 1; cycle < 4; ++cycle) {
+        for (int i = 0; i < cycleLen; ++i) {
+            float ref = L[i];
+            float val = L[cycle * cycleLen + i];
+            CHECK_THAT(val, WithinAbs(ref, 0.01));
+        }
+    }
+}
+
+TEST_CASE("SamplerVoice single-cycle waveform at fractional rate loops cleanly", "[SamplerVoice]")
+{
+    // Pitch-shifted single-cycle: fractional read positions cross the loop boundary.
+    // Interpolation must wrap, not clamp, for a clean loop.
+    int cycleLen = 256;
+    SamplerParams params;
+    params.ampAttack = 0.0f;
+    params.ampHold = 0.0f;
+    params.ampDecay = 0.0f;
+    params.ampSustain = 1.0f;
+    params.loopMode = LoopMode::forward;
+    params.loopStart = 0.0f;
+    params.loopEnd = 1.0f;
+    params.loopCrossfadeSec = 0.0f;
+    params.rootNote = 60;
+    params.pitchCents = 37.0f; // fractional pitch shift → non-integer positions
+    SamplerVoice voice(params);
+    voice.prepare(kSampleRate, kBlockSize);
+
+    auto buf = Buffer::createEmpty(1, cycleLen, kSampleRate, "single_cycle");
+    float* data = buf->getWritePointer(0);
+    for (int i = 0; i < cycleLen; ++i)
+        data[i] = static_cast<float>(std::sin(2.0 * M_PI * i / cycleLen));
+
+    voice.noteOn(buf.get(), 60, 127, 0);
+
+    // Render several cycles worth
+    auto output = renderVoice(voice, cycleLen * 8);
+
+    // Check for discontinuities: max sample-to-sample jump should be bounded.
+    // For a clean sine, the max delta between adjacent samples is ~2*pi/cycleLen * rate ≈ 0.025 * 1.02 ≈ 0.026.
+    // Allow some headroom for the pan gain.
+    const float* L = output.getReadPointer(0);
+    float maxJump = 0.0f;
+    for (int i = 1; i < cycleLen * 8; ++i) {
+        float jump = std::abs(L[i] - L[i - 1]);
+        maxJump = std::max(maxJump, jump);
+    }
+    // A clamp-instead-of-wrap bug would cause jumps > 0.1 at the loop boundary.
+    CHECK(maxJump < 0.05f);
+}
+
+// ============================================================
 // Loop Crossfade
 // ============================================================
 
