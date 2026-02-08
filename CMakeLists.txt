@@ -80,6 +80,7 @@ add_library(squeeze_core STATIC
     src/core/PerfMonitor.cpp
     src/core/Logger.cpp
     src/core/SamplerVoice.cpp
+    src/core/VoiceAllocator.cpp
 )
 
 target_include_directories(squeeze_core PUBLIC src)
@@ -129,6 +130,7 @@ add_executable(squeeze_tests
     tests/core/PerfMonitorTests.cpp
     tests/core/LoggerTests.cpp
     tests/core/SamplerVoiceTests.cpp
+    tests/core/VoiceAllocatorTests.cpp
 )
 
 target_link_libraries(squeeze_tests PRIVATE
