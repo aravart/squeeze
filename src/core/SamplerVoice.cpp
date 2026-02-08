@@ -131,7 +131,19 @@ void SamplerVoice::noteOn(const Buffer* buffer, int midiNote, float velocity,
 void SamplerVoice::noteOff(int startSampleInBlock)
 {
     if (state_ == VoiceState::idle) return;
-    pendingNoteOffOffset_ = startSampleInBlock;
+
+    if (startSampleInBlock == 0 && state_ == VoiceState::playing) {
+        // Immediate transition — allows caller to see state change without render
+        releaseStartLevel_ = ampEnv_.level;
+        ampEnv_.stage = AmpStage::release;
+        ampEnv_.position = 0.0;
+        filterReleaseStartLevel_ = filterEnv_.level;
+        filterEnv_.stage = FilterEnvStage::release;
+        filterEnv_.position = 0.0;
+        state_ = VoiceState::releasing;
+    } else {
+        pendingNoteOffOffset_ = startSampleInBlock;
+    }
 }
 
 // ============================================================

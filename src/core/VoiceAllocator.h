@@ -39,11 +39,13 @@ private:
     SamplerVoice* findIdleVoice();
     SamplerVoice* findPlayingVoice(int midiNote);
     SamplerVoice* findVoiceToSteal();
+    SamplerVoice* findReleasingVoiceToSteal();
 
     std::vector<SamplerVoice> voices_;
     VoiceMode mode_ = VoiceMode::mono;
     StealPolicy stealPolicy_ = StealPolicy::oldest;
-    int maxActiveVoices_;
+    int maxVoices_;        // user-facing voice count
+    int maxActiveVoices_;  // playing voice limit (default = maxVoices_)
 };
 
 } // namespace squeeze

@@ -13,10 +13,20 @@ static std::unique_ptr<Buffer> makeTestBuffer(int numSamples = 1000,
                                                double sampleRate = 44100.0) {
     auto buf = Buffer::createEmpty(numChannels, numSamples, sampleRate, "test");
     auto& data = buf->getAudioData();
-    // Fill with a ramp 0..1 so we can detect playback
     for (int ch = 0; ch < numChannels; ++ch)
         for (int i = 0; i < numSamples; ++i)
             data.setSample(ch, i, static_cast<float>(i) / numSamples);
+    return buf;
+}
+
+static std::unique_ptr<Buffer> makeConstBuffer(float value = 1.0f,
+                                                int numSamples = 10000,
+                                                int numChannels = 1) {
+    auto buf = Buffer::createEmpty(numChannels, numSamples, 44100.0, "const");
+    auto& data = buf->getAudioData();
+    for (int ch = 0; ch < numChannels; ++ch)
+        for (int i = 0; i < numSamples; ++i)
+            data.setSample(ch, i, value);
     return buf;
 }
 
@@ -37,6 +47,17 @@ static float peak(const juce::AudioBuffer<float>& buf, int channel,
     auto* p = buf.getReadPointer(channel);
     for (int i = start; i < start + numSamples; ++i)
         mx = std::max(mx, std::abs(p[i]));
+    return mx;
+}
+
+// Max sample-to-sample jump (detects discontinuities)
+static float maxJump(const juce::AudioBuffer<float>& buf, int channel,
+                     int start = 0, int numSamples = -1) {
+    if (numSamples < 0) numSamples = buf.getNumSamples() - start;
+    float mx = 0.0f;
+    auto* p = buf.getReadPointer(channel);
+    for (int i = start + 1; i < start + numSamples; ++i)
+        mx = std::max(mx, std::abs(p[i] - p[i - 1]));
     return mx;
 }
 
@@ -67,7 +88,7 @@ TEST_CASE("VoiceAllocator: prepare and release do not crash") {
     alloc.release();
 }
 
-TEST_CASE("VoiceAllocator: multiple voices pre-allocated") {
+TEST_CASE("VoiceAllocator: getMaxVoices returns user-facing value, not pool size") {
     SamplerParams params;
     VoiceAllocator alloc(8, params);
     REQUIRE(alloc.getMaxVoices() == 8);
@@ -109,12 +130,13 @@ TEST_CASE("VoiceAllocator: mono noteOn + render produces audio") {
     REQUIRE(rms(output, 0) > 0.0f);
 }
 
-TEST_CASE("VoiceAllocator: mono retrigger — new note replaces old") {
+TEST_CASE("VoiceAllocator: mono retrigger crossfades — 2 active during overlap") {
     SamplerParams params;
     params.ampAttack = 0.0f;
     params.ampHold = 0.0f;
     params.ampDecay = 0.0f;
     params.ampSustain = 1.0f;
+    params.ampRelease = 0.1f;  // 100ms release for visible overlap
     VoiceAllocator alloc(1, params);
     alloc.prepare(44100.0, 512);
 
@@ -122,11 +144,91 @@ TEST_CASE("VoiceAllocator: mono retrigger — new note replaces old") {
     alloc.noteOn(buf.get(), 60, 1.0f);
     REQUIRE(alloc.getActiveVoiceCount() == 1);
 
-    // Retrigger with different note
+    // Retrigger — old voice enters release, new voice starts
     alloc.noteOn(buf.get(), 72, 1.0f);
-    REQUIRE(alloc.getActiveVoiceCount() == 1);
+    REQUIRE(alloc.getActiveVoiceCount() == 2);  // 1 playing + 1 releasing
+}
 
-    // Render to make sure it doesn't crash
+TEST_CASE("VoiceAllocator: mono crossfade — old voice completes release") {
+    SamplerParams params;
+    params.ampAttack = 0.0f;
+    params.ampHold = 0.0f;
+    params.ampDecay = 0.0f;
+    params.ampSustain = 1.0f;
+    params.ampRelease = 0.001f;  // ~44 samples
+    VoiceAllocator alloc(1, params);
+    alloc.prepare(44100.0, 512);
+
+    auto buf = makeTestBuffer(44100);  // long buffer so new voice stays playing
+    alloc.noteOn(buf.get(), 60, 1.0f);
+    alloc.noteOn(buf.get(), 72, 1.0f);  // retrigger
+    REQUIRE(alloc.getActiveVoiceCount() == 2);
+
+    // Render enough for old voice's release to complete (~44 samples)
+    juce::AudioBuffer<float> output(2, 512);
+    for (int i = 0; i < 5; ++i) {
+        output.clear();
+        alloc.renderBlock(output, 0, 512);
+    }
+    REQUIRE(alloc.getActiveVoiceCount() == 1);  // only new voice remains
+}
+
+TEST_CASE("VoiceAllocator: mono crossfade produces no pop") {
+    SamplerParams params;
+    params.ampAttack = 0.001f;  // 1ms attack
+    params.ampHold = 0.0f;
+    params.ampDecay = 0.0f;
+    params.ampSustain = 1.0f;
+    params.ampRelease = 0.005f; // 5ms release
+    VoiceAllocator alloc(1, params);
+    alloc.prepare(44100.0, 512);
+
+    auto buf = makeConstBuffer(1.0f);
+
+    // Play first note, render to sustain
+    alloc.noteOn(buf.get(), 60, 1.0f);
+    juce::AudioBuffer<float> warmup(2, 512);
+    warmup.clear();
+    alloc.renderBlock(warmup, 0, 512);
+
+    // Retrigger mid-block via sub-block pattern
+    juce::AudioBuffer<float> output(2, 512);
+    output.clear();
+    alloc.renderBlock(output, 0, 100);      // old voice at sustain
+    alloc.noteOn(buf.get(), 72, 1.0f);      // crossfade retrigger
+    alloc.renderBlock(output, 100, 412);    // both voices overlap
+
+    // The transition at sample 100 should be smooth — no large jump
+    // Old voice releases from ~1.0, new voice attacks from 0.0
+    // Sum should transition smoothly, no single-sample jump > 0.3
+    float jump = maxJump(output, 0, 99, 10);  // check around the transition
+    REQUIRE(jump < 0.3f);
+}
+
+TEST_CASE("VoiceAllocator: rapid mono retrigger with all voices releasing") {
+    SamplerParams params;
+    params.ampAttack = 0.0f;
+    params.ampHold = 0.0f;
+    params.ampDecay = 0.0f;
+    params.ampSustain = 1.0f;
+    params.ampRelease = 1.0f;  // long release — voices stay releasing
+    VoiceAllocator alloc(1, params);
+    alloc.prepare(44100.0, 512);
+
+    auto buf = makeTestBuffer();
+
+    // First note
+    alloc.noteOn(buf.get(), 60, 1.0f);
+    // Retrigger — voice[0] releasing, voice[1] playing
+    alloc.noteOn(buf.get(), 64, 1.0f);
+    REQUIRE(alloc.getActiveVoiceCount() == 2);
+
+    // Retrigger again — voice[1] releasing, no idle voice
+    // Must hard-cut quietest releasing voice (voice[0])
+    alloc.noteOn(buf.get(), 67, 1.0f);
+    REQUIRE(alloc.getActiveVoiceCount() == 2);  // 1 playing + 1 releasing
+
+    // Render to make sure it works
     juce::AudioBuffer<float> output(2, 64);
     output.clear();
     alloc.renderBlock(output, 0, 64);
@@ -139,7 +241,7 @@ TEST_CASE("VoiceAllocator: mono noteOff transitions to releasing") {
     params.ampHold = 0.0f;
     params.ampDecay = 0.0f;
     params.ampSustain = 1.0f;
-    params.ampRelease = 0.1f;  // 100ms release
+    params.ampRelease = 0.1f;
     VoiceAllocator alloc(1, params);
     alloc.prepare(44100.0, 512);
 
@@ -148,10 +250,8 @@ TEST_CASE("VoiceAllocator: mono noteOff transitions to releasing") {
     REQUIRE(alloc.getActiveVoiceCount() == 1);
 
     alloc.noteOff(60);
-    // Voice is now in releasing state, still counts as active
-    REQUIRE(alloc.getActiveVoiceCount() == 1);
+    REQUIRE(alloc.getActiveVoiceCount() == 1);  // releasing
 
-    // Render enough to finish release (100ms = 4410 samples)
     juce::AudioBuffer<float> output(2, 512);
     for (int i = 0; i < 20; ++i) {
         output.clear();
@@ -166,7 +266,7 @@ TEST_CASE("VoiceAllocator: noteOff only matches playing voices, not releasing") 
     params.ampHold = 0.0f;
     params.ampDecay = 0.0f;
     params.ampSustain = 1.0f;
-    params.ampRelease = 1.0f;  // long release so voice stays releasing
+    params.ampRelease = 1.0f;
     VoiceAllocator alloc(4, params);
     alloc.setMode(VoiceMode::mono);
     alloc.prepare(44100.0, 512);
@@ -174,9 +274,8 @@ TEST_CASE("VoiceAllocator: noteOff only matches playing voices, not releasing") 
     auto buf = makeTestBuffer();
     alloc.noteOn(buf.get(), 60, 1.0f);
     alloc.noteOff(60);
-    // Voice is now releasing
 
-    // Second noteOff for same note should be a no-op
+    // Second noteOff for same note — no-op
     alloc.noteOff(60);
     REQUIRE(alloc.getActiveVoiceCount() == 1);  // still releasing
 }
@@ -186,7 +285,7 @@ TEST_CASE("VoiceAllocator: noteOff for unplayed note is a no-op") {
     VoiceAllocator alloc(1, params);
     alloc.prepare(44100.0, 512);
 
-    alloc.noteOff(60);  // no voice playing note 60
+    alloc.noteOff(60);
     REQUIRE(alloc.getActiveVoiceCount() == 0);
 }
 
@@ -198,7 +297,7 @@ TEST_CASE("VoiceAllocator: allNotesOff releases all non-idle voices") {
     params.ampHold = 0.0f;
     params.ampDecay = 0.0f;
     params.ampSustain = 1.0f;
-    params.ampRelease = 0.001f;  // very short release
+    params.ampRelease = 0.001f;
     VoiceAllocator alloc(4, params);
     alloc.prepare(44100.0, 512);
 
@@ -206,10 +305,7 @@ TEST_CASE("VoiceAllocator: allNotesOff releases all non-idle voices") {
     alloc.noteOn(buf.get(), 60, 1.0f);
 
     alloc.allNotesOff();
-    // Voices should be in releasing state (not hard-cut)
-    REQUIRE(alloc.getActiveVoiceCount() >= 0);
 
-    // After enough rendering, all voices should be idle
     juce::AudioBuffer<float> output(2, 512);
     for (int i = 0; i < 10; ++i) {
         output.clear();
@@ -246,14 +342,12 @@ TEST_CASE("VoiceAllocator: renderBlock is additive") {
     alloc.noteOn(buf.get(), 60, 1.0f);
 
     juce::AudioBuffer<float> output(2, 64);
-    // Pre-fill with 1.0
     for (int ch = 0; ch < 2; ++ch)
         for (int i = 0; i < 64; ++i)
             output.setSample(ch, i, 1.0f);
 
     alloc.renderBlock(output, 0, 64);
 
-    // All samples should be >= 1.0 (added to pre-existing content)
     auto* p = output.getReadPointer(0);
     for (int i = 0; i < 64; ++i)
         REQUIRE(p[i] >= 1.0f);
@@ -273,12 +367,9 @@ TEST_CASE("VoiceAllocator: renderBlock with startSample offset") {
 
     juce::AudioBuffer<float> output(2, 128);
     output.clear();
-    // Render only samples 64..127
     alloc.renderBlock(output, 64, 64);
 
-    // First 64 samples should be silent
     REQUIRE(peak(output, 0, 0, 64) == 0.0f);
-    // Last 64 samples should have audio
     REQUIRE(rms(output, 0, 64, 64) > 0.0f);
 }
 
@@ -322,13 +413,11 @@ TEST_CASE("VoiceAllocator: setMode/getMode") {
     REQUIRE(alloc.getMode() == VoiceMode::mono);
 }
 
-TEST_CASE("VoiceAllocator: setMaxActiveVoices clamped to pool size") {
+TEST_CASE("VoiceAllocator: setMaxActiveVoices clamped to maxVoices") {
     SamplerParams params;
     VoiceAllocator alloc(4, params);
 
-    alloc.setMaxActiveVoices(8);  // exceeds pool size of 4
-    // Should be clamped — we verify by checking no crash occurs
-    // and that the allocator still works
+    alloc.setMaxActiveVoices(8);  // exceeds maxVoices of 4
     alloc.prepare(44100.0, 512);
     auto buf = makeTestBuffer();
     alloc.noteOn(buf.get(), 60, 1.0f);
@@ -350,12 +439,11 @@ TEST_CASE("VoiceAllocator: setMaxActiveVoices does not kill active voices") {
     alloc.noteOn(buf.get(), 64, 1.0f);
     REQUIRE(alloc.getActiveVoiceCount() == 2);
 
-    // Reduce max active to 1 — existing voices keep playing
     alloc.setMaxActiveVoices(1);
     REQUIRE(alloc.getActiveVoiceCount() == 2);  // not killed
 }
 
-// --- Poly Mode (Phase 2 but basic functionality needed) ---
+// --- Poly Mode ---
 
 TEST_CASE("VoiceAllocator: poly mode allows multiple simultaneous voices") {
     SamplerParams params;
@@ -380,7 +468,7 @@ TEST_CASE("VoiceAllocator: poly noteOff releases only matching playing voice") {
     params.ampHold = 0.0f;
     params.ampDecay = 0.0f;
     params.ampSustain = 1.0f;
-    params.ampRelease = 1.0f;  // long release
+    params.ampRelease = 1.0f;
     VoiceAllocator alloc(4, params);
     alloc.setMode(VoiceMode::poly);
     alloc.prepare(44100.0, 512);
@@ -391,16 +479,16 @@ TEST_CASE("VoiceAllocator: poly noteOff releases only matching playing voice") {
     REQUIRE(alloc.getActiveVoiceCount() == 2);
 
     alloc.noteOff(60);
-    // Both still active (one playing, one releasing)
-    REQUIRE(alloc.getActiveVoiceCount() == 2);
+    REQUIRE(alloc.getActiveVoiceCount() == 2);  // one playing, one releasing
 }
 
-TEST_CASE("VoiceAllocator: poly mode steals oldest when pool exhausted") {
+TEST_CASE("VoiceAllocator: poly steal crossfades — victim enters release") {
     SamplerParams params;
     params.ampAttack = 0.0f;
     params.ampHold = 0.0f;
     params.ampDecay = 0.0f;
     params.ampSustain = 1.0f;
+    params.ampRelease = 0.5f;  // long release to see overlap
     VoiceAllocator alloc(2, params);
     alloc.setMode(VoiceMode::poly);
     alloc.setStealPolicy(StealPolicy::oldest);
@@ -409,7 +497,7 @@ TEST_CASE("VoiceAllocator: poly mode steals oldest when pool exhausted") {
     auto buf = makeTestBuffer();
     alloc.noteOn(buf.get(), 60, 1.0f);
 
-    // Render a bit so voice 1 has age > 0
+    // Render a bit so voice 1 has age
     juce::AudioBuffer<float> output(2, 64);
     output.clear();
     alloc.renderBlock(output, 0, 64);
@@ -417,12 +505,14 @@ TEST_CASE("VoiceAllocator: poly mode steals oldest when pool exhausted") {
     alloc.noteOn(buf.get(), 64, 1.0f);
     REQUIRE(alloc.getActiveVoiceCount() == 2);
 
-    // Pool is full, steal should happen
+    // Pool has 3 voices (2+1). Both playing, 1 idle.
+    // Third note triggers steal: victim (oldest playing) enters release
     alloc.noteOn(buf.get(), 67, 1.0f);
-    REQUIRE(alloc.getActiveVoiceCount() == 2);  // still 2, oldest was stolen
+    // Victim is now releasing, new note is playing
+    REQUIRE(alloc.getActiveVoiceCount() == 3);  // 2 playing + 1 releasing
 }
 
-// --- Sub-block rendering pattern ---
+// --- Sub-block rendering ---
 
 TEST_CASE("VoiceAllocator: sub-block rendering pattern works correctly") {
     SamplerParams params;
@@ -439,14 +529,11 @@ TEST_CASE("VoiceAllocator: sub-block rendering pattern works correctly") {
     juce::AudioBuffer<float> output(2, 512);
     output.clear();
 
-    // Simulate sub-block splitting: event at offset 100
-    alloc.renderBlock(output, 0, 100);         // silence (no voice)
-    alloc.noteOn(buf.get(), 60, 1.0f);         // trigger
-    alloc.renderBlock(output, 100, 412);       // voice plays
+    alloc.renderBlock(output, 0, 100);
+    alloc.noteOn(buf.get(), 60, 1.0f);
+    alloc.renderBlock(output, 100, 412);
 
-    // First 100 samples should be silent
     REQUIRE(peak(output, 0, 0, 100) == 0.0f);
-    // Remaining should have audio
     REQUIRE(rms(output, 0, 100, 412) > 0.0f);
 }
 
@@ -456,28 +543,25 @@ TEST_CASE("VoiceAllocator: sub-block noteOff mid-block") {
     params.ampHold = 0.0f;
     params.ampDecay = 0.0f;
     params.ampSustain = 1.0f;
-    params.ampRelease = 0.5f;  // long enough to hear release
+    params.ampRelease = 0.5f;
     VoiceAllocator alloc(1, params);
     alloc.prepare(44100.0, 512);
 
     auto buf = makeTestBuffer();
-
-    // Trigger first
     alloc.noteOn(buf.get(), 60, 1.0f);
 
     juce::AudioBuffer<float> output(2, 512);
     output.clear();
 
-    alloc.renderBlock(output, 0, 256);   // playing
-    alloc.noteOff(60);                   // release
-    alloc.renderBlock(output, 256, 256); // releasing
+    alloc.renderBlock(output, 0, 256);
+    alloc.noteOff(60);
+    alloc.renderBlock(output, 256, 256);
 
-    // Both halves should have audio (playing then releasing)
     REQUIRE(rms(output, 0, 0, 256) > 0.0f);
     REQUIRE(rms(output, 0, 256, 256) > 0.0f);
 }
 
-// --- Voice goes idle after release ---
+// --- Voice idle after release ---
 
 TEST_CASE("VoiceAllocator: voice returns to idle after release completes") {
     SamplerParams params;
@@ -485,7 +569,7 @@ TEST_CASE("VoiceAllocator: voice returns to idle after release completes") {
     params.ampHold = 0.0f;
     params.ampDecay = 0.0f;
     params.ampSustain = 1.0f;
-    params.ampRelease = 0.001f;  // ~44 samples
+    params.ampRelease = 0.001f;
     VoiceAllocator alloc(1, params);
     alloc.prepare(44100.0, 512);
 
@@ -499,38 +583,4 @@ TEST_CASE("VoiceAllocator: voice returns to idle after release completes") {
         alloc.renderBlock(output, 0, 512);
     }
     REQUIRE(alloc.getActiveVoiceCount() == 0);
-}
-
-// --- Mono retrigger resets envelope ---
-
-TEST_CASE("VoiceAllocator: mono retrigger resets envelope from zero") {
-    SamplerParams params;
-    params.ampAttack = 0.01f;   // 10ms attack
-    params.ampHold = 0.0f;
-    params.ampDecay = 0.0f;
-    params.ampSustain = 1.0f;
-    VoiceAllocator alloc(1, params);
-    alloc.prepare(44100.0, 512);
-
-    // Fill buffer with constant 1.0 to isolate envelope behavior
-    auto buf = Buffer::createEmpty(1, 10000, 44100.0, "const");
-    auto& data = buf->getAudioData();
-    for (int i = 0; i < 10000; ++i)
-        data.setSample(0, i, 1.0f);
-
-    // First note, render to sustain
-    alloc.noteOn(buf.get(), 60, 1.0f);
-    juce::AudioBuffer<float> output(2, 512);
-    output.clear();
-    alloc.renderBlock(output, 0, 512);  // should reach sustain
-
-    // Retrigger
-    alloc.noteOn(buf.get(), 72, 1.0f);
-    juce::AudioBuffer<float> output2(2, 16);
-    output2.clear();
-    alloc.renderBlock(output2, 0, 16);
-
-    // First sample after retrigger should be near 0 (attack starts from 0)
-    float firstSample = std::abs(output2.getSample(0, 0));
-    REQUIRE(firstSample < 0.1f);
 }

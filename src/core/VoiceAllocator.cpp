@@ -5,10 +5,12 @@
 namespace squeeze {
 
 VoiceAllocator::VoiceAllocator(int maxVoices, const SamplerParams& params)
-    : maxActiveVoices_(std::max(1, maxVoices))
+    : maxVoices_(std::max(1, maxVoices))
+    , maxActiveVoices_(maxVoices_)
 {
-    voices_.reserve(maxActiveVoices_);
-    for (int i = 0; i < maxActiveVoices_; ++i)
+    int poolSize = maxVoices_ + 1;  // +1 for crossfade overlap
+    voices_.reserve(poolSize);
+    for (int i = 0; i < poolSize; ++i)
         voices_.emplace_back(params);
 }
 
@@ -27,22 +29,42 @@ void VoiceAllocator::noteOn(const Buffer* buffer, int midiNote, float velocity) 
     if (midiNote < 0 || midiNote > 127) return;
 
     if (mode_ == VoiceMode::mono) {
-        // Mono: always retrigger the first voice
-        voices_[0].noteOn(buffer, midiNote, velocity, 0);
-    } else {
-        // Poly: find idle voice or steal
+        // Release any currently playing voice (crossfade out)
+        for (auto& v : voices_) {
+            if (v.getState() == VoiceState::playing)
+                v.noteOff(0);
+        }
+
+        // Find idle voice for new note
         auto* voice = findIdleVoice();
-        if (!voice) {
-            voice = findVoiceToSteal();
-        }
-        if (voice) {
+        if (!voice)
+            voice = findReleasingVoiceToSteal();
+
+        if (voice)
             voice->noteOn(buffer, midiNote, velocity, 0);
+    } else {
+        // Poly: check if we need to steal
+        int playingCount = 0;
+        for (const auto& v : voices_)
+            if (v.getState() == VoiceState::playing) ++playingCount;
+
+        if (playingCount >= maxActiveVoices_) {
+            // Steal a playing voice (crossfade out)
+            auto* victim = findVoiceToSteal();
+            if (victim) victim->noteOff(0);
         }
+
+        // Find idle voice, or hard-cut quietest releasing voice
+        auto* voice = findIdleVoice();
+        if (!voice)
+            voice = findReleasingVoiceToSteal();
+
+        if (voice)
+            voice->noteOn(buffer, midiNote, velocity, 0);
     }
 }
 
 void VoiceAllocator::noteOff(int midiNote) {
-    // Only match voices in playing state
     for (auto& voice : voices_) {
         if (voice.getState() == VoiceState::playing &&
             voice.getCurrentNote() == midiNote) {
@@ -77,7 +99,7 @@ void VoiceAllocator::setStealPolicy(StealPolicy policy) {
 }
 
 void VoiceAllocator::setMaxActiveVoices(int count) {
-    maxActiveVoices_ = std::clamp(count, 1, static_cast<int>(voices_.size()));
+    maxActiveVoices_ = std::clamp(count, 1, maxVoices_);
 }
 
 VoiceMode VoiceAllocator::getMode() const {
@@ -85,7 +107,7 @@ VoiceMode VoiceAllocator::getMode() const {
 }
 
 int VoiceAllocator::getMaxVoices() const {
-    return static_cast<int>(voices_.size());
+    return maxVoices_;
 }
 
 int VoiceAllocator::getActiveVoiceCount() const {
@@ -120,20 +142,34 @@ SamplerVoice* VoiceAllocator::findVoiceToSteal() {
     if (stealPolicy_ == StealPolicy::oldest) {
         float maxAge = -1.0f;
         for (auto& voice : voices_) {
-            if (voice.getState() != VoiceState::idle && voice.getAge() > maxAge) {
+            if (voice.getState() == VoiceState::playing && voice.getAge() > maxAge) {
                 maxAge = voice.getAge();
                 victim = &voice;
             }
         }
     } else {
-        // Quietest
         float minLevel = 2.0f;
         for (auto& voice : voices_) {
-            if (voice.getState() != VoiceState::idle &&
+            if (voice.getState() == VoiceState::playing &&
                 voice.getEnvelopeLevel() < minLevel) {
                 minLevel = voice.getEnvelopeLevel();
                 victim = &voice;
             }
+        }
+    }
+
+    return victim;
+}
+
+SamplerVoice* VoiceAllocator::findReleasingVoiceToSteal() {
+    SamplerVoice* victim = nullptr;
+    float minLevel = 2.0f;
+
+    for (auto& voice : voices_) {
+        if (voice.getState() == VoiceState::releasing &&
+            voice.getEnvelopeLevel() < minLevel) {
+            minLevel = voice.getEnvelopeLevel();
+            victim = &voice;
         }
     }
 

@@ -59,24 +59,28 @@ public:
 
 ## Voice Pool
 
-The pool is a fixed-size `std::vector<SamplerVoice>` allocated once in the constructor. Pool size equals `maxVoices` (constructor argument). No allocation occurs after construction.
+The pool is a fixed-size `std::vector<SamplerVoice>` allocated once in the constructor. **Pool size equals `maxVoices + 1`** — the extra voice provides crossfade overlap during retrigger and voice stealing (see Crossfade Retrigger below). No allocation occurs after construction.
 
 All voices share the same `SamplerParams&` reference (passed through from SamplerNode). When SamplerNode updates a parameter, all voices see the new value on the next render call.
 
+`getMaxVoices()` returns the user-facing `maxVoices` value, not the internal pool size. The extra voice is an implementation detail.
+
 ### Pool sizing
 
-Phase 1 default: `maxVoices = 1` (mono behavior). Phase 2 extends to user-configurable values (1–32). The implementation pre-allocates all voices regardless of `maxActiveVoices` — `setMaxActiveVoices()` limits how many can be simultaneously active, not how many exist in memory.
+Phase 1 default: `maxVoices = 1` (mono behavior). Phase 2 extends to user-configurable values (1–32). The implementation pre-allocates all voices regardless of `maxActiveVoices` — `setMaxActiveVoices()` limits how many `playing` voices can exist simultaneously, not how many voices exist in memory. Releasing voices do not count against this limit.
 
 ## Voice Modes
 
 ### Mono
 
-One voice at a time. A new note-on always retriggers:
+One playing voice at a time. A new note-on uses crossfade retrigger:
 
-1. If a voice is currently playing/releasing, it is immediately retriggered (SamplerVoice::noteOn resets position and envelopes, starting a fresh attack from zero)
-2. The voice plays the new note, velocity, and buffer
+1. Any currently playing voice receives `noteOff` (enters release stage — smooth fade-out via amplitude envelope)
+2. An idle voice from the pool receives `noteOn` (fresh attack from zero)
+3. Both voices render simultaneously during the overlap: old voice fading out, new voice fading in
+4. If no idle voice is available (rapid retrigger, all voices releasing), the quietest releasing voice is hard-cut (`noteOn` resets it) — minimal pop since it's already at a low level
 
-This is the SP-1200 / Octatrack per-track behavior. Essential for bass lines, chopped beats, and any context where only one sound should play. The new note's attack ramp handles the transition from the old sound — no explicit fade-out is needed because the retrigger resets the envelope to 0.
+This produces clean transitions between notes without audible pops. The old voice's release envelope provides the fade-out; the new voice's attack envelope provides the fade-in. Essential for bass lines, chopped beats, and any context where only one sound should play.
 
 ### Poly (Phase 2)
 
@@ -98,24 +102,27 @@ Like mono but does not retrigger the envelope on overlapping notes:
 
 Legato requires a note stack — a small fixed-size list of currently held notes (most recent on top). Max stack depth = 16.
 
-## Voice Stealing (Phase 2)
+## Voice Stealing
 
-When poly mode has no idle voices and a new note-on arrives:
+When the number of `playing` voices reaches `maxActiveVoices` and a new note-on arrives:
 
 ### Oldest policy
 
-Steal the voice with the greatest age (`voice.getAge()`). This is the most common policy — it prioritizes the most recent musical events.
+Steal the playing voice with the greatest age (`voice.getAge()`). This is the most common policy — it prioritizes the most recent musical events.
 
 ### Quietest policy
 
-Steal the voice with the lowest current amplitude envelope level (`voice.getEnvelopeLevel()`). This minimizes audible artifacts — a voice that's nearly silent is less noticeable when cut.
+Steal the playing voice with the lowest current amplitude envelope level (`voice.getEnvelopeLevel()`). This minimizes audible artifacts — a voice that's nearly silent is less noticeable when cut.
 
-### Steal procedure
+### Steal procedure (crossfade)
 
-1. Select victim voice according to policy
-2. The victim voice is immediately retriggered (same as mono retrigger — SamplerVoice::noteOn resets everything)
+1. Select victim among `playing` voices according to steal policy
+2. Send `noteOff` to the victim (enters release stage — smooth crossfade out)
+3. Find an idle voice for the new note
+4. If no idle voice is available (all voices playing or releasing), hard-cut the quietest `releasing` voice (`noteOn` resets it — minimal pop since it's already fading)
+5. `noteOn` on the acquired voice
 
-A refinement for Phase 2+: instead of hard retrigger, the victim could be given a very short fade-out (e.g., 5ms). This requires a "stealing" sub-state on the voice. Deferred — hard retrigger is acceptable for Phase 1–2.
+This ensures the stolen voice always gets a smooth release rather than a hard cut. Only in rapid-fire scenarios does a releasing voice get hard-cut, and by then its level is low.
 
 ## Choke Groups (Phase 2)
 
@@ -169,7 +176,7 @@ void VoiceAllocator::renderBlock(AudioBuffer<float>& output,
 
 - All methods called on the audio thread (`noteOn`, `noteOff`, `allNotesOff`, `renderBlock`) are RT-safe: no allocation, no blocking
 - Voice pool size is fixed after construction
-- In mono mode, at most one voice is in `playing` state (releasing voices may overlap during transitions)
+- In mono mode, at most one voice is in `playing` state; additional voices may be in `releasing` state during crossfade overlap
 - `noteOff` only affects voices in `playing` state — voices already in `releasing` state are not matched
 - `noteOff` for a note that has no matching `playing` voice is a no-op
 - `allNotesOff` releases all non-idle voices (enters release stage, does not hard-cut)
@@ -183,7 +190,7 @@ void VoiceAllocator::renderBlock(AudioBuffer<float>& output,
 - `noteOn` with `midiNote` outside 0–127: ignored
 - `noteOff` with no matching playing voice: no-op
 - `maxVoices < 1` in constructor: clamped to 1
-- `setMaxActiveVoices(n)` where n > pool size: clamped to pool size
+- `setMaxActiveVoices(n)` where n > maxVoices: clamped to maxVoices
 - `setMaxActiveVoices(n)` where n < current active count: excess voices are not killed, but no new voices are allocated until count drops below n
 
 ## Does NOT Handle
