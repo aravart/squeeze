@@ -114,7 +114,11 @@ TEST_CASE("LuaBindings bind creates sq table with all functions")
     REQUIRE(sq["nodes"].get_type() == sol::type::function);
     REQUIRE(sq["ports"].get_type() == sol::type::function);
     REQUIRE(sq["connections"].get_type() == sol::type::function);
-    REQUIRE(sq["refresh_midi_inputs"].get_type() == sol::type::function);
+    REQUIRE(sq["list_midi_devices"].get_type() == sol::type::function);
+    REQUIRE(sq["open_midi_devices"].get_type() == sol::type::function);
+    REQUIRE(sq["midi_route"].get_type() == sol::type::function);
+    REQUIRE(sq["midi_unroute"].get_type() == sol::type::function);
+    REQUIRE(sq["midi_routes"].get_type() == sol::type::function);
     REQUIRE(sq["add_sampler"].get_type() == sol::type::function);
     REQUIRE(sq["set_sampler_buffer"].get_type() == sol::type::function);
 }
@@ -611,14 +615,14 @@ TEST_CASE("LuaBindings add_plugin returns nil when plugin not in cache")
 }
 
 // ============================================================
-// MIDI input bindings
+// MIDI routing bindings
 // ============================================================
 
-TEST_CASE("LuaBindings list_midi_inputs returns a table")
+TEST_CASE("LuaBindings list_midi_devices returns a table")
 {
     LuaFixture f;
 
-    auto result = f.lua.safe_script("return sq.list_midi_inputs()", sol::script_pass_on_error);
+    auto result = f.lua.safe_script("return sq.list_midi_devices()", sol::script_pass_on_error);
     REQUIRE(result.valid());
 
     sol::table list = result;
@@ -626,12 +630,16 @@ TEST_CASE("LuaBindings list_midi_inputs returns a table")
     REQUIRE(list.size() >= 0);
 }
 
-TEST_CASE("LuaBindings add_midi_input returns nil and error for nonexistent device")
+TEST_CASE("LuaBindings midi_route returns nil and error for nonexistent device")
 {
     LuaFixture f;
 
+    auto node = makeTestPluginNode(2, 2, true);
+    int id = f.bindings.addTestNode(std::move(node), "Synth");
+    f.lua["node_id"] = id;
+
     auto result = f.lua.safe_script(
-        "local v, err = sq.add_midi_input('Nonexistent MIDI Device 12345')\n"
+        "local v, err = sq.midi_route('Nonexistent MIDI Device 12345', node_id)\n"
         "return v, err",
         sol::script_pass_on_error);
     REQUIRE(result.valid());
@@ -640,101 +648,29 @@ TEST_CASE("LuaBindings add_midi_input returns nil and error for nonexistent devi
     REQUIRE(val.get_type() == sol::type::lua_nil);
 }
 
-TEST_CASE("LuaBindings bind creates sq table with MIDI input functions")
+TEST_CASE("LuaBindings midi_routes returns empty table initially")
 {
     LuaFixture f;
 
-    sol::table sq = f.lua["sq"];
-    REQUIRE(sq["list_midi_inputs"].get_type() == sol::type::function);
-    REQUIRE(sq["add_midi_input"].get_type() == sol::type::function);
+    auto result = f.lua.safe_script("return sq.midi_routes()", sol::script_pass_on_error);
+    REQUIRE(result.valid());
+
+    sol::table routes = result;
+    REQUIRE(routes.size() == 0);
 }
 
-// ============================================================
-// refresh_midi_inputs
-// ============================================================
-
-TEST_CASE("LuaBindings refresh_midi_inputs returns table with added and removed keys")
+TEST_CASE("LuaBindings midi_unroute returns nil for invalid route ID")
 {
     LuaFixture f;
 
     auto result = f.lua.safe_script(
-        "return sq.refresh_midi_inputs()",
+        "local v, err = sq.midi_unroute(9999)\n"
+        "return v, err",
         sol::script_pass_on_error);
     REQUIRE(result.valid());
 
-    sol::table tbl = result;
-    REQUIRE(tbl["added"].get_type() == sol::type::table);
-    REQUIRE(tbl["removed"].get_type() == sol::type::table);
-}
-
-// ============================================================
-// MIDI channel filtering via Lua
-// ============================================================
-
-TEST_CASE("LuaBindings connect accepts optional 5th channel argument")
-{
-    LuaFixture f;
-
-    auto synth = makeTestPluginNode(0, 2, true);
-    auto effect = makeTestPluginNode(2, 2, false);
-    int synthId = f.bindings.addTestNode(std::move(synth), "Synth");
-    int fxId = f.bindings.addTestNode(std::move(effect), "FX");
-
-    f.lua["src_id"] = synthId;
-    f.lua["dst_id"] = fxId;
-
-    auto result = f.lua.safe_script(
-        "return sq.connect(src_id, 'out', dst_id, 'in', 5)",
-        sol::script_pass_on_error);
-    REQUIRE(result.valid());
-
-    int connId = result;
-    REQUIRE(connId >= 0);
-}
-
-TEST_CASE("LuaBindings connect defaults to channel 0 when not provided")
-{
-    LuaFixture f;
-
-    auto synth = makeTestPluginNode(0, 2, true);
-    auto effect = makeTestPluginNode(2, 2, false);
-    int synthId = f.bindings.addTestNode(std::move(synth), "Synth");
-    int fxId = f.bindings.addTestNode(std::move(effect), "FX");
-
-    f.lua["src_id"] = synthId;
-    f.lua["dst_id"] = fxId;
-
-    f.lua.safe_script("sq.connect(src_id, 'out', dst_id, 'in')");
-
-    auto result = f.lua.safe_script("return sq.connections()", sol::script_pass_on_error);
-    sol::table conns = result;
-    sol::table c = conns[1];
-    REQUIRE(c["channel"].get<int>() == 0);
-}
-
-TEST_CASE("LuaBindings connections returns channel field")
-{
-    LuaFixture f;
-
-    auto synth = makeTestPluginNode(0, 2, true);
-    auto effect = makeTestPluginNode(2, 2, false);
-    int synthId = f.bindings.addTestNode(std::move(synth), "Synth");
-    int fxId = f.bindings.addTestNode(std::move(effect), "FX");
-
-    f.lua["src_id"] = synthId;
-    f.lua["dst_id"] = fxId;
-
-    f.lua.safe_script("sq.connect(src_id, 'out', dst_id, 'in', 7)");
-
-    auto result = f.lua.safe_script("return sq.connections()", sol::script_pass_on_error);
-    sol::table conns = result;
-    REQUIRE(conns.size() == 1);
-
-    sol::table c = conns[1];
-    REQUIRE(c["id"].get<int>() >= 0);
-    REQUIRE(c["src"].get<int>() == synthId);
-    REQUIRE(c["dst"].get<int>() == fxId);
-    REQUIRE(c["channel"].get<int>() == 7);
+    sol::object val = result;
+    REQUIRE(val.get_type() == sol::type::lua_nil);
 }
 
 // ============================================================

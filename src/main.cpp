@@ -103,8 +103,19 @@ int main(int argc, char* argv[])
     else if (cachePath != "plugin-cache.xml")
         std::cerr << "Warning: failed to load plugin cache: " << cachePath << std::endl;
 
-    // Auto-load all available MIDI inputs
-    engine.autoLoadMidiInputs();
+    // Auto-open all available MIDI devices
+    {
+        auto& router = engine.getMidiRouter();
+        auto devices = router.getAvailableDevices();
+        for (const auto& name : devices)
+        {
+            std::string err;
+            if (router.openDevice(name, err))
+                std::cout << "MIDI device: " << name << std::endl;
+            else
+                std::cerr << "MIDI device failed: " << name << ": " << err << std::endl;
+        }
+    }
 
     // Create Lua bindings and register the sq API
     LuaBindings bindings(engine);

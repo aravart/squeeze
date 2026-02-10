@@ -68,9 +68,12 @@ void PluginNode::process(ProcessContext& context)
         context.outputAudio.clear();
     }
 
-    // Copy input MIDI to output MIDI (JUCE processes MIDI in-place)
-    context.outputMidi.clear();
-    context.outputMidi.addEvents(context.inputMidi, 0, context.numSamples, 0);
+    // JUCE processes MIDI in-place — only copy if input != output
+    if (&context.inputMidi != &context.outputMidi)
+    {
+        context.outputMidi.clear();
+        context.outputMidi.addEvents(context.inputMidi, 0, context.numSamples, 0);
+    }
 
     // Delegate to the plugin
     processor_->processBlock(context.outputAudio, context.outputMidi);

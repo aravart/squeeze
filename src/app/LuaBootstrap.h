@@ -55,18 +55,6 @@ function PluginNode:__tostring()
     return "PluginNode(" .. self.id .. ", \"" .. self.name .. "\")"
 end
 
--- MidiInputNode metatable
-local MidiInputNode = {}
-MidiInputNode.__index = MidiInputNode
-
-function MidiInputNode:remove()
-    return sq.remove_node(self.id)
-end
-
-function MidiInputNode:__tostring()
-    return "MidiInputNode(" .. self.id .. ", \"" .. self.name .. "\")"
-end
-
 -- SamplerNode metatable
 local SamplerNode = {}
 SamplerNode.__index = SamplerNode
@@ -125,16 +113,6 @@ sq.add_plugin = function(name)
     return node
 end
 
--- Wrap sq.add_midi_input to return a MidiInputNode object
-local raw_add_midi_input = sq.add_midi_input
-sq.add_midi_input = function(name)
-    local id, err = raw_add_midi_input(name)
-    if not id then return nil, err end
-    local node = { id = id, name = name }
-    setmetatable(node, MidiInputNode)
-    return node
-end
-
 -- Wrap sq.add_sampler to return a SamplerNode object
 local raw_add_sampler = sq.add_sampler
 sq.add_sampler = function(name, max_voices)
@@ -147,10 +125,17 @@ end
 
 -- Wrap sq.connect to accept node objects or bare IDs
 local raw_connect = sq.connect
-sq.connect = function(src, src_port, dst, dst_port, midi_channel)
+sq.connect = function(src, src_port, dst, dst_port)
     local src_id = type(src) == "table" and src.id or src
     local dst_id = type(dst) == "table" and dst.id or dst
-    return raw_connect(src_id, src_port, dst_id, dst_port, midi_channel)
+    return raw_connect(src_id, src_port, dst_id, dst_port)
+end
+
+-- Wrap sq.midi_route to accept node objects or bare IDs
+local raw_midi_route = sq.midi_route
+sq.midi_route = function(device, node, opts)
+    local node_id = type(node) == "table" and node.id or node
+    return raw_midi_route(device, node_id, opts)
 end
 )lua";
 

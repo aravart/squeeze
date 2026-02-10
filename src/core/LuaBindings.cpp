@@ -38,10 +38,8 @@ void LuaBindings::bind(sol::state& lua)
 
     sq.set_function("connect", [this](sol::this_state s,
             int srcId, const std::string& srcPort,
-            int dstId, const std::string& dstPort,
-            sol::optional<int> midiChannel) {
-        return luaConnect(sol::state_view(s), srcId, srcPort, dstId, dstPort,
-                          midiChannel.value_or(0));
+            int dstId, const std::string& dstPort) {
+        return luaConnect(sol::state_view(s), srcId, srcPort, dstId, dstPort);
     });
 
     sq.set_function("disconnect", [this](sol::this_state s, int connId) {
@@ -86,16 +84,33 @@ void LuaBindings::bind(sol::state& lua)
         return luaConnections(sol::state_view(s));
     });
 
-    sq.set_function("list_midi_inputs", [this](sol::this_state s) {
-        return luaListMidiInputs(sol::state_view(s));
+    // MIDI routing API
+    sq.set_function("list_midi_devices", [this](sol::this_state s) {
+        return luaListMidiDevices(sol::state_view(s));
     });
 
-    sq.set_function("add_midi_input", [this](sol::this_state s, const std::string& name) {
-        return luaAddMidiInput(sol::state_view(s), name);
+    sq.set_function("open_midi_devices", [this](sol::this_state s) {
+        return luaOpenMidiDevices(sol::state_view(s));
     });
 
-    sq.set_function("refresh_midi_inputs", [this](sol::this_state s) {
-        return luaRefreshMidiInputs(sol::state_view(s));
+    sq.set_function("midi_route", [this](sol::this_state s,
+            const std::string& deviceName, int nodeId,
+            sol::optional<sol::table> opts) {
+        int channel = 0;
+        if (opts)
+        {
+            sol::optional<int> ch = (*opts)["channel"];
+            if (ch) channel = *ch;
+        }
+        return luaMidiRoute(sol::state_view(s), deviceName, nodeId, channel);
+    });
+
+    sq.set_function("midi_unroute", [this](sol::this_state s, int routeId) {
+        return luaMidiUnroute(sol::state_view(s), routeId);
+    });
+
+    sq.set_function("midi_routes", [this](sol::this_state s) {
+        return luaMidiRoutes(sol::state_view(s));
     });
 
     sq.set_function("add_sampler", [this](sol::this_state s,
@@ -213,11 +228,10 @@ std::tuple<sol::object, sol::object> LuaBindings::luaRemoveNode(
 std::tuple<sol::object, sol::object> LuaBindings::luaConnect(
     sol::state_view lua,
     int srcId, const std::string& srcPort,
-    int dstId, const std::string& dstPort,
-    int midiChannel)
+    int dstId, const std::string& dstPort)
 {
     std::string error;
-    int connId = engine_.connect(srcId, srcPort, dstId, dstPort, error, midiChannel);
+    int connId = engine_.connect(srcId, srcPort, dstId, dstPort, error);
     if (connId < 0)
         return {sol::lua_nil, sol::make_object(lua, error)};
 
@@ -426,48 +440,79 @@ sol::table LuaBindings::luaConnections(sol::state_view lua)
         c["src_port"] = conns[i].source.portName;
         c["dst"] = conns[i].dest.nodeId;
         c["dst_port"] = conns[i].dest.portName;
-        c["channel"] = conns[i].midiChannel;
         result[i + 1] = c;
     }
     return result;
 }
 
-sol::table LuaBindings::luaListMidiInputs(sol::state_view lua)
+// ============================================================
+// MIDI routing API
+// ============================================================
+
+sol::table LuaBindings::luaListMidiDevices(sol::state_view lua)
 {
     sol::table result = lua.create_table();
-    auto devices = engine_.getAvailableMidiInputs();
+    auto devices = engine_.getMidiRouter().getAvailableDevices();
     for (int i = 0; i < (int)devices.size(); ++i)
         result[i + 1] = devices[i];
     return result;
 }
 
-std::tuple<sol::object, sol::object> LuaBindings::luaAddMidiInput(
-    sol::state_view lua, const std::string& name)
+sol::table LuaBindings::luaOpenMidiDevices(sol::state_view lua)
 {
-    std::string errorMessage;
-    int id = engine_.addMidiInput(name, errorMessage);
-    if (id < 0)
-        return {sol::lua_nil, sol::make_object(lua, errorMessage)};
-
-    return {sol::make_object(lua, id), sol::lua_nil};
+    sol::table result = lua.create_table();
+    auto devices = engine_.getMidiRouter().getOpenDevices();
+    for (int i = 0; i < (int)devices.size(); ++i)
+        result[i + 1] = devices[i];
+    return result;
 }
 
-sol::table LuaBindings::luaRefreshMidiInputs(sol::state_view lua)
+std::tuple<sol::object, sol::object> LuaBindings::luaMidiRoute(
+    sol::state_view lua, const std::string& deviceName, int nodeId, int channelFilter)
 {
-    auto refreshResult = engine_.refreshMidiInputs();
+    auto& router = engine_.getMidiRouter();
 
+    // Auto-open device if not already open
+    if (!router.isDeviceOpen(deviceName))
+    {
+        std::string openError;
+        if (!router.openDevice(deviceName, openError))
+            return {sol::lua_nil, sol::make_object(lua, openError)};
+    }
+
+    std::string routeError;
+    int routeId = router.addRoute(deviceName, nodeId, channelFilter, routeError);
+    if (routeId < 0)
+        return {sol::lua_nil, sol::make_object(lua, routeError)};
+
+    router.commit();
+    return {sol::make_object(lua, routeId), sol::lua_nil};
+}
+
+std::tuple<sol::object, sol::object> LuaBindings::luaMidiUnroute(
+    sol::state_view lua, int routeId)
+{
+    auto& router = engine_.getMidiRouter();
+    if (!router.removeRoute(routeId))
+        return {sol::lua_nil, sol::make_object(lua, "Route " + std::to_string(routeId) + " not found")};
+
+    router.commit();
+    return {sol::make_object(lua, true), sol::lua_nil};
+}
+
+sol::table LuaBindings::luaMidiRoutes(sol::state_view lua)
+{
     sol::table result = lua.create_table();
-
-    sol::table added = lua.create_table();
-    for (int i = 0; i < (int)refreshResult.added.size(); ++i)
-        added[i + 1] = refreshResult.added[i];
-    result["added"] = added;
-
-    sol::table removed = lua.create_table();
-    for (int i = 0; i < (int)refreshResult.removed.size(); ++i)
-        removed[i + 1] = refreshResult.removed[i];
-    result["removed"] = removed;
-
+    auto routes = engine_.getMidiRouter().getRoutes();
+    for (int i = 0; i < (int)routes.size(); ++i)
+    {
+        sol::table r = lua.create_table();
+        r["id"] = routes[i].id;
+        r["device"] = routes[i].deviceName;
+        r["node_id"] = routes[i].nodeId;
+        r["channel"] = routes[i].channelFilter;
+        result[i + 1] = r;
+    }
     return result;
 }
 
@@ -605,10 +650,8 @@ sol::table LuaBindings::luaPerf(sol::state_view lua)
     for (int i = 0; i < (int)snap.midi.size(); ++i)
     {
         sol::table m = lua.create_table();
-        m["id"] = snap.midi[i].nodeId;
         m["device"] = snap.midi[i].deviceName;
         m["fill"] = snap.midi[i].fillLevel;
-        m["peak_fill"] = snap.midi[i].peakFillLevel;
         m["dropped"] = snap.midi[i].droppedCount;
         midi[i + 1] = m;
     }

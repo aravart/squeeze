@@ -1,7 +1,6 @@
 #include "core/Engine.h"
 #include "core/Buffer.h"
 #include "core/Logger.h"
-#include "core/MidiInputNode.h"
 #include "core/PluginNode.h"
 #include "core/SamplerNode.h"
 
@@ -85,12 +84,18 @@ PerfSnapshot Engine::getPerfSnapshot()
     std::lock_guard<std::mutex> lock(controlMutex_);
     auto snap = perfMonitor_.getSnapshot();
 
-    // Fill in MIDI device names from nodeNames_
-    for (auto& m : snap.midi)
+    // Fill in MIDI device names from MidiRouter
+    auto stats = midiRouter_.getDeviceStats();
+    snap.midi.clear();
+    for (const auto& s : stats)
     {
-        auto it = nodeNames_.find(m.nodeId);
-        if (it != nodeNames_.end())
-            m.deviceName = it->second;
+        PerfSnapshot::MidiQueuePerf mp;
+        mp.nodeId = -1;
+        mp.deviceName = s.deviceName;
+        mp.fillLevel = s.fillLevel;
+        mp.peakFillLevel = 0;
+        mp.droppedCount = s.droppedCount;
+        snap.midi.push_back(mp);
     }
 
     return snap;
@@ -99,6 +104,11 @@ PerfSnapshot Engine::getPerfSnapshot()
 Graph& Engine::getGraph()
 {
     return graph_;
+}
+
+MidiRouter& Engine::getMidiRouter()
+{
+    return midiRouter_;
 }
 
 // ============================================================
@@ -157,15 +167,8 @@ bool Engine::removeNode(int id)
 
     graph_.removeNode(id);
 
-    // Remove from midiDeviceNodes_ if present
-    for (auto mit = midiDeviceNodes_.begin(); mit != midiDeviceNodes_.end(); ++mit)
-    {
-        if (mit->second == id)
-        {
-            midiDeviceNodes_.erase(mit);
-            break;
-        }
-    }
+    // Remove any MIDI routes targeting this node
+    midiRouter_.removeRoutesForNode(id);
 
     // Defer destruction for RT safety
     pendingDeletions_.push_back(std::move(it->second));
@@ -236,95 +239,6 @@ int Engine::addPlugin(const std::string& name, std::string& errorMessage)
 }
 
 // ============================================================
-// MIDI input management
-// ============================================================
-
-std::vector<std::string> Engine::getAvailableMidiInputs() const
-{
-    std::lock_guard<std::mutex> lock(controlMutex_);
-    std::vector<std::string> result;
-    auto devices = juce::MidiInput::getAvailableDevices();
-    for (int i = 0; i < devices.size(); ++i)
-        result.push_back(devices[i].name.toStdString());
-    return result;
-}
-
-int Engine::addMidiInputLocked(const std::string& deviceName, std::string& errorMessage)
-{
-    SQ_LOG("addMidiInput: %s", deviceName.c_str());
-
-    auto midiNode = MidiInputNode::create(deviceName, errorMessage);
-    if (!midiNode)
-        return -1;
-
-    int id = addNodeLocked(std::move(midiNode), deviceName);
-    midiDeviceNodes_[deviceName] = id;
-    return id;
-}
-
-int Engine::addMidiInput(const std::string& deviceName, std::string& errorMessage)
-{
-    std::lock_guard<std::mutex> lock(controlMutex_);
-    return addMidiInputLocked(deviceName, errorMessage);
-}
-
-void Engine::autoLoadMidiInputs()
-{
-    std::lock_guard<std::mutex> lock(controlMutex_);
-    auto devices = juce::MidiInput::getAvailableDevices();
-    for (int i = 0; i < devices.size(); ++i)
-    {
-        std::string name = devices[i].name.toStdString();
-        if (midiDeviceNodes_.find(name) == midiDeviceNodes_.end())
-        {
-            std::string err;
-            int id = addMidiInputLocked(name, err);
-            if (id >= 0)
-                SQ_LOG("autoLoadMidiInputs: loaded '%s' as node %d", name.c_str(), id);
-            else
-                SQ_LOG("autoLoadMidiInputs: failed '%s': %s", name.c_str(), err.c_str());
-        }
-    }
-}
-
-Engine::MidiRefreshResult Engine::refreshMidiInputs()
-{
-    std::lock_guard<std::mutex> lock(controlMutex_);
-    MidiRefreshResult result;
-
-    // Build set of currently available device names
-    auto devices = juce::MidiInput::getAvailableDevices();
-    std::unordered_set<std::string> currentDeviceNames;
-    for (int i = 0; i < devices.size(); ++i)
-        currentDeviceNames.insert(devices[i].name.toStdString());
-
-    // Find new devices (available but not yet loaded)
-    for (const auto& name : currentDeviceNames)
-    {
-        if (midiDeviceNodes_.find(name) == midiDeviceNodes_.end())
-        {
-            std::string err;
-            int id = addMidiInputLocked(name, err);
-            if (id >= 0)
-                result.added.push_back(name);
-        }
-    }
-
-    // Find disappeared devices (loaded but no longer available)
-    for (const auto& kv : midiDeviceNodes_)
-    {
-        if (currentDeviceNames.find(kv.first) == currentDeviceNames.end())
-            result.removed.push_back(kv.first);
-    }
-
-    // Push updated graph if anything changed
-    if (!result.added.empty())
-        updateGraphLocked();
-
-    return result;
-}
-
-// ============================================================
 // Sampler management
 // ============================================================
 
@@ -381,15 +295,14 @@ bool Engine::setSamplerBuffer(int nodeId, int bufferId)
 // ============================================================
 
 int Engine::connect(int srcId, const std::string& srcPort,
-                    int dstId, const std::string& dstPort, std::string& error,
-                    int midiChannel)
+                    int dstId, const std::string& dstPort, std::string& error)
 {
     std::lock_guard<std::mutex> lock(controlMutex_);
-    SQ_LOG("connect: %d:%s -> %d:%s (ch=%d)", srcId, srcPort.c_str(), dstId, dstPort.c_str(), midiChannel);
+    SQ_LOG("connect: %d:%s -> %d:%s", srcId, srcPort.c_str(), dstId, dstPort.c_str());
     PortAddress source{srcId, PortDirection::output, srcPort};
     PortAddress dest{dstId, PortDirection::input, dstPort};
 
-    int connId = graph_.connect(source, dest, midiChannel);
+    int connId = graph_.connect(source, dest);
     if (connId < 0)
     {
         error = graph_.getLastError();
@@ -548,9 +461,8 @@ GraphSnapshot* Engine::buildSnapshot(const Graph& graph,
         Node* node = graph.getNode(nodeId);
 
         int audioSrc = -1;
-        std::vector<GraphSnapshot::NodeSlot::MidiSource> midiSources;
 
-        // Find incoming connections for this node
+        // Find incoming audio connections for this node
         for (const auto& conn : connections)
         {
             if (conn.dest.nodeId != nodeId)
@@ -563,18 +475,14 @@ GraphSnapshot* Engine::buildSnapshot(const Graph& graph,
             {
                 if (p.name == conn.source.portName)
                 {
-                    int srcIndex = idToIndex[conn.source.nodeId];
                     if (p.signalType == SignalType::audio)
-                        audioSrc = srcIndex;
-                    else if (p.signalType == SignalType::midi)
-                        midiSources.push_back({srcIndex, conn.midiChannel});
+                        audioSrc = idToIndex[conn.source.nodeId];
                     break;
                 }
             }
         }
 
-        auto* midiInput = dynamic_cast<MidiInputNode*>(node);
-        snap->slots.push_back({node, nodeId, audioSrc, std::move(midiSources), false, midiInput});
+        snap->slots.push_back({node, nodeId, audioSrc, false});
 
         // Determine output channel count from this node's output ports
         int outChannels = 2;
@@ -591,13 +499,12 @@ GraphSnapshot* Engine::buildSnapshot(const Graph& graph,
             maxChannels = outChannels;
 
         snap->audioOutputs.emplace_back(outChannels, blockSize);
-        snap->midiOutputs.emplace_back();
-        snap->midiOutputs.back().ensureSize(256);
+        snap->midiBuffers.emplace_back();
+        snap->midiBuffers.back().ensureSize(256);
     }
 
     snap->silenceBuffer.setSize(maxChannels, blockSize);
     snap->silenceBuffer.clear();
-    snap->filteredMidi.ensureSize(256);
 
     // Determine which slots are audio leaves (no other slot reads their audio output)
     std::unordered_set<int> hasAudioConsumer;
@@ -668,75 +575,42 @@ void Engine::processBlock(juce::AudioBuffer<float>& outputBuffer,
 
     auto& snap = *activeSnapshot_;
 
-    // 3. Process each node in execution order
+    // 3. Clear all node MIDI buffers, then dispatch MIDI from router
+    std::unordered_map<int, juce::MidiBuffer*> nodeBufferMap;
+    for (int i = 0; i < (int)snap.slots.size(); ++i)
+    {
+        snap.midiBuffers[i].clear();
+        nodeBufferMap[snap.slots[i].nodeId] = &snap.midiBuffers[i];
+    }
+    midiRouter_.dispatchMidi(nodeBufferMap);
+
+    // 4. Process each node in execution order
     for (int i = 0; i < (int)snap.slots.size(); ++i)
     {
         auto& slot = snap.slots[i];
 
-        // Resolve inputs
+        // Resolve audio input
         juce::AudioBuffer<float>& audioIn =
             (slot.audioSourceIndex >= 0)
                 ? snap.audioOutputs[slot.audioSourceIndex]
                 : snap.silenceBuffer;
 
-        juce::MidiBuffer* midiInPtr = &snap.emptyMidi;
+        // MIDI input comes from the router-populated buffer
+        juce::MidiBuffer& midiIn = snap.midiBuffers[i];
 
-        if (slot.midiSources.size() == 1)
-        {
-            auto& ms = slot.midiSources[0];
-            midiInPtr = &snap.midiOutputs[ms.slotIndex];
-
-            if (ms.channelFilter > 0)
-            {
-                snap.filteredMidi.clear();
-                for (const auto metadata : *midiInPtr)
-                {
-                    auto msg = metadata.getMessage();
-                    if (msg.getChannel() == 0 || msg.getChannel() == ms.channelFilter)
-                        snap.filteredMidi.addEvent(msg, metadata.samplePosition);
-                }
-                midiInPtr = &snap.filteredMidi;
-            }
-        }
-        else if (slot.midiSources.size() > 1)
-        {
-            snap.filteredMidi.clear();
-            for (const auto& ms : slot.midiSources)
-            {
-                auto& srcBuf = snap.midiOutputs[ms.slotIndex];
-                if (ms.channelFilter == 0)
-                {
-                    for (const auto metadata : srcBuf)
-                        snap.filteredMidi.addEvent(metadata.getMessage(),
-                                                   metadata.samplePosition);
-                }
-                else
-                {
-                    for (const auto metadata : srcBuf)
-                    {
-                        auto msg = metadata.getMessage();
-                        if (msg.getChannel() == 0 || msg.getChannel() == ms.channelFilter)
-                            snap.filteredMidi.addEvent(msg, metadata.samplePosition);
-                    }
-                }
-            }
-            midiInPtr = &snap.filteredMidi;
-        }
-
-        // Clear outputs
+        // Clear audio output
         snap.audioOutputs[i].clear();
-        snap.midiOutputs[i].clear();
 
         // Process with per-node timing
         perfMonitor_.beginNode(i, slot.nodeId);
         ProcessContext ctx{audioIn, snap.audioOutputs[i],
-                          *midiInPtr, snap.midiOutputs[i],
+                          midiIn, snap.midiBuffers[i],
                           numSamples};
         slot.node->process(ctx);
         perfMonitor_.endNode(i);
     }
 
-    // 4. Sum all audio leaf nodes to device output
+    // 5. Sum all audio leaf nodes to device output
     outputBuffer.clear();
     outputMidi.clear();
 
@@ -751,19 +625,6 @@ void Engine::processBlock(juce::AudioBuffer<float>& outputBuffer,
         for (int ch = 0; ch < chToAdd; ++ch)
             for (int s = 0; s < numSamples; ++s)
                 outputBuffer.addSample(ch, s, leafAudio.getSample(ch, s));
-    }
-
-    // 5. Report MIDI queue health
-    for (int i = 0; i < (int)snap.slots.size(); ++i)
-    {
-        if (snap.slots[i].midiInputNode)
-        {
-            auto* mn = snap.slots[i].midiInputNode;
-            perfMonitor_.reportMidiQueue(
-                snap.slots[i].nodeId,
-                mn->getQueueFillLevel(),
-                mn->getDroppedCount());
-        }
     }
 
     perfMonitor_.endCallback();

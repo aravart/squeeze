@@ -2,6 +2,7 @@
 
 #include "core/Buffer.h"
 #include "core/Graph.h"
+#include "core/MidiRouter.h"
 #include "core/Node.h"
 #include "core/PerfMonitor.h"
 #include "core/PluginCache.h"
@@ -22,7 +23,6 @@
 namespace squeeze {
 
 class PluginNode;
-class MidiInputNode;
 class SamplerNode;
 
 struct GraphSnapshot {
@@ -30,18 +30,14 @@ struct GraphSnapshot {
         Node* node;
         int nodeId;
         int audioSourceIndex;
-        struct MidiSource { int slotIndex; int channelFilter; };
-        std::vector<MidiSource> midiSources;
         bool isAudioLeaf;  // true if no other node reads this node's audio output
-        MidiInputNode* midiInputNode;  // non-null if this is a MidiInputNode
     };
 
     std::vector<NodeSlot> slots;
     std::vector<juce::AudioBuffer<float>> audioOutputs;
-    std::vector<juce::MidiBuffer> midiOutputs;
+    std::vector<juce::MidiBuffer> midiBuffers;  // one per node, populated by MidiRouter
     juce::AudioBuffer<float> silenceBuffer;
     juce::MidiBuffer emptyMidi;
-    juce::MidiBuffer filteredMidi;  // scratch buffer for channel filtering
 };
 
 class Engine : public juce::AudioIODeviceCallback {
@@ -71,25 +67,16 @@ public:
     // Plugin instantiation
     int addPlugin(const std::string& name, std::string& errorMessage);
 
-    // MIDI input management
-    std::vector<std::string> getAvailableMidiInputs() const;
-    int addMidiInput(const std::string& deviceName, std::string& errorMessage);
-    void autoLoadMidiInputs();
-
-    struct MidiRefreshResult {
-        std::vector<std::string> added;
-        std::vector<std::string> removed;
-    };
-    MidiRefreshResult refreshMidiInputs();
+    // MIDI routing
+    MidiRouter& getMidiRouter();
 
     // Sampler management
     int addSampler(const std::string& name, int maxVoices, std::string& errorMessage);
     bool setSamplerBuffer(int nodeId, int bufferId);
 
-    // Graph topology
+    // Graph topology (audio connections only)
     int connect(int srcId, const std::string& srcPort,
-                int dstId, const std::string& dstPort, std::string& error,
-                int midiChannel = 0);
+                int dstId, const std::string& dstPort, std::string& error);
     bool disconnect(int connId);
     std::vector<Connection> getConnections() const;
 
@@ -149,26 +136,25 @@ private:
 
     // Locked helpers (must be called with controlMutex_ held)
     int addNodeLocked(std::unique_ptr<Node> node, const std::string& name);
-    int addMidiInputLocked(const std::string& deviceName, std::string& errorMessage);
     void updateGraphLocked();
     void updateGraphLocked(const Graph& graph);
 
     mutable std::mutex controlMutex_;
     Scheduler& scheduler_;
     PerfMonitor perfMonitor_;
+    MidiRouter midiRouter_;
     juce::AudioDeviceManager deviceManager_;
     GraphSnapshot* activeSnapshot_ = nullptr;
     std::atomic<double> sampleRate_{0.0};
     std::atomic<int> blockSize_{0};
     std::atomic<bool> running_{false};
 
-    // Node/graph ownership (moved from LuaBindings)
+    // Node/graph ownership
     Graph graph_;
     PluginCache cache_;
     juce::AudioPluginFormatManager formatManager_;
     std::unordered_map<int, std::unique_ptr<Node>> ownedNodes_;
     std::unordered_map<int, std::string> nodeNames_;
-    std::unordered_map<std::string, int> midiDeviceNodes_;
     std::vector<std::unique_ptr<Node>> pendingDeletions_;
     std::vector<std::unique_ptr<Buffer>> pendingBufferDeletions_;
 

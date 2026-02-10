@@ -28,8 +28,7 @@ private:
     std::tuple<sol::object, sol::object> luaAddPlugin(sol::state_view lua, const std::string& name);
     std::tuple<sol::object, sol::object> luaRemoveNode(sol::state_view lua, int id);
     std::tuple<sol::object, sol::object> luaConnect(sol::state_view lua,
-        int srcId, const std::string& srcPort, int dstId, const std::string& dstPort,
-        int midiChannel);
+        int srcId, const std::string& srcPort, int dstId, const std::string& dstPort);
     std::tuple<sol::object, sol::object> luaDisconnect(sol::state_view lua, int connId);
     void luaUpdate();
     void luaStart(sol::optional<double> sr, sol::optional<int> bs);
@@ -49,9 +48,14 @@ private:
     sol::table luaNodes(sol::state_view lua);
     std::tuple<sol::object, sol::object> luaPorts(sol::state_view lua, int nodeId);
     sol::table luaConnections(sol::state_view lua);
-    sol::table luaListMidiInputs(sol::state_view lua);
-    std::tuple<sol::object, sol::object> luaAddMidiInput(sol::state_view lua, const std::string& name);
-    sol::table luaRefreshMidiInputs(sol::state_view lua);
+
+    // MIDI routing API
+    sol::table luaListMidiDevices(sol::state_view lua);
+    sol::table luaOpenMidiDevices(sol::state_view lua);
+    std::tuple<sol::object, sol::object> luaMidiRoute(sol::state_view lua,
+        const std::string& deviceName, int nodeId, int channelFilter);
+    std::tuple<sol::object, sol::object> luaMidiUnroute(sol::state_view lua, int routeId);
+    sol::table luaMidiRoutes(sol::state_view lua);
 
     // Performance monitoring API
     sol::table luaPerf(sol::state_view lua);

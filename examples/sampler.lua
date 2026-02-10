@@ -1,5 +1,5 @@
 -- sampler.lua
--- Load a WAV file into a sampler and play it from a MIDI controller.
+-- Load a WAV file into a sampler and play it from MIDI controllers.
 -- Usage: ./Squeeze -d examples/sampler.lua -i -- /path/to/sample.wav
 --
 -- Pass the sample path as the first argument after "--".
@@ -31,27 +31,6 @@ else
 end
 
 -- ============================================================
--- Open MIDI input
--- ============================================================
-
-local devices = sq.list_midi_inputs()
-if #devices == 0 then
-    print("No MIDI devices found.")
-    return
-end
-
-midi = {}
-for _, midi_name in ipairs(devices) do
-    local m, err = sq.add_midi_input(midi_name)
-    if m then
-        table.insert(midi, m)
-        print("MIDI input: " .. midi_name)
-    else
-        print("MIDI error (" .. midi_name .. "): " .. err)
-    end
-end
-
--- ============================================================
 -- Create sampler and assign buffer
 -- ============================================================
 
@@ -72,15 +51,27 @@ for _, p in ipairs(info) do
 end
 
 -- ============================================================
--- Connect and start
+-- Route all MIDI devices to the sampler
 -- ============================================================
 
-for _, m in ipairs(midi) do
-    local c, cerr = sq.connect(m, "midi_out", sampler, "midi_in")
-    if not c then
-        print("Connect error (" .. tostring(m) .. "): " .. cerr)
+local devices = sq.list_midi_devices()
+if #devices == 0 then
+    print("\nNo MIDI devices found.")
+else
+    print("\nMIDI routing:")
+    for _, dev in ipairs(devices) do
+        local route_id, rerr = sq.midi_route(dev, sampler)
+        if route_id then
+            print("  " .. dev .. " -> sampler")
+        else
+            print("  " .. dev .. " FAILED: " .. rerr)
+        end
     end
 end
+
+-- ============================================================
+-- Start audio
+-- ============================================================
 
 sq.update()
 sq.start(44100, 512)

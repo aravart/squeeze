@@ -1,28 +1,6 @@
 -- midi-to-synth.lua
--- Connect a MIDI input device to the first available instrument plugin.
+-- Connect all MIDI input devices to the first available instrument plugin.
 -- Usage: ./Squeeze -d examples/midi-to-synth.lua -i
-
--- List MIDI devices
-local devices = sq.list_midi_inputs()
-print("MIDI inputs: " .. #devices)
-for i, name in ipairs(devices) do
-    print("  " .. i .. ": " .. name)
-end
-
-if #devices == 0 then
-    print("No MIDI devices found.")
-    return
-end
-
--- Open the first MIDI device
-local midi_name = devices[1]
-print("\nOpening: " .. midi_name)
-midi, err = sq.add_midi_input(midi_name)
-if not midi then
-    print("Error: " .. err)
-    return
-end
-print("MIDI node id=" .. midi.id)
 
 -- Find and load the first instrument plugin
 local plugins = sq.list_plugins()
@@ -57,15 +35,23 @@ for _, p in ipairs(ports.outputs) do
     print("    " .. p.name .. " (" .. p.type .. ", " .. p.channels .. "ch)")
 end
 
--- Connect MIDI output to synth MIDI input
-local conn, cerr = sq.connect(midi, "midi_out", synth, "midi_in")
-if not conn then
-    print("Connect error: " .. cerr)
-    return
+-- Route all MIDI devices to the synth
+local devices = sq.list_midi_devices()
+if #devices == 0 then
+    print("\nNo MIDI devices found.")
+else
+    print("\nMIDI routing:")
+    for _, dev in ipairs(devices) do
+        local route_id, rerr = sq.midi_route(dev, synth)
+        if route_id then
+            print("  " .. dev .. " -> " .. synth.name)
+        else
+            print("  " .. dev .. " FAILED: " .. rerr)
+        end
+    end
 end
-print("\nConnected: " .. midi.name .. " -> " .. synth.name)
 
 -- Push graph and start audio
 sq.update()
 sq.start(44100, 512)
-print("Playing! Use the REPL to adjust, or Ctrl+C to quit.")
+print("\nPlaying! Use the REPL to adjust, or Ctrl+C to quit.")

@@ -13,7 +13,6 @@ struct Connection {
     int id;
     PortAddress source;
     PortAddress dest;
-    int midiChannel = 0;  // 0 = all channels, 1-16 = specific channel
 };
 
 class Graph {
@@ -22,7 +21,7 @@ public:
     bool removeNode(int nodeId);
     Node* getNode(int nodeId) const;
 
-    int connect(PortAddress source, PortAddress dest, int midiChannel = 0);
+    int connect(PortAddress source, PortAddress dest);
     bool disconnect(int connectionId);
 
     std::vector<int> getExecutionOrder() const;

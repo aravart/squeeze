@@ -76,7 +76,7 @@ add_library(squeeze_core STATIC
     src/core/Buffer.cpp
     src/core/PluginCache.cpp
     src/core/PluginNode.cpp
-    src/core/MidiInputNode.cpp
+    src/core/MidiRouter.cpp
     src/core/PerfMonitor.cpp
     src/core/Logger.cpp
     src/core/SamplerVoice.cpp
@@ -126,7 +126,7 @@ add_executable(squeeze_tests
     tests/core/EngineTests.cpp
     tests/core/BufferTests.cpp
     tests/core/PluginNodeTests.cpp
-    tests/core/MidiInputNodeTests.cpp
+    tests/core/MidiRouterTests.cpp
     tests/core/LuaBindingsTests.cpp
     tests/core/PerfMonitorTests.cpp
     tests/core/LoggerTests.cpp
