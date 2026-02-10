@@ -67,6 +67,54 @@ function MidiInputNode:__tostring()
     return "MidiInputNode(" .. self.id .. ", \"" .. self.name .. "\")"
 end
 
+-- SamplerNode metatable
+local SamplerNode = {}
+SamplerNode.__index = SamplerNode
+
+function SamplerNode:set_buffer(buffer_id)
+    return sq.set_sampler_buffer(self.id, buffer_id)
+end
+
+function SamplerNode:set_param(name, value)
+    return sq.set_param(self.id, name, value)
+end
+
+function SamplerNode:get_param(name)
+    return sq.get_param(self.id, name)
+end
+
+function SamplerNode:params()
+    return sq.params(self.id)
+end
+
+function SamplerNode:param_info()
+    return sq.param_info(self.id)
+end
+
+function SamplerNode:param_text(name_or_index)
+    return sq.param_text(self.id, name_or_index)
+end
+
+function SamplerNode:set_param_i(index, value)
+    return sq.set_param_i(self.id, index, value)
+end
+
+function SamplerNode:get_param_i(index)
+    return sq.get_param_i(self.id, index)
+end
+
+function SamplerNode:ports()
+    return sq.ports(self.id)
+end
+
+function SamplerNode:remove()
+    return sq.remove_node(self.id)
+end
+
+function SamplerNode:__tostring()
+    return "SamplerNode(" .. self.id .. ", \"" .. self.name .. "\")"
+end
+
 -- Wrap sq.add_plugin to return a PluginNode object
 local raw_add_plugin = sq.add_plugin
 sq.add_plugin = function(name)
@@ -84,6 +132,16 @@ sq.add_midi_input = function(name)
     if not id then return nil, err end
     local node = { id = id, name = name }
     setmetatable(node, MidiInputNode)
+    return node
+end
+
+-- Wrap sq.add_sampler to return a SamplerNode object
+local raw_add_sampler = sq.add_sampler
+sq.add_sampler = function(name, max_voices)
+    local id, err = raw_add_sampler(name, max_voices)
+    if not id then return nil, err end
+    local node = { id = id, name = name }
+    setmetatable(node, SamplerNode)
     return node
 end
 

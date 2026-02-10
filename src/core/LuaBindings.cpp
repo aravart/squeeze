@@ -98,6 +98,16 @@ void LuaBindings::bind(sol::state& lua)
         return luaRefreshMidiInputs(sol::state_view(s));
     });
 
+    sq.set_function("add_sampler", [this](sol::this_state s,
+            const std::string& name, sol::optional<int> maxVoices) {
+        return luaAddSampler(sol::state_view(s), name, maxVoices.value_or(1));
+    });
+
+    sq.set_function("set_sampler_buffer", [this](sol::this_state s,
+            int nodeId, int bufferId) {
+        return luaSetSamplerBuffer(sol::state_view(s), nodeId, bufferId);
+    });
+
     sq.set_function("load_buffer", [this](sol::this_state s, const std::string& filePath) {
         return luaLoadBuffer(sol::state_view(s), filePath);
     });
@@ -459,6 +469,31 @@ sol::table LuaBindings::luaRefreshMidiInputs(sol::state_view lua)
     result["removed"] = removed;
 
     return result;
+}
+
+// ============================================================
+// Sampler API
+// ============================================================
+
+std::tuple<sol::object, sol::object> LuaBindings::luaAddSampler(
+    sol::state_view lua, const std::string& name, int maxVoices)
+{
+    std::string errorMessage;
+    int id = engine_.addSampler(name, maxVoices, errorMessage);
+    if (id < 0)
+        return {sol::lua_nil, sol::make_object(lua, errorMessage)};
+
+    return {sol::make_object(lua, id), sol::lua_nil};
+}
+
+std::tuple<sol::object, sol::object> LuaBindings::luaSetSamplerBuffer(
+    sol::state_view lua, int nodeId, int bufferId)
+{
+    if (!engine_.setSamplerBuffer(nodeId, bufferId))
+        return {sol::lua_nil, sol::make_object(lua,
+            "Invalid node " + std::to_string(nodeId) + " or buffer " + std::to_string(bufferId))};
+
+    return {sol::make_object(lua, true), sol::lua_nil};
 }
 
 // ============================================================

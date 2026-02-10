@@ -58,6 +58,12 @@ private:
     void luaPerfNodes(bool enable);
     void luaPerfReset();
 
+    // Sampler API
+    std::tuple<sol::object, sol::object> luaAddSampler(sol::state_view lua,
+        const std::string& name, int maxVoices);
+    std::tuple<sol::object, sol::object> luaSetSamplerBuffer(sol::state_view lua,
+        int nodeId, int bufferId);
+
     // Buffer API
     std::tuple<sol::object, sol::object> luaLoadBuffer(sol::state_view lua, const std::string& filePath);
     std::tuple<sol::object, sol::object> luaCreateBuffer(sol::state_view lua,

@@ -23,6 +23,7 @@ namespace squeeze {
 
 class PluginNode;
 class MidiInputNode;
+class SamplerNode;
 
 struct GraphSnapshot {
     struct NodeSlot {
@@ -80,6 +81,10 @@ public:
         std::vector<std::string> removed;
     };
     MidiRefreshResult refreshMidiInputs();
+
+    // Sampler management
+    int addSampler(const std::string& name, int maxVoices, std::string& errorMessage);
+    bool setSamplerBuffer(int nodeId, int bufferId);
 
     // Graph topology
     int connect(int srcId, const std::string& srcPort,
@@ -165,6 +170,7 @@ private:
     std::unordered_map<int, std::string> nodeNames_;
     std::unordered_map<std::string, int> midiDeviceNodes_;
     std::vector<std::unique_ptr<Node>> pendingDeletions_;
+    std::vector<std::unique_ptr<Buffer>> pendingBufferDeletions_;
 
     // Buffer ownership
     juce::AudioFormatManager audioFormatManager_;

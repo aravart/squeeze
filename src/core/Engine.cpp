@@ -3,6 +3,7 @@
 #include "core/Logger.h"
 #include "core/MidiInputNode.h"
 #include "core/PluginNode.h"
+#include "core/SamplerNode.h"
 
 #include <unordered_map>
 #include <unordered_set>
@@ -321,6 +322,58 @@ Engine::MidiRefreshResult Engine::refreshMidiInputs()
         updateGraphLocked();
 
     return result;
+}
+
+// ============================================================
+// Sampler management
+// ============================================================
+
+int Engine::addSampler(const std::string& name, int maxVoices, std::string& errorMessage)
+{
+    std::lock_guard<std::mutex> lock(controlMutex_);
+    SQ_LOG("addSampler: '%s' maxVoices=%d", name.c_str(), maxVoices);
+
+    if (maxVoices < 1)
+    {
+        errorMessage = "maxVoices must be >= 1";
+        return -1;
+    }
+
+    auto node = std::make_unique<SamplerNode>(maxVoices);
+
+    double sr = sampleRate_.load();
+    int bs = blockSize_.load();
+    if (sr > 0.0 && bs > 0)
+        node->prepare(sr, bs);
+
+    return addNodeLocked(std::move(node), name);
+}
+
+bool Engine::setSamplerBuffer(int nodeId, int bufferId)
+{
+    std::lock_guard<std::mutex> lock(controlMutex_);
+    SQ_LOG("setSamplerBuffer: node=%d buffer=%d", nodeId, bufferId);
+
+    Node* raw = graph_.getNode(nodeId);
+    if (!raw)
+        return false;
+
+    auto* sampler = dynamic_cast<SamplerNode*>(raw);
+    if (!sampler)
+        return false;
+
+    if (bufferId < 0)
+    {
+        sampler->setBuffer(nullptr);
+        return true;
+    }
+
+    auto it = ownedBuffers_.find(bufferId);
+    if (it == ownedBuffers_.end())
+        return false;
+
+    sampler->setBuffer(it->second.get());
+    return true;
 }
 
 // ============================================================
@@ -799,6 +852,17 @@ bool Engine::removeBuffer(int id)
     if (it == ownedBuffers_.end())
         return false;
 
+    // Null out any SamplerNode references to this buffer
+    const Buffer* buf = it->second.get();
+    for (auto& [nodeId, nodePtr] : ownedNodes_)
+    {
+        auto* sampler = dynamic_cast<SamplerNode*>(nodePtr.get());
+        if (sampler && sampler->getBuffer() == buf)
+            sampler->setBuffer(nullptr);
+    }
+
+    // Defer destruction for RT safety
+    pendingBufferDeletions_.push_back(std::move(it->second));
     ownedBuffers_.erase(it);
     bufferNames_.erase(id);
     return true;

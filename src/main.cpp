@@ -24,13 +24,14 @@ static void signalHandler(int)
 
 static void printUsage()
 {
-    std::cout << "Usage: squeeze [options] [script.lua]\n"
+    std::cout << "Usage: squeeze [options] [script.lua] [-- arg1 arg2 ...]\n"
               << "  -i          Interactive mode (REPL)\n"
               << "  -c FILE     Plugin cache XML file\n"
               << "  -d          Enable debug logging to stderr\n"
               << "  -dd         Enable trace logging (includes per-message MIDI)\n"
               << "  -h, --help  Show this help\n"
               << "\n"
+              << "Arguments after \"--\" are passed to the Lua script as arg[1], arg[2], etc.\n"
               << "With no arguments, runs the engine until Ctrl+C.\n"
               << "With -i, opens the REPL instead.\n";
 }
@@ -48,11 +49,19 @@ int main(int argc, char* argv[])
     std::string cachePath;
     bool interactive = false;
     LogLevel logLevel = LogLevel::off;
+    std::vector<std::string> scriptArgs;
 
     for (int i = 1; i < argc; ++i)
     {
         std::string arg = argv[i];
-        if (arg == "-i")
+        if (arg == "--")
+        {
+            // Everything after "--" is passed to the Lua script as arg[1], arg[2], ...
+            for (int j = i + 1; j < argc; ++j)
+                scriptArgs.emplace_back(argv[j]);
+            break;
+        }
+        else if (arg == "-i")
             interactive = true;
         else if (arg == "-dd")
             logLevel = LogLevel::trace;
@@ -129,6 +138,15 @@ int main(int argc, char* argv[])
               << juce::SystemStats::getJUCEVersion()
               << " | " << (std::string)lua["_VERSION"]
               << std::endl;
+
+    // Expose script arguments as the Lua `arg` table
+    {
+        sol::table argTable = lua.create_table();
+        argTable[0] = scriptPath.empty() ? "squeeze" : scriptPath;
+        for (size_t i = 0; i < scriptArgs.size(); ++i)
+            argTable[static_cast<int>(i + 1)] = scriptArgs[i];
+        lua["arg"] = argTable;
+    }
 
     // Run script if provided
     if (!scriptPath.empty())

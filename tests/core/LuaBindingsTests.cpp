@@ -9,6 +9,7 @@
 #include "core/Scheduler.h"
 #include "core/Node.h"
 #include "core/PluginNode.h"
+#include "core/SamplerNode.h"
 #include "core/Port.h"
 
 using namespace squeeze;
@@ -114,6 +115,8 @@ TEST_CASE("LuaBindings bind creates sq table with all functions")
     REQUIRE(sq["ports"].get_type() == sol::type::function);
     REQUIRE(sq["connections"].get_type() == sol::type::function);
     REQUIRE(sq["refresh_midi_inputs"].get_type() == sol::type::function);
+    REQUIRE(sq["add_sampler"].get_type() == sol::type::function);
+    REQUIRE(sq["set_sampler_buffer"].get_type() == sol::type::function);
 }
 
 // ============================================================
@@ -1025,4 +1028,178 @@ TEST_CASE("LuaBindings load_buffer returns nil for nonexistent file")
 
     sol::object val = result;
     REQUIRE(val.get_type() == sol::type::lua_nil);
+}
+
+// ============================================================
+// Sampler API
+// ============================================================
+
+TEST_CASE("LuaBindings add_sampler creates a node visible via nodes()")
+{
+    LuaFixture f;
+
+    auto result = f.lua.safe_script(
+        "return sq.add_sampler('mySampler')",
+        sol::script_pass_on_error);
+    REQUIRE(result.valid());
+
+    int id = result;
+    REQUIRE(id >= 0);
+
+    auto nodesResult = f.lua.safe_script("return sq.nodes()", sol::script_pass_on_error);
+    sol::table nodes = nodesResult;
+    REQUIRE(nodes.size() == 1);
+
+    sol::table entry = nodes[1];
+    REQUIRE(entry["id"].get<int>() == id);
+    REQUIRE(entry["name"].get<std::string>() == "mySampler");
+}
+
+TEST_CASE("LuaBindings add_sampler accepts optional maxVoices parameter")
+{
+    LuaFixture f;
+
+    auto result = f.lua.safe_script(
+        "return sq.add_sampler('polySampler', 8)",
+        sol::script_pass_on_error);
+    REQUIRE(result.valid());
+
+    int id = result;
+    REQUIRE(id >= 0);
+}
+
+TEST_CASE("LuaBindings set_sampler_buffer succeeds after creating sampler and buffer")
+{
+    LuaFixture f;
+
+    f.lua.safe_script("sampler_id = sq.add_sampler('s1')");
+    f.lua.safe_script("buf_id = sq.create_buffer(1, 44100, 44100, 'test')");
+
+    auto result = f.lua.safe_script(
+        "return sq.set_sampler_buffer(sampler_id, buf_id)",
+        sol::script_pass_on_error);
+    REQUIRE(result.valid());
+
+    bool ok = result;
+    REQUIRE(ok);
+}
+
+TEST_CASE("LuaBindings set_sampler_buffer with invalid nodeId returns error")
+{
+    LuaFixture f;
+
+    auto result = f.lua.safe_script(
+        "local v, err = sq.set_sampler_buffer(9999, 0)\n"
+        "return v, err",
+        sol::script_pass_on_error);
+    REQUIRE(result.valid());
+
+    sol::object val = result;
+    REQUIRE(val.get_type() == sol::type::lua_nil);
+}
+
+TEST_CASE("LuaBindings set_sampler_buffer with invalid bufferId returns error")
+{
+    LuaFixture f;
+
+    f.lua.safe_script("sampler_id = sq.add_sampler('s1')");
+
+    auto result = f.lua.safe_script(
+        "local v, err = sq.set_sampler_buffer(sampler_id, 9999)\n"
+        "return v, err",
+        sol::script_pass_on_error);
+    REQUIRE(result.valid());
+
+    sol::object val = result;
+    REQUIRE(val.get_type() == sol::type::lua_nil);
+}
+
+TEST_CASE("LuaBindings set_sampler_buffer with -1 unbinds buffer")
+{
+    LuaFixture f;
+
+    f.lua.safe_script("sampler_id = sq.add_sampler('s1')");
+    f.lua.safe_script("buf_id = sq.create_buffer(1, 44100, 44100, 'test')");
+    f.lua.safe_script("sq.set_sampler_buffer(sampler_id, buf_id)");
+
+    auto result = f.lua.safe_script(
+        "return sq.set_sampler_buffer(sampler_id, -1)",
+        sol::script_pass_on_error);
+    REQUIRE(result.valid());
+
+    bool ok = result;
+    REQUIRE(ok);
+}
+
+TEST_CASE("LuaBindings sampler parameters work via set_param and get_param")
+{
+    LuaFixture f;
+
+    f.lua.safe_script("sampler_id = sq.add_sampler('s1')");
+
+    // Get parameter list
+    auto paramsResult = f.lua.safe_script(
+        "return sq.params(sampler_id)",
+        sol::script_pass_on_error);
+    REQUIRE(paramsResult.valid());
+
+    sol::table params = paramsResult;
+    REQUIRE(params.size() > 0);
+
+    // Set and get a parameter by index
+    f.lua.safe_script("sq.set_param_i(sampler_id, 0, 0.75)");
+
+    auto result = f.lua.safe_script(
+        "return sq.get_param_i(sampler_id, 0)",
+        sol::script_pass_on_error);
+    REQUIRE(result.valid());
+
+    float val = result;
+    REQUIRE_THAT(val, WithinAbs(0.75f, 1e-3));
+}
+
+TEST_CASE("LuaBindings set_sampler_buffer on non-sampler node returns error")
+{
+    LuaFixture f;
+
+    // Add a PluginNode, not a SamplerNode
+    auto node = makeTestPluginNode(2, 2, false);
+    int id = f.bindings.addTestNode(std::move(node), "FX");
+
+    f.lua.safe_script("buf_id = sq.create_buffer(1, 44100, 44100, 'test')");
+    f.lua["plugin_id"] = id;
+
+    auto result = f.lua.safe_script(
+        "local v, err = sq.set_sampler_buffer(plugin_id, buf_id)\n"
+        "return v, err",
+        sol::script_pass_on_error);
+    REQUIRE(result.valid());
+
+    sol::object val = result;
+    REQUIRE(val.get_type() == sol::type::lua_nil);
+}
+
+TEST_CASE("Engine removeBuffer nulls SamplerNode reference")
+{
+    Scheduler scheduler;
+    Engine engine(scheduler);
+    engine.prepareForTesting(44100.0, 512);
+
+    std::string err;
+    int samplerId = engine.addSampler("s1", 1, err);
+    REQUIRE(samplerId >= 0);
+
+    int bufId = engine.createBuffer(1, 44100, 44100.0, "test", err);
+    REQUIRE(bufId >= 0);
+
+    REQUIRE(engine.setSamplerBuffer(samplerId, bufId));
+
+    // Verify buffer is set
+    auto* node = dynamic_cast<SamplerNode*>(engine.getNode(samplerId));
+    REQUIRE(node != nullptr);
+    REQUIRE(node->getBuffer() != nullptr);
+
+    // Remove buffer — should null the reference
+    REQUIRE(engine.removeBuffer(bufId));
+    REQUIRE(node->getBuffer() == nullptr);
 }
