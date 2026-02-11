@@ -76,6 +76,10 @@ private:
     sol::table luaBuffers(sol::state_view lua);
     std::tuple<sol::object, sol::object> luaBufferInfo(sol::state_view lua, int id);
 
+    // EventQueue API
+    std::tuple<sol::object, sol::object> luaSchedule(sol::state_view lua,
+        double beatTime, int nodeId, const std::string& type, sol::variadic_args args);
+
     // Transport API
     void luaPlay();
     void luaTransportStop();

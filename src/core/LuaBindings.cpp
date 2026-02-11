@@ -174,6 +174,12 @@ void LuaBindings::bind(sol::state& lua)
         return luaGetParamI(sol::state_view(s), nodeId, index);
     });
 
+    // EventQueue API
+    sq.set_function("schedule", [this](sol::this_state s,
+            double beatTime, int nodeId, const std::string& type, sol::variadic_args va) {
+        return luaSchedule(sol::state_view(s), beatTime, nodeId, type, va);
+    });
+
     // Transport API
     sq.set_function("play", [this]() { luaPlay(); });
     sq.set_function("stop", [this]() { luaTransportStop(); });
@@ -683,6 +689,64 @@ void LuaBindings::luaPerfNodes(bool enable)
 void LuaBindings::luaPerfReset()
 {
     engine_.getPerfMonitor().resetCounters();
+}
+
+// ============================================================
+// EventQueue API
+// ============================================================
+
+std::tuple<sol::object, sol::object> LuaBindings::luaSchedule(
+    sol::state_view lua, double beatTime, int nodeId,
+    const std::string& type, sol::variadic_args args)
+{
+    ScheduledEvent ev{};
+    ev.beatTime = beatTime;
+    ev.targetNodeId = nodeId;
+
+    if (type == "note_on")
+    {
+        if (args.size() < 3)
+            return {sol::lua_nil, sol::make_object(lua, "note_on requires channel, note, velocity")};
+        ev.type = ScheduledEvent::Type::noteOn;
+        ev.channel = args[0].as<int>();
+        ev.data1 = args[1].as<int>();
+        ev.floatValue = args[2].as<float>();
+    }
+    else if (type == "note_off")
+    {
+        if (args.size() < 2)
+            return {sol::lua_nil, sol::make_object(lua, "note_off requires channel, note")};
+        ev.type = ScheduledEvent::Type::noteOff;
+        ev.channel = args[0].as<int>();
+        ev.data1 = args[1].as<int>();
+    }
+    else if (type == "cc")
+    {
+        if (args.size() < 3)
+            return {sol::lua_nil, sol::make_object(lua, "cc requires channel, cc_number, value")};
+        ev.type = ScheduledEvent::Type::cc;
+        ev.channel = args[0].as<int>();
+        ev.data1 = args[1].as<int>();
+        ev.data2 = args[2].as<int>();
+    }
+    else if (type == "param")
+    {
+        if (args.size() < 2)
+            return {sol::lua_nil, sol::make_object(lua, "param requires param_index, value")};
+        ev.type = ScheduledEvent::Type::paramChange;
+        ev.data1 = args[0].as<int>();
+        ev.floatValue = args[1].as<float>();
+    }
+    else
+    {
+        return {sol::lua_nil, sol::make_object(lua,
+            "Unknown event type '" + type + "' (expected note_on, note_off, cc, param)")};
+    }
+
+    if (!engine_.getEventQueue().schedule(ev))
+        return {sol::lua_nil, sol::make_object(lua, "EventQueue full")};
+
+    return {sol::make_object(lua, true), sol::lua_nil};
 }
 
 // ============================================================
