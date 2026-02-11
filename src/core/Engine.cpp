@@ -117,6 +117,11 @@ Transport& Engine::getTransport()
     return transport_;
 }
 
+EventQueue& Engine::getEventQueue()
+{
+    return eventQueue_;
+}
+
 void Engine::transportPlay()
 {
     Command cmd;
@@ -586,6 +591,7 @@ GraphSnapshot* Engine::buildSnapshot(const Graph& graph,
 
     snap->silenceBuffer.setSize(maxChannels, blockSize);
     snap->silenceBuffer.clear();
+    snap->scratchMidi.ensureSize(512);
 
     // Determine which slots are audio leaves (no other slot reads their audio output)
     std::unordered_set<int> hasAudioConsumer;
@@ -647,6 +653,7 @@ void Engine::processBlock(juce::AudioBuffer<float>& outputBuffer,
                 break;
             case Command::Type::transportStop:
                 transport_.stop();
+                eventQueue_.clear();
                 break;
             case Command::Type::transportPause:
                 transport_.pause();
@@ -659,9 +666,11 @@ void Engine::processBlock(juce::AudioBuffer<float>& outputBuffer,
                 break;
             case Command::Type::transportSetPositionSamples:
                 transport_.setPositionInSamples(cmd.int64Value);
+                eventQueue_.clear();
                 break;
             case Command::Type::transportSetPositionBeats:
                 transport_.setPositionInBeats(cmd.doubleValue1);
+                eventQueue_.clear();
                 break;
             case Command::Type::transportSetLoopPoints:
                 transport_.setLoopPoints(cmd.doubleValue1, cmd.doubleValue2);
@@ -674,6 +683,19 @@ void Engine::processBlock(juce::AudioBuffer<float>& outputBuffer,
 
     // 2. Advance transport
     transport_.advance(numSamples);
+
+    // 2b. Retrieve resolved events from EventQueue
+    ResolvedEvent resolvedEvents[kMaxResolvedEvents];
+    int resolvedCount = 0;
+    if (transport_.isPlaying() && transport_.getSampleRate() > 0.0)
+    {
+        resolvedCount = eventQueue_.retrieve(
+            transport_.getBlockStartBeats(), transport_.getBlockEndBeats(),
+            transport_.isLooping(),
+            transport_.getLoopStartBeats(), transport_.getLoopEndBeats(),
+            numSamples, transport_.getTempo(), transport_.getSampleRate(),
+            resolvedEvents, kMaxResolvedEvents);
+    }
 
     // 3. If no snapshot, output silence
     if (!activeSnapshot_ || activeSnapshot_->slots.empty())
@@ -695,7 +717,37 @@ void Engine::processBlock(juce::AudioBuffer<float>& outputBuffer,
     }
     midiRouter_.dispatchMidi(nodeBufferMap);
 
-    // 5. Process each node in execution order
+    // 4b. Merge EventQueue MIDI events into node MidiBuffers
+    for (int e = 0; e < resolvedCount; ++e)
+    {
+        auto& ev = resolvedEvents[e];
+        if (ev.type == ScheduledEvent::Type::paramChange)
+            continue;
+
+        auto it = nodeBufferMap.find(ev.targetNodeId);
+        if (it == nodeBufferMap.end())
+            continue;
+
+        juce::MidiMessage msg;
+        switch (ev.type)
+        {
+            case ScheduledEvent::Type::noteOn:
+                msg = juce::MidiMessage::noteOn(ev.channel, ev.data1,
+                                                static_cast<juce::uint8>(ev.floatValue));
+                break;
+            case ScheduledEvent::Type::noteOff:
+                msg = juce::MidiMessage::noteOff(ev.channel, ev.data1);
+                break;
+            case ScheduledEvent::Type::cc:
+                msg = juce::MidiMessage::controllerEvent(ev.channel, ev.data1, ev.data2);
+                break;
+            default:
+                continue;
+        }
+        it->second->addEvent(msg, ev.sampleOffset);
+    }
+
+    // 5. Process each node in execution order (with sub-block splitting for param changes)
     for (int i = 0; i < (int)snap.slots.size(); ++i)
     {
         auto& slot = snap.slots[i];
@@ -712,12 +764,72 @@ void Engine::processBlock(juce::AudioBuffer<float>& outputBuffer,
         // Clear audio output
         snap.audioOutputs[i].clear();
 
-        // Process with per-node timing
+        // Collect param change events targeting this node (already sorted by sampleOffset)
+        int paramChangeIndices[kMaxResolvedEvents];
+        int paramChangeCount = 0;
+        for (int e = 0; e < resolvedCount; ++e)
+        {
+            if (resolvedEvents[e].type == ScheduledEvent::Type::paramChange &&
+                resolvedEvents[e].targetNodeId == slot.nodeId)
+            {
+                paramChangeIndices[paramChangeCount++] = e;
+            }
+        }
+
         perfMonitor_.beginNode(i, slot.nodeId);
-        ProcessContext ctx{audioIn, snap.audioOutputs[i],
-                          midiIn, snap.midiBuffers[i],
-                          numSamples};
-        slot.node->process(ctx);
+
+        if (paramChangeCount == 0)
+        {
+            // Fast path: no param changes, single process call
+            ProcessContext ctx{audioIn, snap.audioOutputs[i],
+                              midiIn, snap.midiBuffers[i],
+                              numSamples};
+            slot.node->process(ctx);
+        }
+        else
+        {
+            // Sub-block splitting for sample-accurate parameter changes
+            int currentSample = 0;
+
+            for (int p = 0; p <= paramChangeCount; ++p)
+            {
+                int segEnd = (p < paramChangeCount)
+                    ? resolvedEvents[paramChangeIndices[p]].sampleOffset
+                    : numSamples;
+
+                int subBlockSize = segEnd - currentSample;
+                if (subBlockSize > 0)
+                {
+                    // Create sub-block audio views
+                    juce::AudioBuffer<float> subIn(
+                        audioIn.getArrayOfWritePointers(),
+                        audioIn.getNumChannels(), currentSample, subBlockSize);
+                    juce::AudioBuffer<float> subOut(
+                        snap.audioOutputs[i].getArrayOfWritePointers(),
+                        snap.audioOutputs[i].getNumChannels(), currentSample, subBlockSize);
+
+                    // Filter MIDI for this sub-block range
+                    snap.scratchMidi.clear();
+                    snap.scratchMidi.addEvents(midiIn, currentSample, subBlockSize,
+                                               -currentSample);
+
+                    ProcessContext ctx{subIn, subOut,
+                                      snap.scratchMidi, snap.scratchMidi,
+                                      subBlockSize};
+                    slot.node->process(ctx);
+                }
+
+                // Apply parameter change between segments
+                if (p < paramChangeCount)
+                {
+                    auto& ev = resolvedEvents[paramChangeIndices[p]];
+                    slot.node->setParameter(ev.data1, ev.floatValue);
+                }
+
+                currentSample = segEnd;
+            }
+        }
+
         perfMonitor_.endNode(i);
     }
 

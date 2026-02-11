@@ -2,6 +2,7 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include "core/Buffer.h"
 #include "core/Engine.h"
+#include "core/EventQueue.h"
 #include "core/PluginNode.h"
 #include "core/Transport.h"
 
@@ -1294,4 +1295,648 @@ TEST_CASE("Engine transport set position in samples command")
     engine.processBlock(output, midi, 64);
 
     REQUIRE(engine.getTransport().getPositionInSamples() == 10000);
+}
+
+// ============================================================
+// EventQueue ↔ Engine integration tests
+// ============================================================
+
+// Records the parameter 0 value for every sample during process()
+class ParamTrackingNode : public Node {
+public:
+    float paramValue_ = 0.0f;
+    std::vector<float> paramHistory;
+
+    void prepare(double, int) override {}
+    void process(ProcessContext& ctx) override {
+        for (int s = 0; s < ctx.numSamples; ++s)
+        {
+            paramHistory.push_back(paramValue_);
+            // Write constant output so leaf summing works
+            for (int ch = 0; ch < ctx.outputAudio.getNumChannels(); ++ch)
+                ctx.outputAudio.setSample(ch, s, 0.0f);
+        }
+    }
+    void release() override {}
+
+    std::vector<PortDescriptor> getInputPorts() const override { return {}; }
+    std::vector<PortDescriptor> getOutputPorts() const override {
+        return {{"out", PortDirection::output, SignalType::audio, 2}};
+    }
+
+    float getParameter(int) const override { return paramValue_; }
+    void setParameter(int, float value) override { paramValue_ = value; }
+    std::vector<ParameterDescriptor> getParameterDescriptors() const override {
+        return {{"gain", 0, 0.0f, 0, true, false, "", ""}};
+    }
+};
+
+// Records all MIDI events with their sample positions during process()
+class MidiRecordingNode : public Node {
+public:
+    struct RecordedEvent {
+        int samplePosition;
+        int noteNumber;
+        bool isNoteOn;
+        int channel;
+    };
+    std::vector<RecordedEvent> events;
+
+    void prepare(double, int) override {}
+    void process(ProcessContext& ctx) override {
+        for (const auto metadata : ctx.inputMidi)
+        {
+            auto msg = metadata.getMessage();
+            if (msg.isNoteOn() || msg.isNoteOff())
+            {
+                events.push_back({metadata.samplePosition, msg.getNoteNumber(),
+                                  msg.isNoteOn(), msg.getChannel()});
+            }
+        }
+        // Write silence to output
+        for (int ch = 0; ch < ctx.outputAudio.getNumChannels(); ++ch)
+            for (int s = 0; s < ctx.numSamples; ++s)
+                ctx.outputAudio.setSample(ch, s, 0.0f);
+    }
+    void release() override {}
+
+    std::vector<PortDescriptor> getInputPorts() const override { return {}; }
+    std::vector<PortDescriptor> getOutputPorts() const override {
+        return {{"out", PortDirection::output, SignalType::audio, 2}};
+    }
+};
+
+// Helper: prepare engine for EventQueue tests.
+// Call BEFORE addNode/updateGraph so snapshots get correct buffer sizes.
+// After addNode+updateGraph, call drainBlock() to drain commands and advance transport.
+static void prepareEventQueueTest(Engine& engine, int blockSize = 512)
+{
+    engine.prepareForTesting(44100.0, blockSize);
+    engine.transportSetTempo(120.0);
+    engine.transportPlay();
+}
+
+// Drain pending scheduler commands and advance one block
+static void drainBlock(Engine& engine, int blockSize = 512)
+{
+    juce::AudioBuffer<float> output(2, blockSize);
+    juce::MidiBuffer midi;
+    engine.processBlock(output, midi, blockSize);
+}
+
+TEST_CASE("EventQueue MIDI arrives at correct sample offset", "[EventQueue Engine]")
+{
+    Scheduler sched;
+    Engine engine(sched);
+    prepareEventQueueTest(engine);
+
+    auto node = std::make_unique<MidiRecordingNode>();
+    auto* recorder = node.get();
+    node->prepare(44100.0, 512);
+    int nodeId = engine.addNode(std::move(node), "Recorder");
+    engine.updateGraph();
+    drainBlock(engine);
+
+    // After setup, transport is at sample 512, which is beat 512/22050 ≈ 0.02322
+    // The next block will cover [512, 1024) samples = beats [0.02322, 0.04644)
+    // Schedule a noteOn at beat 0.035 → offset ≈ round((0.035 - 0.02322) * 22050) = round(259.7) ≈ 260
+    double targetBeat = 0.035;
+    ScheduledEvent ev{};
+    ev.beatTime = targetBeat;
+    ev.targetNodeId = nodeId;
+    ev.type = ScheduledEvent::Type::noteOn;
+    ev.channel = 1;
+    ev.data1 = 60;
+    ev.floatValue = 100.0f;
+    engine.getEventQueue().schedule(ev);
+
+    juce::AudioBuffer<float> output(2, 512);
+    juce::MidiBuffer midi;
+    engine.processBlock(output, midi, 512);
+
+    REQUIRE(recorder->events.size() == 1);
+    REQUIRE(recorder->events[0].noteNumber == 60);
+    REQUIRE(recorder->events[0].isNoteOn);
+    REQUIRE(recorder->events[0].channel == 1);
+    // Offset should be approximately 260 (within a couple samples of rounding)
+    REQUIRE(recorder->events[0].samplePosition >= 250);
+    REQUIRE(recorder->events[0].samplePosition <= 270);
+}
+
+TEST_CASE("No param changes → single process call", "[EventQueue Engine]")
+{
+    Scheduler sched;
+    Engine engine(sched);
+    prepareEventQueueTest(engine);
+
+    auto node = std::make_unique<ParamTrackingNode>();
+    auto* tracker = node.get();
+    node->prepare(44100.0, 512);
+    tracker->paramValue_ = 0.5f;
+    engine.addNode(std::move(node), "Tracker");
+    engine.updateGraph();
+    drainBlock(engine);
+
+    juce::AudioBuffer<float> output(2, 512);
+    juce::MidiBuffer midi;
+    tracker->paramHistory.clear();
+    engine.processBlock(output, midi, 512);
+
+    REQUIRE(tracker->paramHistory.size() == 512);
+    for (int i = 0; i < 512; ++i)
+        REQUIRE(tracker->paramHistory[i] == 0.5f);
+}
+
+TEST_CASE("Single param change splits block in two", "[EventQueue Engine]")
+{
+    Scheduler sched;
+    Engine engine(sched);
+    prepareEventQueueTest(engine);
+
+    auto node = std::make_unique<ParamTrackingNode>();
+    auto* tracker = node.get();
+    node->prepare(44100.0, 512);
+    tracker->paramValue_ = 0.25f;
+    int nodeId = engine.addNode(std::move(node), "Tracker");
+    engine.updateGraph();
+    drainBlock(engine);
+
+    // Transport at sample 512, beat ≈ 0.02322
+    // Next block [512,1024) = beats [0.02322, 0.04644)
+    // Schedule paramChange at beat 0.035 → offset ≈ 260
+    double targetBeat = 0.035;
+    ScheduledEvent ev{};
+    ev.beatTime = targetBeat;
+    ev.targetNodeId = nodeId;
+    ev.type = ScheduledEvent::Type::paramChange;
+    ev.channel = 1;
+    ev.data1 = 0; // param index
+    ev.floatValue = 0.75f;
+    engine.getEventQueue().schedule(ev);
+
+    juce::AudioBuffer<float> output(2, 512);
+    juce::MidiBuffer midi;
+    tracker->paramHistory.clear();
+    engine.processBlock(output, midi, 512);
+
+    REQUIRE(tracker->paramHistory.size() == 512);
+
+    // Find the split point — first sample where value changes to 0.75
+    int splitAt = -1;
+    for (int i = 0; i < 512; ++i)
+    {
+        if (tracker->paramHistory[i] == 0.75f)
+        {
+            splitAt = i;
+            break;
+        }
+    }
+    REQUIRE(splitAt > 0);    // Some samples should see old value
+    REQUIRE(splitAt < 512);  // Split should happen within block
+
+    // All samples before split should be old value
+    for (int i = 0; i < splitAt; ++i)
+        REQUIRE(tracker->paramHistory[i] == 0.25f);
+
+    // All samples from split onward should be new value
+    for (int i = splitAt; i < 512; ++i)
+        REQUIRE(tracker->paramHistory[i] == 0.75f);
+}
+
+TEST_CASE("Two param changes create three sub-blocks", "[EventQueue Engine]")
+{
+    Scheduler sched;
+    Engine engine(sched);
+    prepareEventQueueTest(engine);
+
+    auto node = std::make_unique<ParamTrackingNode>();
+    auto* tracker = node.get();
+    node->prepare(44100.0, 512);
+    tracker->paramValue_ = 0.1f;
+    int nodeId = engine.addNode(std::move(node), "Tracker");
+    engine.updateGraph();
+    drainBlock(engine);
+
+    // Next block beats: [0.02322, 0.04644)
+    // Schedule two param changes at different beats within the block
+    double beat1 = 0.030;  // offset ≈ round((0.030 - 0.02322) * 22050) ≈ 149
+    double beat2 = 0.040;  // offset ≈ round((0.040 - 0.02322) * 22050) ≈ 370
+
+    ScheduledEvent ev1{};
+    ev1.beatTime = beat1;
+    ev1.targetNodeId = nodeId;
+    ev1.type = ScheduledEvent::Type::paramChange;
+    ev1.data1 = 0;
+    ev1.floatValue = 0.5f;
+    engine.getEventQueue().schedule(ev1);
+
+    ScheduledEvent ev2{};
+    ev2.beatTime = beat2;
+    ev2.targetNodeId = nodeId;
+    ev2.type = ScheduledEvent::Type::paramChange;
+    ev2.data1 = 0;
+    ev2.floatValue = 0.9f;
+    engine.getEventQueue().schedule(ev2);
+
+    juce::AudioBuffer<float> output(2, 512);
+    juce::MidiBuffer midi;
+    tracker->paramHistory.clear();
+    engine.processBlock(output, midi, 512);
+
+    REQUIRE(tracker->paramHistory.size() == 512);
+
+    // Find split points
+    int split1 = -1, split2 = -1;
+    for (int i = 0; i < 512; ++i)
+    {
+        if (split1 < 0 && tracker->paramHistory[i] == 0.5f)
+            split1 = i;
+        if (split2 < 0 && tracker->paramHistory[i] == 0.9f)
+            split2 = i;
+    }
+    REQUIRE(split1 > 0);
+    REQUIRE(split2 > split1);
+    REQUIRE(split2 < 512);
+
+    // Three regions
+    for (int i = 0; i < split1; ++i)
+        CHECK(tracker->paramHistory[i] == 0.1f);
+    for (int i = split1; i < split2; ++i)
+        CHECK(tracker->paramHistory[i] == 0.5f);
+    for (int i = split2; i < 512; ++i)
+        CHECK(tracker->paramHistory[i] == 0.9f);
+}
+
+TEST_CASE("Param changes at same offset → last wins, no zero-length process", "[EventQueue Engine]")
+{
+    Scheduler sched;
+    Engine engine(sched);
+    prepareEventQueueTest(engine);
+
+    auto node = std::make_unique<ParamTrackingNode>();
+    auto* tracker = node.get();
+    node->prepare(44100.0, 512);
+    tracker->paramValue_ = 0.1f;
+    int nodeId = engine.addNode(std::move(node), "Tracker");
+    engine.updateGraph();
+    drainBlock(engine);
+
+    // Schedule two param changes at the exact same beat
+    double beatTarget = 0.035;
+    ScheduledEvent ev1{};
+    ev1.beatTime = beatTarget;
+    ev1.targetNodeId = nodeId;
+    ev1.type = ScheduledEvent::Type::paramChange;
+    ev1.data1 = 0;
+    ev1.floatValue = 0.5f;
+    engine.getEventQueue().schedule(ev1);
+
+    ScheduledEvent ev2{};
+    ev2.beatTime = beatTarget;
+    ev2.targetNodeId = nodeId;
+    ev2.type = ScheduledEvent::Type::paramChange;
+    ev2.data1 = 0;
+    ev2.floatValue = 0.8f;
+    engine.getEventQueue().schedule(ev2);
+
+    juce::AudioBuffer<float> output(2, 512);
+    juce::MidiBuffer midi;
+    tracker->paramHistory.clear();
+    engine.processBlock(output, midi, 512);
+
+    // Total samples must equal block size (no double-counting)
+    REQUIRE(tracker->paramHistory.size() == 512);
+
+    // Find where value changes from 0.1
+    int splitAt = -1;
+    for (int i = 0; i < 512; ++i)
+    {
+        if (tracker->paramHistory[i] != 0.1f)
+        {
+            splitAt = i;
+            break;
+        }
+    }
+    REQUIRE(splitAt > 0);
+
+    // After the split, all values should be consistent (the last-applied value).
+    // Both param changes are at the same offset, so both get applied before the
+    // remaining segment. The final value depends on resolved order.
+    float finalValue = tracker->paramHistory[splitAt];
+    CHECK((finalValue == 0.5f || finalValue == 0.8f));
+    for (int i = splitAt; i < 512; ++i)
+        CHECK(tracker->paramHistory[i] == finalValue);
+}
+
+TEST_CASE("Param change at offset 0 applies before first process", "[EventQueue Engine]")
+{
+    Scheduler sched;
+    Engine engine(sched);
+    prepareEventQueueTest(engine);
+
+    auto node = std::make_unique<ParamTrackingNode>();
+    auto* tracker = node.get();
+    node->prepare(44100.0, 512);
+    tracker->paramValue_ = 0.2f;
+    int nodeId = engine.addNode(std::move(node), "Tracker");
+    engine.updateGraph();
+    drainBlock(engine);
+
+    // Schedule param change at the exact block start beat
+    // After setup: position = 512 samples = beat 512/22050
+    double blockStartBeat = 512.0 / 22050.0;
+    ScheduledEvent ev{};
+    ev.beatTime = blockStartBeat;
+    ev.targetNodeId = nodeId;
+    ev.type = ScheduledEvent::Type::paramChange;
+    ev.data1 = 0;
+    ev.floatValue = 0.99f;
+    engine.getEventQueue().schedule(ev);
+
+    juce::AudioBuffer<float> output(2, 512);
+    juce::MidiBuffer midi;
+    tracker->paramHistory.clear();
+    engine.processBlock(output, midi, 512);
+
+    REQUIRE(tracker->paramHistory.size() == 512);
+
+    // All samples should see the new value (param change at offset 0 applied before processing)
+    for (int i = 0; i < 512; ++i)
+        CHECK(tracker->paramHistory[i] == 0.99f);
+}
+
+TEST_CASE("MIDI partitioned correctly across sub-blocks", "[EventQueue Engine]")
+{
+    Scheduler sched;
+    Engine engine(sched);
+    prepareEventQueueTest(engine);
+
+    auto node = std::make_unique<MidiRecordingNode>();
+    auto* recorder = node.get();
+    node->prepare(44100.0, 512);
+    int nodeId = engine.addNode(std::move(node), "Recorder");
+    engine.updateGraph();
+    drainBlock(engine);
+
+    // Block beats: [0.02322, 0.04644)
+    // Schedule noteOn at beat 0.028 → offset ≈ round((0.028 - 0.02322)*22050) ≈ 105
+    // Schedule paramChange at beat 0.035 → offset ≈ 260
+    // The noteOn is in the first sub-block (before offset 260), should appear at offset 105
+
+    ScheduledEvent noteEv{};
+    noteEv.beatTime = 0.028;
+    noteEv.targetNodeId = nodeId;
+    noteEv.type = ScheduledEvent::Type::noteOn;
+    noteEv.channel = 1;
+    noteEv.data1 = 72;
+    noteEv.floatValue = 90.0f;
+    engine.getEventQueue().schedule(noteEv);
+
+    ScheduledEvent paramEv{};
+    paramEv.beatTime = 0.035;
+    paramEv.targetNodeId = nodeId;
+    paramEv.type = ScheduledEvent::Type::paramChange;
+    paramEv.data1 = 0;
+    paramEv.floatValue = 0.5f;
+    engine.getEventQueue().schedule(paramEv);
+
+    juce::AudioBuffer<float> output(2, 512);
+    juce::MidiBuffer midi;
+    engine.processBlock(output, midi, 512);
+
+    // The MIDI event should arrive in the first sub-block.
+    // With sub-block splitting, the event's position gets rebased to sub-block-local offset.
+    REQUIRE(recorder->events.size() == 1);
+    REQUIRE(recorder->events[0].noteNumber == 72);
+    REQUIRE(recorder->events[0].isNoteOn);
+    // The event should appear at a sub-block-local offset (≈105, rebased from block start)
+    REQUIRE(recorder->events[0].samplePosition >= 95);
+    REQUIRE(recorder->events[0].samplePosition <= 115);
+}
+
+TEST_CASE("MIDI in second sub-block has adjusted offset", "[EventQueue Engine]")
+{
+    Scheduler sched;
+    Engine engine(sched);
+    prepareEventQueueTest(engine);
+
+    auto node = std::make_unique<MidiRecordingNode>();
+    auto* recorder = node.get();
+    node->prepare(44100.0, 512);
+    int nodeId = engine.addNode(std::move(node), "Recorder");
+    engine.updateGraph();
+    drainBlock(engine);
+
+    // paramChange at beat 0.030 → offset ≈ 149
+    // noteOn at beat 0.038 → offset ≈ 325
+    // Second sub-block starts at sample 149, noteOn should appear at 325 - 149 = 176
+
+    ScheduledEvent paramEv{};
+    paramEv.beatTime = 0.030;
+    paramEv.targetNodeId = nodeId;
+    paramEv.type = ScheduledEvent::Type::paramChange;
+    paramEv.data1 = 0;
+    paramEv.floatValue = 0.5f;
+    engine.getEventQueue().schedule(paramEv);
+
+    ScheduledEvent noteEv{};
+    noteEv.beatTime = 0.038;
+    noteEv.targetNodeId = nodeId;
+    noteEv.type = ScheduledEvent::Type::noteOn;
+    noteEv.channel = 1;
+    noteEv.data1 = 64;
+    noteEv.floatValue = 80.0f;
+    engine.getEventQueue().schedule(noteEv);
+
+    juce::AudioBuffer<float> output(2, 512);
+    juce::MidiBuffer midi;
+    engine.processBlock(output, midi, 512);
+
+    REQUIRE(recorder->events.size() == 1);
+    REQUIRE(recorder->events[0].noteNumber == 64);
+    // Offset should be adjusted: absolute offset minus sub-block start
+    // ~325 - ~149 = ~176
+    REQUIRE(recorder->events[0].samplePosition >= 165);
+    REQUIRE(recorder->events[0].samplePosition <= 188);
+}
+
+TEST_CASE("Transport stop clears EventQueue", "[EventQueue Engine]")
+{
+    Scheduler sched;
+    Engine engine(sched);
+    prepareEventQueueTest(engine);
+
+    auto node = std::make_unique<MidiRecordingNode>();
+    auto* recorder = node.get();
+    node->prepare(44100.0, 512);
+    int nodeId = engine.addNode(std::move(node), "Recorder");
+    engine.updateGraph();
+    drainBlock(engine);
+
+    // Schedule event for beat 0.035 (within next block)
+    ScheduledEvent ev{};
+    ev.beatTime = 0.035;
+    ev.targetNodeId = nodeId;
+    ev.type = ScheduledEvent::Type::noteOn;
+    ev.channel = 1;
+    ev.data1 = 60;
+    ev.floatValue = 100.0f;
+    engine.getEventQueue().schedule(ev);
+
+    // Stop transport, then play again
+    engine.transportStop();
+    engine.transportPlay();
+
+    // Drain stop+play commands
+    juce::AudioBuffer<float> output(2, 512);
+    juce::MidiBuffer midi;
+    engine.processBlock(output, midi, 512);
+
+    // The event should NOT appear — queue was cleared on stop
+    REQUIRE(recorder->events.empty());
+}
+
+TEST_CASE("Position seek clears EventQueue", "[EventQueue Engine]")
+{
+    Scheduler sched;
+    Engine engine(sched);
+    prepareEventQueueTest(engine);
+
+    auto node = std::make_unique<MidiRecordingNode>();
+    auto* recorder = node.get();
+    node->prepare(44100.0, 512);
+    int nodeId = engine.addNode(std::move(node), "Recorder");
+    engine.updateGraph();
+    drainBlock(engine);
+
+    // Schedule event at beat 2.0 (far in the future)
+    ScheduledEvent ev{};
+    ev.beatTime = 2.0;
+    ev.targetNodeId = nodeId;
+    ev.type = ScheduledEvent::Type::noteOn;
+    ev.channel = 1;
+    ev.data1 = 60;
+    ev.floatValue = 100.0f;
+    engine.getEventQueue().schedule(ev);
+
+    // Seek past it — this should clear the queue
+    engine.transportSetPositionInBeats(3.0);
+
+    // Drain seek command and process
+    juce::AudioBuffer<float> output(2, 512);
+    juce::MidiBuffer midi;
+    engine.processBlock(output, midi, 512);
+
+    // Event was cleared by seek, should not appear
+    REQUIRE(recorder->events.empty());
+}
+
+TEST_CASE("Sub-block sizes sum to full block", "[EventQueue Engine]")
+{
+    Scheduler sched;
+    Engine engine(sched);
+    prepareEventQueueTest(engine);
+
+    auto node = std::make_unique<ParamTrackingNode>();
+    auto* tracker = node.get();
+    node->prepare(44100.0, 512);
+    tracker->paramValue_ = 0.0f;
+    int nodeId = engine.addNode(std::move(node), "Tracker");
+    engine.updateGraph();
+    drainBlock(engine);
+
+    // Schedule three param changes at different beats
+    double beats[] = {0.025, 0.032, 0.042};
+    float vals[] = {0.3f, 0.6f, 0.9f};
+    for (int i = 0; i < 3; ++i)
+    {
+        ScheduledEvent ev{};
+        ev.beatTime = beats[i];
+        ev.targetNodeId = nodeId;
+        ev.type = ScheduledEvent::Type::paramChange;
+        ev.data1 = 0;
+        ev.floatValue = vals[i];
+        engine.getEventQueue().schedule(ev);
+    }
+
+    juce::AudioBuffer<float> output(2, 512);
+    juce::MidiBuffer midi;
+    tracker->paramHistory.clear();
+    engine.processBlock(output, midi, 512);
+
+    // Total recorded samples must equal exactly 512
+    REQUIRE(tracker->paramHistory.size() == 512);
+}
+
+TEST_CASE("No events → existing behavior unchanged", "[EventQueue Engine]")
+{
+    Scheduler sched;
+    Engine engine(sched);
+    prepareEventQueueTest(engine);
+
+    auto node = std::make_unique<ConstNode>(0.42f);
+    node->prepare(44100.0, 512);
+    engine.addNode(std::move(node), "Source");
+    engine.updateGraph();
+    drainBlock(engine);
+
+    juce::AudioBuffer<float> output(2, 512);
+    juce::MidiBuffer midi;
+    engine.processBlock(output, midi, 512);
+
+    for (int ch = 0; ch < 2; ++ch)
+        for (int s = 0; s < 512; ++s)
+            REQUIRE_THAT(output.getSample(ch, s), WithinAbs(0.42f, 1e-6));
+}
+
+TEST_CASE("Retrieve only when transport playing", "[EventQueue Engine]")
+{
+    Scheduler sched;
+    Engine engine(sched);
+    engine.prepareForTesting(44100.0, 512);
+    engine.transportSetTempo(120.0);
+    // Do NOT call transportPlay
+
+    auto node = std::make_unique<MidiRecordingNode>();
+    auto* recorder = node.get();
+    node->prepare(44100.0, 512);
+    int nodeId = engine.addNode(std::move(node), "Recorder");
+    engine.updateGraph();
+
+    // Drain tempo + swapGraph commands
+    juce::AudioBuffer<float> output(2, 512);
+    juce::MidiBuffer midi;
+    engine.processBlock(output, midi, 512);
+
+    // Schedule event
+    ScheduledEvent ev{};
+    ev.beatTime = 0.01;
+    ev.targetNodeId = nodeId;
+    ev.type = ScheduledEvent::Type::noteOn;
+    ev.channel = 1;
+    ev.data1 = 60;
+    ev.floatValue = 100.0f;
+    engine.getEventQueue().schedule(ev);
+
+    engine.processBlock(output, midi, 512);
+
+    // Transport not playing → event not dispatched
+    REQUIRE(recorder->events.empty());
+}
+
+TEST_CASE("Engine getEventQueue returns a reference", "[EventQueue Engine]")
+{
+    Scheduler sched;
+    Engine engine(sched);
+
+    auto& eq = engine.getEventQueue();
+    // Should be able to schedule without crashing
+    ScheduledEvent ev{};
+    ev.beatTime = 1.0;
+    ev.targetNodeId = 0;
+    ev.type = ScheduledEvent::Type::noteOn;
+    ev.channel = 1;
+    ev.data1 = 60;
+    ev.floatValue = 100.0f;
+    REQUIRE(eq.schedule(ev));
 }

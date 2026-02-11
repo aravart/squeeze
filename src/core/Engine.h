@@ -7,6 +7,7 @@
 #include "core/PerfMonitor.h"
 #include "core/PluginCache.h"
 #include "core/Scheduler.h"
+#include "core/EventQueue.h"
 #include "core/Transport.h"
 
 #include <juce_audio_basics/juce_audio_basics.h>
@@ -38,7 +39,7 @@ struct GraphSnapshot {
     std::vector<juce::AudioBuffer<float>> audioOutputs;
     std::vector<juce::MidiBuffer> midiBuffers;  // one per node, populated by MidiRouter
     juce::AudioBuffer<float> silenceBuffer;
-    juce::MidiBuffer emptyMidi;
+    juce::MidiBuffer scratchMidi;
 };
 
 class Engine : public juce::AudioIODeviceCallback {
@@ -135,6 +136,7 @@ public:
     void transportSetLoopPoints(double startBeats, double endBeats);
     void transportSetLooping(bool enabled);
     Transport& getTransport();
+    EventQueue& getEventQueue();
 
     // Performance monitoring
     PerfMonitor& getPerfMonitor();
@@ -154,8 +156,11 @@ private:
 
     mutable std::mutex controlMutex_;
     Scheduler& scheduler_;
+    static constexpr int kMaxResolvedEvents = 512;
+
     PerfMonitor perfMonitor_;
     Transport transport_;
+    EventQueue eventQueue_;
     MidiRouter midiRouter_;
     juce::AudioDeviceManager deviceManager_;
     GraphSnapshot* activeSnapshot_ = nullptr;
