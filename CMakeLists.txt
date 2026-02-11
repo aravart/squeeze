@@ -83,6 +83,7 @@ add_library(squeeze_core STATIC
     src/core/VoiceAllocator.cpp
     src/core/SamplerNode.cpp
     src/core/Transport.cpp
+    src/core/EventQueue.cpp
 )
 
 target_include_directories(squeeze_core PUBLIC src)
@@ -135,6 +136,7 @@ add_executable(squeeze_tests
     tests/core/VoiceAllocatorTests.cpp
     tests/core/SamplerNodeTests.cpp
     tests/core/TransportTests.cpp
+    tests/core/EventQueueTests.cpp
 )
 
 target_link_libraries(squeeze_tests PRIVATE
