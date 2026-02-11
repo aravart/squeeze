@@ -251,7 +251,7 @@ TEST_CASE("connect fails for mismatched signal types")
     REQUIRE(connId == -1);
 }
 
-TEST_CASE("connect fails for mismatched channel counts")
+TEST_CASE("connect succeeds for mismatched audio channel counts")
 {
     Graph graph;
     MonoNode mono;
@@ -260,12 +260,12 @@ TEST_CASE("connect fails for mismatched channel counts")
     int idMono = graph.addNode(&mono);
     int idStereo = graph.addNode(&stereo);
 
-    // mono out (1ch) -> stereo in (2ch): incompatible
+    // mono out (1ch) -> stereo in (2ch): allowed (engine copies min channels)
     int connId = graph.connect(
         {idMono, PortDirection::output, "out"},
         {idStereo, PortDirection::input, "in"}
     );
-    REQUIRE(connId == -1);
+    REQUIRE(connId >= 0);
 }
 
 TEST_CASE("connect fails if audio input port already has a connection")

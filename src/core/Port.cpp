@@ -21,7 +21,9 @@ bool canConnect(const PortDescriptor& src, const PortDescriptor& dst)
         return false;
     if (src.signalType != dst.signalType)
         return false;
-    if (src.channels != dst.channels)
+    // MIDI requires exact channel match (always 1).
+    // Audio allows mismatched channel counts — the engine copies min(src, dst) channels.
+    if (src.signalType == SignalType::midi && src.channels != dst.channels)
         return false;
     return true;
 }

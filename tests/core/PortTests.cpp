@@ -213,11 +213,11 @@ TEST_CASE("MIDI to audio cannot connect")
     REQUIRE_FALSE(canConnect(src, dst));
 }
 
-TEST_CASE("Mismatched audio channel counts cannot connect")
+TEST_CASE("Mismatched audio channel counts can connect")
 {
     PortDescriptor src{"out", PortDirection::output, SignalType::audio, 1};
     PortDescriptor dst{"in", PortDirection::input, SignalType::audio, 2};
-    REQUIRE_FALSE(canConnect(src, dst));
+    REQUIRE(canConnect(src, dst));
 }
 
 TEST_CASE("Mono audio ports can connect")
