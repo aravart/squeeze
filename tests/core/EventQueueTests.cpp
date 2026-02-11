@@ -744,3 +744,72 @@ TEST_CASE("EventQueue non-looped block does not wrap-dispatch", "[EventQueue]")
     // We just verify no crash; exact behavior is implementation-defined for invalid input
     (void)n;
 }
+
+// ============================================================
+// Same-offset type ordering
+// ============================================================
+
+TEST_CASE("EventQueue orders noteOff before noteOn at same beat", "[EventQueue]")
+{
+    EventQueue eq;
+
+    double blockStart = 4.0 - kBeatsPerBlock / 2.0;
+    double blockEnd = blockStart + kBeatsPerBlock;
+
+    // Schedule noteOn first, noteOff second — both at beat 4.0
+    eq.schedule(makeNoteOn(4.0, 1, 60));
+    eq.schedule(makeNoteOff(4.0, 1, 60));
+
+    ResolvedEvent out[16];
+    int n = eq.retrieve(blockStart, blockEnd, false, 0, 0,
+                        kBlockSize, kTempo, kSampleRate, out, 16);
+
+    REQUIRE(n == 2);
+    REQUIRE(out[0].sampleOffset == out[1].sampleOffset);
+    REQUIRE(out[0].type == ScheduledEvent::Type::noteOff);
+    REQUIRE(out[1].type == ScheduledEvent::Type::noteOn);
+}
+
+TEST_CASE("EventQueue orders noteOff before noteOn regardless of schedule order", "[EventQueue]")
+{
+    EventQueue eq;
+
+    double blockStart = 4.0 - kBeatsPerBlock / 2.0;
+    double blockEnd = blockStart + kBeatsPerBlock;
+
+    // Schedule noteOff first, noteOn second
+    eq.schedule(makeNoteOff(4.0, 1, 60));
+    eq.schedule(makeNoteOn(4.0, 1, 60));
+
+    ResolvedEvent out[16];
+    int n = eq.retrieve(blockStart, blockEnd, false, 0, 0,
+                        kBlockSize, kTempo, kSampleRate, out, 16);
+
+    REQUIRE(n == 2);
+    REQUIRE(out[0].type == ScheduledEvent::Type::noteOff);
+    REQUIRE(out[1].type == ScheduledEvent::Type::noteOn);
+}
+
+TEST_CASE("EventQueue type priority: noteOff < cc < paramChange < noteOn", "[EventQueue]")
+{
+    EventQueue eq;
+
+    double blockStart = 4.0 - kBeatsPerBlock / 2.0;
+    double blockEnd = blockStart + kBeatsPerBlock;
+
+    // Schedule in reverse priority order
+    eq.schedule(makeNoteOn(4.0, 1, 60));
+    eq.schedule({4.0, 1, ScheduledEvent::Type::paramChange, 0, 0, 0, 0.5f});
+    eq.schedule(makeCC(4.0, 1, 1, 64));
+    eq.schedule(makeNoteOff(4.0, 1, 60));
+
+    ResolvedEvent out[16];
+    int n = eq.retrieve(blockStart, blockEnd, false, 0, 0,
+                        kBlockSize, kTempo, kSampleRate, out, 16);
+
+    REQUIRE(n == 4);
+    REQUIRE(out[0].type == ScheduledEvent::Type::noteOff);
+    REQUIRE(out[1].type == ScheduledEvent::Type::cc);
+    REQUIRE(out[2].type == ScheduledEvent::Type::paramChange);
+    REQUIRE(out[3].type == ScheduledEvent::Type::noteOn);
+}

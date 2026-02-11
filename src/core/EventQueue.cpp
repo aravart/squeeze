@@ -9,6 +9,9 @@ EventQueue::EventQueue() = default;
 
 bool EventQueue::schedule(const ScheduledEvent& event)
 {
+    SQ_LOG_TRACE("EventQueue::schedule beat=%.3f node=%d type=%d ch=%d d1=%d d2=%d fv=%.3f",
+                 event.beatTime, event.targetNodeId, (int)event.type,
+                 event.channel, event.data1, event.data2, event.floatValue);
     return queue_.tryPush(event);
 }
 
@@ -19,17 +22,26 @@ int EventQueue::retrieve(double blockStartBeats, double blockEndBeats,
 {
     // 1. Drain SPSC queue into staging buffer
     ScheduledEvent temp;
+    int drained = 0;
     while (queue_.tryPop(temp)) {
         if (std::isnan(temp.beatTime) || temp.beatTime < 0.0)
             continue;
 
         if (stagingCount_ < kStagingCapacity) {
             staging_[stagingCount_++] = temp;
+            ++drained;
         } else {
             SQ_LOG_RT_WARN("EventQueue staging full, dropping event at beat %.3f",
                            temp.beatTime);
         }
     }
+    if (drained > 0) {
+        SQ_LOG_RT_TRACE("EventQueue::retrieve drained %d events, staging=%d",
+                        drained, stagingCount_);
+    }
+
+    SQ_LOG_RT_TRACE("EventQueue::retrieve block=[%.4f, %.4f) staging=%d looped=%d",
+                    blockStartBeats, blockEndBeats, stagingCount_, (int)looped);
 
     const double samplesPerBeat = sampleRate * 60.0 / tempo;
     const double loopLength = loopEndBeats - loopStartBeats;
@@ -130,6 +142,8 @@ int EventQueue::retrieve(double blockStartBeats, double blockEndBeats,
             sampleOffset = numSamples - 1;
 
         if (outCount < maxOut) {
+            SQ_LOG_RT_TRACE("EventQueue resolved beat=%.3f node=%d type=%d offset=%d",
+                            beatTime, staging_[i].targetNodeId, (int)staging_[i].type, sampleOffset);
             out[outCount++] = {sampleOffset, staging_[i].targetNodeId, staging_[i].type,
                                staging_[i].channel, staging_[i].data1, staging_[i].data2,
                                staging_[i].floatValue};
@@ -139,11 +153,25 @@ int EventQueue::retrieve(double blockStartBeats, double blockEndBeats,
         staging_[i] = staging_[--stagingCount_];
     }
 
-    // Sort output by sampleOffset (insertion sort — small N expected)
+    // Sort output by sampleOffset, then by type priority (insertion sort — small N expected)
+    // Priority: noteOff (1) before cc (2) before paramChange (3) before noteOn (0)
+    // This ensures note-off precedes note-on at the same beat (standard DAW behavior)
+    auto typePriority = [](ScheduledEvent::Type t) -> int {
+        switch (t) {
+            case ScheduledEvent::Type::noteOff:     return 0;
+            case ScheduledEvent::Type::cc:          return 1;
+            case ScheduledEvent::Type::paramChange:  return 2;
+            case ScheduledEvent::Type::noteOn:       return 3;
+            default:                                 return 4;
+        }
+    };
     for (int i = 1; i < outCount; ++i) {
         ResolvedEvent key = out[i];
+        int keyPri = typePriority(key.type);
         int j = i - 1;
-        while (j >= 0 && out[j].sampleOffset > key.sampleOffset) {
+        while (j >= 0 && (out[j].sampleOffset > key.sampleOffset ||
+               (out[j].sampleOffset == key.sampleOffset &&
+                typePriority(out[j].type) > keyPri))) {
             out[j + 1] = out[j];
             --j;
         }

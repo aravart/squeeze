@@ -3,30 +3,29 @@
 -- opens the plugin editor, and schedules beat-synced parameter automation.
 --
 -- Usage:
---   squeeze scripts/transit2-demo.lua -- path/to/sample.wav
---   squeeze scripts/transit2-demo.lua -- path/to/sample.wav 0
+--   squeeze scripts/transit2-demo.lua -- path/to/sample.wav [bpm] [param_index]
 --
 -- Arguments after "--" are passed to the script:
 --   arg[1] = sample file path (required)
---   arg[2] = Transit 2 parameter index to automate (default 0)
+--   arg[2] = BPM (default 120)
+--   arg[3] = Transit 2 parameter index to automate (default 0)
 --
 -- Add -i before the script path for interactive REPL after loading.
 
 local sample_path = arg[1]
 if not sample_path then
-    print("Usage: squeeze scripts/transit2-demo.lua -- path/to/sample.wav [param_index]")
+    print("Usage: squeeze scripts/transit2-demo.lua -- path/to/sample.wav [bpm] [param_index]")
     return
 end
 
 -- Configuration
-local BPM             = 120
-local PHRASES         = 8       -- total 4-bar phrases (32 bars ~ 64s)
-local BARS_PER_PHRASE = 4
-local BEATS_PER_BAR  = 4
-local BEATS_PER_PHRASE = BARS_PER_PHRASE * BEATS_PER_BAR  -- 16
-local RAMP_BEATS      = 4       -- ramp over last bar of each phrase
+local BPM             = tonumber(arg[2]) or 120
+local BARS            = 4
+local BEATS_PER_BAR   = 4
+local TOTAL_BEATS     = BARS * BEATS_PER_BAR  -- 16
+local RAMP_BEATS      = 4       -- ramp over last bar
 local RAMP_STEPS      = 16      -- automation points per ramp
-local MACRO_PARAM     = tonumber(arg[2]) or 0
+local MACRO_PARAM     = tonumber(arg[3]) or 0
 local NOTE            = 60      -- middle C
 local VELOCITY        = 100
 local CHANNEL         = 1
@@ -94,35 +93,21 @@ end
 sq.set_tempo(BPM)
 sq.set_time_sig(BEATS_PER_BAR, 4)
 
--- Schedule note pattern: hit on beat 1 of every bar, shorter hits on beat 3
-local total_beats = PHRASES * BEATS_PER_PHRASE
-for phrase = 0, PHRASES - 1 do
-    local phrase_start = phrase * BEATS_PER_PHRASE
-    for bar = 0, BARS_PER_PHRASE - 1 do
-        local bar_start = phrase_start + bar * BEATS_PER_BAR
+-- Pre-schedule 100 repeats (~10 min at 150 BPM). Events are one-shot.
+local REPEATS = 100
 
-        -- Strong hit on beat 1
-        sq.schedule(bar_start, sampler.id, "note_on", CHANNEL, NOTE, VELOCITY)
-        sq.schedule(bar_start + 1.5, sampler.id, "note_off", CHANNEL, NOTE)
+for rep = 0, REPEATS - 1 do
+    local offset = rep * TOTAL_BEATS
 
-        -- Lighter hit on beat 3
-        sq.schedule(bar_start + 2, sampler.id, "note_on", CHANNEL, NOTE, math.floor(VELOCITY * 0.6))
-        sq.schedule(bar_start + 3.0, sampler.id, "note_off", CHANNEL, NOTE)
+    -- Retrigger sample at start of each phrase
+    sq.schedule(offset, sampler.id, "note_on", CHANNEL, NOTE, VELOCITY)
+    sq.schedule(offset + TOTAL_BEATS, sampler.id, "note_off", CHANNEL, NOTE)
+
+    -- Ramp macro 0 -> 1 over the last bar, reset at phrase start
+    if rep > 0 then
+        sq.schedule(offset, fx.id, "param", MACRO_PARAM, 0.0)
     end
-end
-
--- Schedule Transit 2 macro automation:
--- Ramp 0 -> 1 over the last RAMP_BEATS of each phrase, reset at next phrase
-for phrase = 0, PHRASES - 1 do
-    local phrase_start = phrase * BEATS_PER_PHRASE
-    local ramp_start   = phrase_start + BEATS_PER_PHRASE - RAMP_BEATS
-
-    -- Reset to 0 at phrase start (except first phrase, already 0)
-    if phrase > 0 then
-        sq.schedule(phrase_start, fx.id, "param", MACRO_PARAM, 0.0)
-    end
-
-    -- Ramp up
+    local ramp_start = offset + TOTAL_BEATS - RAMP_BEATS
     for step = 0, RAMP_STEPS - 1 do
         local t = step / RAMP_STEPS
         local beat = ramp_start + t * RAMP_BEATS
@@ -130,14 +115,12 @@ for phrase = 0, PHRASES - 1 do
         sq.schedule(beat, fx.id, "param", MACRO_PARAM, value)
     end
 end
+sq.schedule(REPEATS * TOTAL_BEATS, fx.id, "param", MACRO_PARAM, 0.0)
 
--- Final reset so it doesn't stay at max
-sq.schedule(total_beats, fx.id, "param", MACRO_PARAM, 0.0)
-
+local duration = REPEATS * TOTAL_BEATS / BPM * 60
 print(string.format(
-    "\nScheduled %d bars at %d BPM (%.0fs). Automating param [%d] with quadratic ramp.",
-    PHRASES * BARS_PER_PHRASE, BPM,
-    total_beats / BPM * 60, MACRO_PARAM))
+    "\n%d bars at %d BPM, looping for ~%.0f min. Automating param [%d] with quadratic ramp on last bar.",
+    BARS, BPM, duration / 60, MACRO_PARAM))
 
 -- Start playback and open the plugin editor
 sq.play()

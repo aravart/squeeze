@@ -570,7 +570,17 @@ GraphSnapshot* Engine::buildSnapshot(const Graph& graph,
 
         snap->slots.push_back({node, nodeId, audioSrc, false});
 
-        // Determine output channel count from this node's output ports
+        // Determine buffer channel count: max(input, output) so JUCE plugins
+        // with sidechain inputs get enough channels for in-place processing
+        int inChannels = 0;
+        for (const auto& p : node->getInputPorts())
+        {
+            if (p.signalType == SignalType::audio)
+            {
+                inChannels = p.channels;
+                break;
+            }
+        }
         int outChannels = 2;
         for (const auto& p : node->getOutputPorts())
         {
@@ -580,11 +590,12 @@ GraphSnapshot* Engine::buildSnapshot(const Graph& graph,
                 break;
             }
         }
+        int bufChannels = std::max(inChannels, outChannels);
 
-        if (outChannels > maxChannels)
-            maxChannels = outChannels;
+        if (bufChannels > maxChannels)
+            maxChannels = bufChannels;
 
-        snap->audioOutputs.emplace_back(outChannels, blockSize);
+        snap->audioOutputs.emplace_back(bufChannels, blockSize);
         snap->midiBuffers.emplace_back();
         snap->midiBuffers.back().ensureSize(256);
     }

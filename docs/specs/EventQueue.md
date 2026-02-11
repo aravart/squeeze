@@ -76,7 +76,7 @@ Internally:
 1. **Drain**: pop all available events from the SPSC queue into an internal staging buffer (fixed-capacity, audio-thread-local, pre-allocated).
 2. **Match**: scan the staging buffer for events whose `beatTime` falls within the block's time range.
 3. **Resolve**: convert `beatTime` to `sampleOffset` (see Position Resolution below).
-4. **Output**: write matched events to `out`, sorted by `sampleOffset`. Remove them from the staging buffer.
+4. **Output**: write matched events to `out`, sorted by `sampleOffset` then by type priority within the same offset: noteOff → cc → paramChange → noteOn. This ensures note-off from a previous phrase is processed before note-on for the next phrase at the same beat (standard DAW/sequencer behavior). Remove matched events from the staging buffer.
 5. **Expire**: discard events in the staging buffer whose forward distance exceeds the expiry threshold: one full loop length (when looping) or 16 beats (when not looping). Uses the forward-distance calculation (see Late Events). The 16-beat threshold is a fixed constant — EventQueue has no knowledge of time signature. Stale discards are logged at warn level.
 
 ### Housekeeping
@@ -145,7 +145,7 @@ The staging buffer is scanned linearly each block. With a typical lookahead of 1
 
 ## Invariants
 
-- Events are always dispatched in `sampleOffset` order within a block
+- Events are always dispatched in `sampleOffset` order within a block, with deterministic type priority for same-offset events: noteOff → cc → paramChange → noteOn
 - Each event is dispatched exactly once, then consumed
 - The SPSC queue has exactly one producer (control thread, serialized by `controlMutex_`) and one consumer (audio thread)
 - The staging buffer is only accessed by the audio thread — no synchronization needed
@@ -211,10 +211,10 @@ int n = eq.retrieve(3.95, 4.07,
                     /*numSamples*/512, /*tempo*/120.0, /*sr*/44100.0,
                     resolved, 64);
 // n == 2
-// resolved[0]: noteOn at sampleOffset ≈ 57
-// resolved[1]: paramChange at sampleOffset ≈ 57
-// Engine delivers: MidiBuffer.addEvent(noteOn, 57),
-//                  node->setParameter(2, 0.3f)
+// resolved[0]: paramChange at sampleOffset ≈ 57  (paramChange before noteOn)
+// resolved[1]: noteOn at sampleOffset ≈ 57
+// Engine delivers: node->setParameter(2, 0.3f),
+//                  MidiBuffer.addEvent(noteOn, 57)
 
 // Loop wrap example — block covers beats 15.9 to 0.1, loop [0, 16)
 n = eq.retrieve(15.9, 0.1,
