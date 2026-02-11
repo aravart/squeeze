@@ -76,6 +76,18 @@ private:
     sol::table luaBuffers(sol::state_view lua);
     std::tuple<sol::object, sol::object> luaBufferInfo(sol::state_view lua, int id);
 
+    // Transport API
+    void luaPlay();
+    void luaTransportStop();
+    void luaPause();
+    void luaSetTempo(double bpm);
+    void luaSetTimeSignature(int numerator, int denominator);
+    void luaSetPositionBeats(double beats);
+    void luaSetPositionSamples(int64_t samples);
+    void luaSetLoopPoints(double startBeats, double endBeats);
+    void luaSetLooping(bool enabled);
+    sol::table luaTransportInfo(sol::state_view lua);
+
     Engine& engine_;
 };
 

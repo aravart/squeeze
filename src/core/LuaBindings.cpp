@@ -54,7 +54,7 @@ void LuaBindings::bind(sol::state& lua)
         luaStart(sr, bs);
     });
 
-    sq.set_function("stop", [this]() {
+    sq.set_function("engine_stop", [this]() {
         luaStop();
     });
 
@@ -173,6 +173,18 @@ void LuaBindings::bind(sol::state& lua)
     sq.set_function("get_param_i", [this](sol::this_state s, int nodeId, int index) {
         return luaGetParamI(sol::state_view(s), nodeId, index);
     });
+
+    // Transport API
+    sq.set_function("play", [this]() { luaPlay(); });
+    sq.set_function("stop", [this]() { luaTransportStop(); });
+    sq.set_function("pause", [this]() { luaPause(); });
+    sq.set_function("set_tempo", [this](double bpm) { luaSetTempo(bpm); });
+    sq.set_function("set_time_sig", [this](int num, int denom) { luaSetTimeSignature(num, denom); });
+    sq.set_function("set_position_beats", [this](double beats) { luaSetPositionBeats(beats); });
+    sq.set_function("set_position_samples", [this](int64_t samples) { luaSetPositionSamples(samples); });
+    sq.set_function("set_loop", [this](double startBeats, double endBeats) { luaSetLoopPoints(startBeats, endBeats); });
+    sq.set_function("set_looping", [this](bool enabled) { luaSetLooping(enabled); });
+    sq.set_function("transport", [this](sol::this_state s) { return luaTransportInfo(sol::state_view(s)); });
 }
 
 // ============================================================
@@ -671,6 +683,94 @@ void LuaBindings::luaPerfNodes(bool enable)
 void LuaBindings::luaPerfReset()
 {
     engine_.getPerfMonitor().resetCounters();
+}
+
+// ============================================================
+// Transport API
+// ============================================================
+
+void LuaBindings::luaPlay()
+{
+    SQ_LOG("luaPlay (transport)");
+    engine_.transportPlay();
+}
+
+void LuaBindings::luaTransportStop()
+{
+    SQ_LOG("luaTransportStop");
+    engine_.transportStop();
+}
+
+void LuaBindings::luaPause()
+{
+    SQ_LOG("luaPause");
+    engine_.transportPause();
+}
+
+void LuaBindings::luaSetTempo(double bpm)
+{
+    SQ_LOG("luaSetTempo: %.1f", bpm);
+    engine_.transportSetTempo(bpm);
+}
+
+void LuaBindings::luaSetTimeSignature(int numerator, int denominator)
+{
+    SQ_LOG("luaSetTimeSignature: %d/%d", numerator, denominator);
+    engine_.transportSetTimeSignature(numerator, denominator);
+}
+
+void LuaBindings::luaSetPositionBeats(double beats)
+{
+    SQ_LOG("luaSetPositionBeats: %.2f", beats);
+    engine_.transportSetPositionInBeats(beats);
+}
+
+void LuaBindings::luaSetPositionSamples(int64_t samples)
+{
+    SQ_LOG("luaSetPositionSamples: %lld", (long long)samples);
+    engine_.transportSetPositionInSamples(samples);
+}
+
+void LuaBindings::luaSetLoopPoints(double startBeats, double endBeats)
+{
+    SQ_LOG("luaSetLoopPoints: %.2f - %.2f", startBeats, endBeats);
+    engine_.transportSetLoopPoints(startBeats, endBeats);
+}
+
+void LuaBindings::luaSetLooping(bool enabled)
+{
+    SQ_LOG("luaSetLooping: %s", enabled ? "on" : "off");
+    engine_.transportSetLooping(enabled);
+}
+
+sol::table LuaBindings::luaTransportInfo(sol::state_view lua)
+{
+    auto& t = engine_.getTransport();
+
+    sol::table result = lua.create_table();
+
+    switch (t.getState())
+    {
+        case TransportState::stopped: result["state"] = "stopped"; break;
+        case TransportState::playing: result["state"] = "playing"; break;
+        case TransportState::paused:  result["state"] = "paused";  break;
+    }
+
+    result["tempo"] = t.getTempo();
+    result["beats"] = t.getPositionInBeats();
+    result["seconds"] = t.getPositionInSeconds();
+    result["samples"] = t.getPositionInSamples();
+    result["bar"] = t.getBarCount();
+
+    auto ts = t.getTimeSignature();
+    result["time_sig_num"] = ts.numerator;
+    result["time_sig_denom"] = ts.denominator;
+
+    result["looping"] = t.isLooping();
+    result["loop_start"] = t.getLoopStartBeats();
+    result["loop_end"] = t.getLoopEndBeats();
+
+    return result;
 }
 
 } // namespace squeeze

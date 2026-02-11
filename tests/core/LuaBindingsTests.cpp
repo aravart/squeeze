@@ -103,7 +103,17 @@ TEST_CASE("LuaBindings bind creates sq table with all functions")
     REQUIRE(sq["disconnect"].get_type() == sol::type::function);
     REQUIRE(sq["update"].get_type() == sol::type::function);
     REQUIRE(sq["start"].get_type() == sol::type::function);
+    REQUIRE(sq["engine_stop"].get_type() == sol::type::function);
+    REQUIRE(sq["play"].get_type() == sol::type::function);
     REQUIRE(sq["stop"].get_type() == sol::type::function);
+    REQUIRE(sq["pause"].get_type() == sol::type::function);
+    REQUIRE(sq["set_tempo"].get_type() == sol::type::function);
+    REQUIRE(sq["set_time_sig"].get_type() == sol::type::function);
+    REQUIRE(sq["set_position_beats"].get_type() == sol::type::function);
+    REQUIRE(sq["set_position_samples"].get_type() == sol::type::function);
+    REQUIRE(sq["set_loop"].get_type() == sol::type::function);
+    REQUIRE(sq["set_looping"].get_type() == sol::type::function);
+    REQUIRE(sq["transport"].get_type() == sol::type::function);
     REQUIRE(sq["set_param"].get_type() == sol::type::function);
     REQUIRE(sq["get_param"].get_type() == sol::type::function);
     REQUIRE(sq["params"].get_type() == sol::type::function);
@@ -368,7 +378,7 @@ TEST_CASE("LuaBindings update pushes graph to engine via scheduler")
 // start / stop
 // ============================================================
 
-TEST_CASE("LuaBindings start and stop control engine state")
+TEST_CASE("LuaBindings start and engine_stop control engine state")
 {
     LuaFixture f;
 
@@ -377,7 +387,7 @@ TEST_CASE("LuaBindings start and stop control engine state")
     f.lua.safe_script("sq.start()");
     REQUIRE(f.engine.isRunning());
 
-    f.lua.safe_script("sq.stop()");
+    f.lua.safe_script("sq.engine_stop()");
     REQUIRE_FALSE(f.engine.isRunning());
 }
 
@@ -390,7 +400,7 @@ TEST_CASE("LuaBindings start accepts optional sample rate and block size")
     REQUIRE(f.engine.getSampleRate() == 48000.0);
     REQUIRE(f.engine.getBlockSize() == 256);
 
-    f.lua.safe_script("sq.stop()");
+    f.lua.safe_script("sq.engine_stop()");
 }
 
 // ============================================================
@@ -557,7 +567,7 @@ TEST_CASE("LuaBindings full workflow via Lua script")
         sq.update()
         sq.start()
         assert(true)
-        sq.stop()
+        sq.engine_stop()
 
         return true
     )", sol::script_pass_on_error);
@@ -1138,4 +1148,169 @@ TEST_CASE("Engine removeBuffer nulls SamplerNode reference")
     // Remove buffer — should null the reference
     REQUIRE(engine.removeBuffer(bufId));
     REQUIRE(node->getBuffer() == nullptr);
+}
+
+// ============================================================
+// Transport API
+// ============================================================
+
+// Helper: process one block to drain scheduler commands
+static void drainScheduler(Engine& engine)
+{
+    juce::AudioBuffer<float> buf(2, 512);
+    juce::MidiBuffer midi;
+    buf.clear();
+    engine.processBlock(buf, midi, 512);
+}
+
+TEST_CASE("LuaBindings play and stop control transport")
+{
+    LuaFixture f;
+
+    auto& t = f.engine.getTransport();
+    REQUIRE(t.getState() == TransportState::stopped);
+
+    f.lua.safe_script("sq.play()");
+    drainScheduler(f.engine);
+    REQUIRE(t.getState() == TransportState::playing);
+
+    f.lua.safe_script("sq.stop()");
+    drainScheduler(f.engine);
+    REQUIRE(t.getState() == TransportState::stopped);
+    REQUIRE(t.getPositionInSamples() == 0);
+}
+
+TEST_CASE("LuaBindings pause preserves transport position")
+{
+    LuaFixture f;
+
+    auto& t = f.engine.getTransport();
+
+    f.lua.safe_script("sq.play()");
+    drainScheduler(f.engine);
+    REQUIRE(t.getState() == TransportState::playing);
+
+    // Position advanced by one block (512 samples)
+    REQUIRE(t.getPositionInSamples() == 512);
+
+    f.lua.safe_script("sq.pause()");
+    drainScheduler(f.engine);
+    REQUIRE(t.getState() == TransportState::paused);
+    // Position preserved (advanced another block since we processed, but paused now)
+    REQUIRE(t.getPositionInSamples() > 0);
+}
+
+TEST_CASE("LuaBindings set_tempo changes tempo")
+{
+    LuaFixture f;
+
+    auto& t = f.engine.getTransport();
+    REQUIRE(t.getTempo() == 120.0);
+
+    f.lua.safe_script("sq.set_tempo(140)");
+    drainScheduler(f.engine);
+    REQUIRE(t.getTempo() == 140.0);
+}
+
+TEST_CASE("LuaBindings set_time_sig changes time signature")
+{
+    LuaFixture f;
+
+    auto& t = f.engine.getTransport();
+
+    f.lua.safe_script("sq.set_time_sig(3, 8)");
+    drainScheduler(f.engine);
+
+    auto ts = t.getTimeSignature();
+    REQUIRE(ts.numerator == 3);
+    REQUIRE(ts.denominator == 8);
+}
+
+TEST_CASE("LuaBindings set_looping and set_loop configure loop")
+{
+    LuaFixture f;
+
+    auto& t = f.engine.getTransport();
+
+    f.lua.safe_script("sq.set_loop(4.0, 8.0)");
+    drainScheduler(f.engine);
+    REQUIRE(t.getLoopStartBeats() == 4.0);
+    REQUIRE(t.getLoopEndBeats() == 8.0);
+
+    f.lua.safe_script("sq.set_looping(true)");
+    drainScheduler(f.engine);
+    REQUIRE(t.isLooping());
+
+    f.lua.safe_script("sq.set_looping(false)");
+    drainScheduler(f.engine);
+    REQUIRE_FALSE(t.isLooping());
+}
+
+TEST_CASE("LuaBindings transport returns state table")
+{
+    LuaFixture f;
+
+    auto result = f.lua.safe_script(R"(
+        local t = sq.transport()
+        assert(t.state == "stopped", "expected stopped, got " .. t.state)
+        assert(t.tempo == 120, "expected 120 bpm")
+        assert(t.beats == 0, "expected beats 0")
+        assert(t.seconds == 0, "expected seconds 0")
+        assert(t.samples == 0, "expected samples 0")
+        assert(t.bar == 0, "expected bar 0")
+        assert(t.time_sig_num == 4, "expected 4/4 numerator")
+        assert(t.time_sig_denom == 4, "expected 4/4 denominator")
+        assert(t.looping == false, "expected looping false")
+        assert(t.loop_start == 0, "expected loop_start 0")
+        assert(t.loop_end == 0, "expected loop_end 0")
+        return true
+    )", sol::script_pass_on_error);
+    REQUIRE(result.valid());
+    bool ok = result;
+    REQUIRE(ok);
+}
+
+TEST_CASE("LuaBindings transport reflects state changes")
+{
+    LuaFixture f;
+
+    f.lua.safe_script("sq.set_tempo(90)");
+    f.lua.safe_script("sq.set_time_sig(6, 8)");
+    f.lua.safe_script("sq.play()");
+    drainScheduler(f.engine);
+
+    auto result = f.lua.safe_script(R"(
+        local t = sq.transport()
+        assert(t.state == "playing", "expected playing, got " .. t.state)
+        assert(t.tempo == 90, "expected 90 bpm, got " .. t.tempo)
+        assert(t.time_sig_num == 6, "expected 6")
+        assert(t.time_sig_denom == 8, "expected 8")
+        assert(t.samples > 0, "expected samples > 0")
+        return true
+    )", sol::script_pass_on_error);
+    REQUIRE(result.valid());
+    bool ok = result;
+    REQUIRE(ok);
+}
+
+TEST_CASE("LuaBindings set_position_beats sets position")
+{
+    LuaFixture f;
+
+    auto& t = f.engine.getTransport();
+
+    f.lua.safe_script("sq.set_position_beats(4.0)");
+    drainScheduler(f.engine);
+    REQUIRE_THAT(t.getPositionInBeats(), WithinAbs(4.0, 1e-6));
+}
+
+TEST_CASE("LuaBindings set_position_samples sets position")
+{
+    LuaFixture f;
+
+    auto& t = f.engine.getTransport();
+
+    f.lua.safe_script("sq.set_position_samples(22050)");
+    drainScheduler(f.engine);
+    REQUIRE(t.getPositionInSamples() == 22050);
 }
