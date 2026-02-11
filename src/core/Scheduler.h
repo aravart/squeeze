@@ -1,18 +1,31 @@
 #pragma once
 
 #include "core/SPSCQueue.h"
+#include <cstdint>
 
 namespace squeeze {
 
 class Node;
 
 struct Command {
-    enum class Type { swapGraph, setParameter };
+    enum class Type {
+        swapGraph, setParameter,
+        transportPlay, transportStop, transportPause,
+        transportSetTempo, transportSetTimeSig,
+        transportSetPositionSamples, transportSetPositionBeats,
+        transportSetLoopPoints, transportSetLooping
+    };
     Type type = Type::swapGraph;
     void* ptr = nullptr;
     Node* node = nullptr;
     int paramIndex = 0;
     float paramValue = 0.0f;
+
+    double doubleValue1 = 0.0;  // tempo, beats, loopStart
+    double doubleValue2 = 0.0;  // loopEnd
+    int64_t int64Value = 0;     // positionInSamples
+    int intValue1 = 0;          // timeSig numerator
+    int intValue2 = 0;          // timeSig denominator
 };
 
 struct GarbageItem {

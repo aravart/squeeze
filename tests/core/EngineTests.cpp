@@ -3,6 +3,7 @@
 #include "core/Buffer.h"
 #include "core/Engine.h"
 #include "core/PluginNode.h"
+#include "core/Transport.h"
 
 #include <juce_audio_formats/juce_audio_formats.h>
 
@@ -1085,4 +1086,212 @@ TEST_CASE("Concurrent readers and writers do not crash")
     reader.join();
 
     REQUIRE(engine.getNodes().size() == 50);
+}
+
+// ============================================================
+// Transport integration
+// ============================================================
+
+TEST_CASE("Engine transport advances position during processBlock")
+{
+    Scheduler sched;
+    Engine engine(sched);
+    engine.prepareForTesting(44100.0, 64);
+
+    // Send play command
+    engine.transportPlay();
+
+    juce::AudioBuffer<float> output(2, 64);
+    juce::MidiBuffer midi;
+
+    // First processBlock: drains play command, then advances 64 samples
+    engine.processBlock(output, midi, 64);
+
+    auto& transport = engine.getTransport();
+    REQUIRE(transport.isPlaying());
+    REQUIRE(transport.getPositionInSamples() == 64);
+}
+
+TEST_CASE("Engine transport does not advance when stopped")
+{
+    Scheduler sched;
+    Engine engine(sched);
+    engine.prepareForTesting(44100.0, 64);
+
+    juce::AudioBuffer<float> output(2, 64);
+    juce::MidiBuffer midi;
+
+    // processBlock without play — transport stays at 0
+    engine.processBlock(output, midi, 64);
+
+    auto& transport = engine.getTransport();
+    REQUIRE(transport.getPositionInSamples() == 0);
+}
+
+TEST_CASE("Engine transport commands arrive via scheduler")
+{
+    Scheduler sched;
+    Engine engine(sched);
+    engine.prepareForTesting(44100.0, 64);
+
+    engine.transportSetTempo(140.0);
+
+    juce::AudioBuffer<float> output(2, 64);
+    juce::MidiBuffer midi;
+    engine.processBlock(output, midi, 64);
+
+    auto& transport = engine.getTransport();
+    REQUIRE_THAT(transport.getTempo(), WithinAbs(140.0, 0.001));
+}
+
+TEST_CASE("Engine transport stop resets position")
+{
+    Scheduler sched;
+    Engine engine(sched);
+    engine.prepareForTesting(44100.0, 64);
+
+    // Play and advance
+    engine.transportPlay();
+
+    juce::AudioBuffer<float> output(2, 64);
+    juce::MidiBuffer midi;
+    engine.processBlock(output, midi, 64);
+
+    REQUIRE(engine.getTransport().getPositionInSamples() == 64);
+
+    // Stop and process — stop resets to 0
+    engine.transportStop();
+    engine.processBlock(output, midi, 64);
+
+    REQUIRE(engine.getTransport().getPositionInSamples() == 0);
+    REQUIRE_FALSE(engine.getTransport().isPlaying());
+}
+
+TEST_CASE("Engine prepareForTesting sets transport sample rate")
+{
+    Scheduler sched;
+    Engine engine(sched);
+    engine.prepareForTesting(48000.0, 256);
+
+    REQUIRE_THAT(engine.getTransport().getSampleRate(), WithinAbs(48000.0, 0.001));
+}
+
+TEST_CASE("Engine addNode with PluginNode wires PlayHead")
+{
+    Scheduler sched;
+    Engine engine(sched);
+    engine.prepareForTesting(44100.0, 512);
+
+    auto node = makeEngineTestNode(0, 2, true);
+    auto* rawProc = node->getProcessor();
+    engine.addNode(std::move(node), "Synth");
+
+    REQUIRE(rawProc->getPlayHead() == &engine.getTransport());
+}
+
+TEST_CASE("Engine transport looping wraps during processBlock")
+{
+    Scheduler sched;
+    Engine engine(sched);
+    engine.prepareForTesting(44100.0, 64);
+
+    // Set tempo to 120 BPM, loop from beat 0 to beat 1
+    // At 120 BPM, 44100 Hz: 1 beat = 0.5s = 22050 samples
+    engine.transportSetTempo(120.0);
+    engine.transportSetLoopPoints(0.0, 1.0);
+    engine.transportSetLooping(true);
+    engine.transportPlay();
+
+    juce::AudioBuffer<float> output(2, 64);
+    juce::MidiBuffer midi;
+
+    // Drain all commands
+    engine.processBlock(output, midi, 64);
+
+    // Now advance close to the loop end
+    auto& transport = engine.getTransport();
+    // Position at beat 0 + 64 samples. We need to get close to 22050 samples.
+    // Process enough blocks to approach 22050 samples
+    // Each block = 64 samples. 22050 / 64 = ~344.5 blocks
+    // Process 344 blocks (344 * 64 = 22016), plus we already did 1 (64 samples)
+    // Total after = 345 * 64 = 22080 samples, which is past 22050
+    for (int i = 0; i < 344; ++i)
+        engine.processBlock(output, midi, 64);
+
+    // Position should have wrapped due to looping
+    // 345 * 64 = 22080 samples, loop end = 22050. Wrapped by 30 samples.
+    REQUIRE(transport.getPositionInSamples() < 22050);
+    REQUIRE(transport.isPlaying());
+}
+
+TEST_CASE("Engine transport pause preserves position")
+{
+    Scheduler sched;
+    Engine engine(sched);
+    engine.prepareForTesting(44100.0, 64);
+
+    engine.transportPlay();
+
+    juce::AudioBuffer<float> output(2, 64);
+    juce::MidiBuffer midi;
+    engine.processBlock(output, midi, 64);
+    engine.processBlock(output, midi, 64);
+
+    // Position should be 128 samples
+    REQUIRE(engine.getTransport().getPositionInSamples() == 128);
+
+    // Pause
+    engine.transportPause();
+    engine.processBlock(output, midi, 64);
+
+    // Position preserved (pause stops advancing but doesn't reset)
+    REQUIRE(engine.getTransport().getPositionInSamples() == 128);
+    REQUIRE_FALSE(engine.getTransport().isPlaying());
+}
+
+TEST_CASE("Engine transport time signature command")
+{
+    Scheduler sched;
+    Engine engine(sched);
+    engine.prepareForTesting(44100.0, 64);
+
+    engine.transportSetTimeSignature(3, 4);
+
+    juce::AudioBuffer<float> output(2, 64);
+    juce::MidiBuffer midi;
+    engine.processBlock(output, midi, 64);
+
+    auto ts = engine.getTransport().getTimeSignature();
+    REQUIRE(ts.numerator == 3);
+    REQUIRE(ts.denominator == 4);
+}
+
+TEST_CASE("Engine transport set position in beats command")
+{
+    Scheduler sched;
+    Engine engine(sched);
+    engine.prepareForTesting(44100.0, 64);
+
+    engine.transportSetPositionInBeats(4.0);
+
+    juce::AudioBuffer<float> output(2, 64);
+    juce::MidiBuffer midi;
+    engine.processBlock(output, midi, 64);
+
+    REQUIRE_THAT(engine.getTransport().getPositionInBeats(), WithinAbs(4.0, 0.01));
+}
+
+TEST_CASE("Engine transport set position in samples command")
+{
+    Scheduler sched;
+    Engine engine(sched);
+    engine.prepareForTesting(44100.0, 64);
+
+    engine.transportSetPositionInSamples(10000);
+
+    juce::AudioBuffer<float> output(2, 64);
+    juce::MidiBuffer midi;
+    engine.processBlock(output, midi, 64);
+
+    REQUIRE(engine.getTransport().getPositionInSamples() == 10000);
 }

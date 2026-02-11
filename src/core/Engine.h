@@ -7,6 +7,7 @@
 #include "core/PerfMonitor.h"
 #include "core/PluginCache.h"
 #include "core/Scheduler.h"
+#include "core/Transport.h"
 
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_audio_devices/juce_audio_devices.h>
@@ -123,6 +124,18 @@ public:
     // For testing: set sample rate/block size without opening a device
     void prepareForTesting(double sampleRate, int blockSize);
 
+    // Transport control (sends commands via Scheduler to audio thread)
+    void transportPlay();
+    void transportStop();
+    void transportPause();
+    void transportSetTempo(double bpm);
+    void transportSetTimeSignature(int numerator, int denominator);
+    void transportSetPositionInSamples(int64_t samples);
+    void transportSetPositionInBeats(double beats);
+    void transportSetLoopPoints(double startBeats, double endBeats);
+    void transportSetLooping(bool enabled);
+    Transport& getTransport();
+
     // Performance monitoring
     PerfMonitor& getPerfMonitor();
     PerfSnapshot getPerfSnapshot();
@@ -142,6 +155,7 @@ private:
     mutable std::mutex controlMutex_;
     Scheduler& scheduler_;
     PerfMonitor perfMonitor_;
+    Transport transport_;
     MidiRouter midiRouter_;
     juce::AudioDeviceManager deviceManager_;
     GraphSnapshot* activeSnapshot_ = nullptr;

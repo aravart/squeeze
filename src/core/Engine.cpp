@@ -72,6 +72,7 @@ void Engine::prepareForTesting(double sampleRate, int blockSize)
     sampleRate_.store(sampleRate);
     blockSize_.store(blockSize);
     perfMonitor_.prepare(sampleRate, blockSize);
+    transport_.setSampleRate(sampleRate);
 }
 
 PerfMonitor& Engine::getPerfMonitor()
@@ -111,6 +112,82 @@ MidiRouter& Engine::getMidiRouter()
     return midiRouter_;
 }
 
+Transport& Engine::getTransport()
+{
+    return transport_;
+}
+
+void Engine::transportPlay()
+{
+    Command cmd;
+    cmd.type = Command::Type::transportPlay;
+    scheduler_.sendCommand(cmd);
+}
+
+void Engine::transportStop()
+{
+    Command cmd;
+    cmd.type = Command::Type::transportStop;
+    scheduler_.sendCommand(cmd);
+}
+
+void Engine::transportPause()
+{
+    Command cmd;
+    cmd.type = Command::Type::transportPause;
+    scheduler_.sendCommand(cmd);
+}
+
+void Engine::transportSetTempo(double bpm)
+{
+    Command cmd;
+    cmd.type = Command::Type::transportSetTempo;
+    cmd.doubleValue1 = bpm;
+    scheduler_.sendCommand(cmd);
+}
+
+void Engine::transportSetTimeSignature(int numerator, int denominator)
+{
+    Command cmd;
+    cmd.type = Command::Type::transportSetTimeSig;
+    cmd.intValue1 = numerator;
+    cmd.intValue2 = denominator;
+    scheduler_.sendCommand(cmd);
+}
+
+void Engine::transportSetPositionInSamples(int64_t samples)
+{
+    Command cmd;
+    cmd.type = Command::Type::transportSetPositionSamples;
+    cmd.int64Value = samples;
+    scheduler_.sendCommand(cmd);
+}
+
+void Engine::transportSetPositionInBeats(double beats)
+{
+    Command cmd;
+    cmd.type = Command::Type::transportSetPositionBeats;
+    cmd.doubleValue1 = beats;
+    scheduler_.sendCommand(cmd);
+}
+
+void Engine::transportSetLoopPoints(double startBeats, double endBeats)
+{
+    Command cmd;
+    cmd.type = Command::Type::transportSetLoopPoints;
+    cmd.doubleValue1 = startBeats;
+    cmd.doubleValue2 = endBeats;
+    scheduler_.sendCommand(cmd);
+}
+
+void Engine::transportSetLooping(bool enabled)
+{
+    Command cmd;
+    cmd.type = Command::Type::transportSetLooping;
+    cmd.intValue1 = enabled ? 1 : 0;
+    scheduler_.sendCommand(cmd);
+}
+
 // ============================================================
 // Plugin cache
 // ============================================================
@@ -144,6 +221,10 @@ const juce::PluginDescription* Engine::findPluginByName(const std::string& name)
 
 int Engine::addNodeLocked(std::unique_ptr<Node> node, const std::string& name)
 {
+    auto* pn = dynamic_cast<PluginNode*>(node.get());
+    if (pn)
+        pn->getProcessor()->setPlayHead(&transport_);
+
     Node* raw = node.get();
     int id = graph_.addNode(raw);
     ownedNodes_[id] = std::move(node);
@@ -561,10 +642,40 @@ void Engine::processBlock(juce::AudioBuffer<float>& outputBuffer,
                     cmd.node->setParameter(cmd.paramIndex, cmd.paramValue);
                 break;
             }
+            case Command::Type::transportPlay:
+                transport_.play();
+                break;
+            case Command::Type::transportStop:
+                transport_.stop();
+                break;
+            case Command::Type::transportPause:
+                transport_.pause();
+                break;
+            case Command::Type::transportSetTempo:
+                transport_.setTempo(cmd.doubleValue1);
+                break;
+            case Command::Type::transportSetTimeSig:
+                transport_.setTimeSignature(cmd.intValue1, cmd.intValue2);
+                break;
+            case Command::Type::transportSetPositionSamples:
+                transport_.setPositionInSamples(cmd.int64Value);
+                break;
+            case Command::Type::transportSetPositionBeats:
+                transport_.setPositionInBeats(cmd.doubleValue1);
+                break;
+            case Command::Type::transportSetLoopPoints:
+                transport_.setLoopPoints(cmd.doubleValue1, cmd.doubleValue2);
+                break;
+            case Command::Type::transportSetLooping:
+                transport_.setLooping(cmd.intValue1 != 0);
+                break;
         }
     });
 
-    // 2. If no snapshot, output silence
+    // 2. Advance transport
+    transport_.advance(numSamples);
+
+    // 3. If no snapshot, output silence
     if (!activeSnapshot_ || activeSnapshot_->slots.empty())
     {
         outputBuffer.clear();
@@ -575,7 +686,7 @@ void Engine::processBlock(juce::AudioBuffer<float>& outputBuffer,
 
     auto& snap = *activeSnapshot_;
 
-    // 3. Clear all node MIDI buffers, then dispatch MIDI from router
+    // 4. Clear all node MIDI buffers, then dispatch MIDI from router
     std::unordered_map<int, juce::MidiBuffer*> nodeBufferMap;
     for (int i = 0; i < (int)snap.slots.size(); ++i)
     {
@@ -584,7 +695,7 @@ void Engine::processBlock(juce::AudioBuffer<float>& outputBuffer,
     }
     midiRouter_.dispatchMidi(nodeBufferMap);
 
-    // 4. Process each node in execution order
+    // 5. Process each node in execution order
     for (int i = 0; i < (int)snap.slots.size(); ++i)
     {
         auto& slot = snap.slots[i];
@@ -610,7 +721,7 @@ void Engine::processBlock(juce::AudioBuffer<float>& outputBuffer,
         perfMonitor_.endNode(i);
     }
 
-    // 5. Sum all audio leaf nodes to device output
+    // 6. Sum all audio leaf nodes to device output
     outputBuffer.clear();
     outputMidi.clear();
 
@@ -651,6 +762,7 @@ void Engine::audioDeviceAboutToStart(juce::AudioIODevice* device)
     blockSize_.store(bs);
     running_.store(true);
     perfMonitor_.prepare(sr, bs);
+    transport_.setSampleRate(sr);
     SQ_LOG("audioDeviceAboutToStart: sr=%.0f bs=%d", sr, bs);
 
     // Re-prepare all nodes with the device's actual sample rate and block size
