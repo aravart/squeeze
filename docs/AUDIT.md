@@ -1,45 +1,42 @@
 # Documentation & Architecture Audit
 
-_2026-02-10_
+_2026-02-11_
 
 ## Inventory
 
-### Implemented & Spec'd (18)
+### Implemented & Spec'd (21)
 
 | Component | Spec | Tests | Notes |
 |-----------|------|-------|-------|
-| Port | Port.md | PortTests.cpp | No dependencies |
+| Port | Port.md | PortTests.cpp | No dependencies. Audio channel mismatch allowed. |
 | Node | Node.md | NodeTests.cpp | Depends on Port |
-| Graph | Graph.md | GraphTests.cpp | Depends on Node, Port |
+| Graph | Graph.md | GraphTests.cpp | Depends on Node, Port. Audio-only connections. |
 | Scheduler | Scheduler.md | SchedulerTests.cpp | SPSC queue to audio thread |
-| Engine | Engine.md | EngineTests.cpp | Owns Graph, PluginCache, MidiRouter, Buffers |
-| Transport | Transport.md | — | Basic playback + looping |
-| PluginNode | PluginNode.md | PluginNodeTests.cpp | Includes PluginCache |
+| Engine | Engine.md | EngineTests.cpp | Owns Graph, PluginCache, MidiRouter, Buffers, Transport, EventQueue |
+| Transport | Transport.md | TransportTests.cpp | Playback state, musical position, AudioPlayHead, looping |
+| Buffer | Buffer.md | BufferTests.cpp | Factory, Engine integration, deferred deletion |
+| EventQueue | EventQueue.md | EventQueueTests.cpp | Beat-timestamped scheduling, sample-accurate dispatch, Engine+Lua integrated |
+| PluginNode | PluginNode.md | PluginNodeTests.cpp | Includes PluginCache. Sidechain buffer sizing fixed. |
 | LuaBindings | LuaBindings.md | LuaBindingsTests.cpp | Thin delegate over Engine |
-| Logger | Logger.md | LoggerTests.cpp | warn/debug/trace levels |
-| Parameters | Parameters.md | — | Phase 1: index-based, descriptors, text |
-| PerfMonitor | PerfMonitor.md | PerfMonitorTests.cpp | SeqLock publish, xrun detection |
+| Logger | Logger.md | LoggerTests.cpp | off/warn/debug/trace levels |
+| Parameters | Parameters.md | — | Phase 1: index-based, descriptors, text. Tested via Engine/SamplerNode. |
+| PerfMonitor | PerfMonitor.md | PerfMonitorTests.cpp | SeqLock publish, xrun detection, MIDI device stats |
 | PluginEditorWindow | PluginEditorWindow.md | — | App-layer GUI hosting |
-| MidiRouter | MidiRouter.md | MidiRouterTests.cpp | Replaced MidiInputNode |
+| MidiRouter | MidiRouter.md | MidiRouterTests.cpp | Replaced MidiInputNode. Channel filtering. |
 | SamplerVoice | SamplerVoice.md | SamplerVoiceTests.cpp | DSP core, 71 tests |
 | VoiceAllocator | VoiceAllocator.md | VoiceAllocatorTests.cpp | Mono mode only (Phase 1) |
-| SamplerNode | SamplerNode.md | SamplerNodeTests.cpp | 32 params, sub-block MIDI |
-| ConcurrencyModel | ConcurrencyModel.md | — | Architectural decision doc |
-| SampleAccurateDispatch | SampleAccurateDispatch.md | — | Design doc for EventQueue |
+| SamplerNode | SamplerNode.md | SamplerNodeTests.cpp | 32 params, sub-block MIDI splitting |
+| ConcurrencyModel | ConcurrencyModel.md | — | Architectural decision doc (controlMutex_ pattern) |
+| SampleAccurateDispatch | SampleAccurateDispatch.md | — | Design doc for Engine sub-block splitting |
+| SharedState | SharedState.md | — | Spec only (cross-thread observable state) |
 
 ### Spec'd But Not Built (3)
 
 | Component | Spec | Notes |
 |-----------|------|-------|
-| EventQueue | EventQueue.md | Beat-timestamped scheduling, sample-accurate dispatch |
-| Modulation | Modulation.md | Audio-rate parameter modulation routing (untracked) |
-| RecorderNode | RecorderNode.md | Record to Buffer, one-shot/loop modes (untracked) |
-
-### Implemented But Not Spec'd (1)
-
-| Component | Notes |
-|-----------|-------|
-| **Buffer** | Factory (`loadFromFile`, `createEmpty`), Engine integration, atomic writePosition, deferred deletion. Referenced by 5+ specs. Needs `docs/specs/Buffer.md`. |
+| Modulation | Modulation.md | Audio-rate parameter modulation routing framework |
+| RecorderNode | RecorderNode.md | Record to Buffer, one-shot/loop modes |
+| SharedState | SharedState.md | Cross-thread observable state for UI reads |
 
 ### Deprecated (1)
 
@@ -58,7 +55,7 @@ Mentioned in ARCHITECTURE.md build order (#7) but nothing exists. Would cover:
 - Tap/untap API on nodes
 - Peak/RMS level computation
 - Scope buffers for waveform display
-- Observable state pattern for UI
+- Observable state pattern for UI (likely depends on SharedState)
 
 #### Modulation Source Nodes (LFO, Envelope Generator, Step Sequencer)
 The Modulation spec defines the routing framework but explicitly defers source nodes to "separate specs." At minimum an LFO node and an envelope generator node are needed to make modulation useful.
@@ -80,11 +77,21 @@ Spec and implementation have Phase 2 stubs for polyphonic and legato allocation.
 #### Transport Automation / Tempo Maps
 Transport spec covers basic playback and looping. No spec for:
 - Tempo ramps / automation
-- Time signature changes
+- Time signature changes mid-timeline
 - Host sync beyond AudioPlayHead
 
 #### Disk Streaming
 SamplerVoice loads entire samples into memory. No spec for streaming large files from disk. Mentioned as future work in the SamplerNode goals doc.
+
+---
+
+## Recent Fixes (2026-02-11)
+
+These issues were discovered during Transit 2 demo script development:
+
+- **Audio port channel matching relaxed**: `canConnect` no longer requires exact channel count match for audio ports (only MIDI). Fixes connections between nodes with mismatched channel counts (e.g., 2ch SamplerNode → 4ch Transit 2).
+- **Plugin buffer sizing for sidechain inputs**: `buildSnapshot` now allocates `max(inputChannels, outputChannels)` per node instead of just output channels. Fixes silence with plugins that have more inputs than outputs (e.g., Transit 2: 4in/2out).
+- **Same-beat event ordering**: EventQueue now sorts same-offset events by type priority: noteOff → cc → paramChange → noteOn. Prevents note-off from killing a just-triggered note-on at the same beat.
 
 ---
 
@@ -94,10 +101,9 @@ SamplerVoice loads entire samples into memory. No spec for streaming large files
 
 | Component | Status | Why |
 |-----------|--------|-----|
-| Buffer spec (backfill) | Implemented, no spec | Technical debt; 5+ specs reference it |
-| EventQueue | Spec ready | Blocks tempo-synced sequencing |
 | Modulation framework | Spec ready | Blocks expressive parameter control |
 | Poly/legato voice modes | Stub exists | Blocks polyphonic sampler use |
+| SharedState | Spec ready | Blocks safe cross-thread reads for UI |
 
 ### Medium — Blocks important use cases
 
@@ -121,21 +127,24 @@ SamplerVoice loads entire samples into memory. No spec for streaming large files
 
 ## Spec Quality Notes
 
-- All 22 specs follow the template from CLAUDE.md consistently
+- All 24 specs follow the template from CLAUDE.md consistently
 - Thread safety is rigorously documented across all components
 - "Does NOT Handle" sections prevent scope creep effectively
 - Cross-references between specs are accurate and consistent
 - No orphaned TODOs or incomplete sections in any spec
 - RT-safety constraints are repeated appropriately at component boundaries
+- EventQueue spec updated with type priority sort ordering and invariant
 
 ---
 
 ## Summary
 
-The core is solid: 18 components built with rigorous specs, 471 test cases, 116K assertions passing. The three biggest gaps toward feature-complete:
+The core is solid: 21 components built with rigorous specs, 589 test cases, 123,942 assertions passing. Milestone 1 (VST plugins as nodes with MIDI routing) is complete. Beat-synced event scheduling with sample-accurate dispatch is fully operational.
 
-1. **EventQueue + Modulation pipeline** — specs exist, ready to build
-2. **Modulation source nodes** (LFO, EnvGen) — need specs
-3. **State persistence** — needs spec
+The three biggest gaps toward feature-complete:
 
-Everything else is either deferred infrastructure (server APIs) or incremental extensions to existing components (poly voices, disk streaming, meters).
+1. **Modulation pipeline** — framework spec exists, needs implementation + source node specs (LFO, EnvGen)
+2. **Polyphonic voice allocation** — stubs exist in VoiceAllocator, needs Phase 2 implementation
+3. **State persistence** — needs spec and implementation for session save/recall
+
+Everything else is either deferred infrastructure (server APIs, SharedState) or incremental extensions to existing components (disk streaming, meters, transport automation).
