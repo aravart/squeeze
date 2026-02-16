@@ -187,10 +187,16 @@ void sq_pump(void);
 ```cpp
 struct EngineHandle {
     squeeze::Engine engine;
+    squeeze::AudioDevice audioDevice;           // wraps engine
+    squeeze::PluginManager pluginManager;       // independent
+    squeeze::BufferLibrary bufferLibrary;       // independent
+    squeeze::MidiDeviceManager midiDeviceManager; // wraps MidiRouter → engine
 };
 ```
 
-`sq_engine_create()` allocates an `EngineHandle` on the heap. The returned opaque `SqEngine` pointer is the only handle the caller needs.
+`sq_engine_create()` allocates an `EngineHandle` on the heap. The returned opaque `SqEngine` pointer is the only handle the caller needs. Peripheral components (AudioDevice, PluginManager, BufferLibrary, MidiDeviceManager) are peers of Engine within the handle — Engine never knows about them.
+
+**FFI orchestration:** Some `sq_*` functions span multiple components. For example, `sq_add_plugin(handle, "Diva", &err)` calls `handle->pluginManager.createNode("Diva", ...)` then `handle->engine.addNode(std::move(node), "Diva")`. Similarly, `sq_load_buffer` uses BufferLibrary, and buffer assignment to nodes is orchestrated through both BufferLibrary and Engine. These are FFI-layer concerns, not Engine methods.
 
 ## Built-in Output Node
 
