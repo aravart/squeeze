@@ -19,6 +19,7 @@ FetchContent_MakeAvailable(juce)
 add_library(squeeze_core STATIC
     src/core/Engine.cpp
     src/core/Logger.cpp
+    src/core/Port.cpp
 )
 
 target_include_directories(squeeze_core PUBLIC src)
@@ -54,18 +55,29 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(Catch2)
 
-# --- Tests ---
-add_executable(squeeze_tests
+# --- C++ Unit Tests ---
+add_executable(squeeze_unit_tests
     tests/core/LoggerTests.cpp
+    tests/core/PortTests.cpp
+)
+
+target_link_libraries(squeeze_unit_tests PRIVATE
+    squeeze_core
+    Catch2::Catch2WithMain
+)
+
+# --- FFI Acceptance Tests ---
+add_executable(squeeze_ffi_tests
     tests/ffi/LoggerFFITests.cpp
     tests/ffi/EngineFFITests.cpp
 )
 
-target_link_libraries(squeeze_tests PRIVATE
+target_link_libraries(squeeze_ffi_tests PRIVATE
     squeeze_ffi
     Catch2::Catch2WithMain
 )
 
 include(CTest)
 include(Catch)
-catch_discover_tests(squeeze_tests)
+catch_discover_tests(squeeze_unit_tests)
+catch_discover_tests(squeeze_ffi_tests)
