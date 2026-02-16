@@ -2,12 +2,41 @@
 
 import ctypes
 
-from squeeze._ffi import lib, check_error
+from squeeze._ffi import lib, check_error, LogCallbackType
 
 
 class SqueezeError(Exception):
     """Raised when a Squeeze FFI call fails."""
     pass
+
+
+# --- Module-level Logger API ---
+
+_log_callback_ref = None  # prevent GC of ctypes callback wrapper
+
+
+def set_log_level(level: int) -> None:
+    """Set the global log level. 0=off, 1=warn, 2=info, 3=debug, 4=trace."""
+    lib.sq_set_log_level(level)
+
+
+def set_log_callback(handler=None) -> None:
+    """Set a callback to receive log messages. Pass None to revert to stderr.
+
+    The handler signature is: handler(level: int, message: str) -> None
+    """
+    global _log_callback_ref
+
+    if handler is None:
+        _log_callback_ref = None
+        lib.sq_set_log_callback(LogCallbackType(0), None)
+        return
+
+    def _c_callback(level, message, _user_data):
+        handler(level, message.decode() if isinstance(message, bytes) else message)
+
+    _log_callback_ref = LogCallbackType(_c_callback)
+    lib.sq_set_log_callback(_log_callback_ref, None)
 
 
 class Squeeze:

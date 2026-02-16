@@ -45,8 +45,18 @@ def _load_lib():
     lib.sq_version.restype = ctypes.c_char_p
     lib.sq_version.argtypes = [ctypes.c_void_p]
 
+    # sq_set_log_level
+    lib.sq_set_log_level.restype = None
+    lib.sq_set_log_level.argtypes = [ctypes.c_int]
+
+    # sq_set_log_callback
+    lib.sq_set_log_callback.restype = None
+    lib.sq_set_log_callback.argtypes = [LogCallbackType, ctypes.c_void_p]
+
     return lib
 
+
+LogCallbackType = ctypes.CFUNCTYPE(None, ctypes.c_int, ctypes.c_char_p, ctypes.c_void_p)
 
 lib = _load_lib()
 

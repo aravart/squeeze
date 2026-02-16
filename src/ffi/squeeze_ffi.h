@@ -18,6 +18,18 @@ typedef void* SqEngine;
 /// Passing NULL is safe (no-op).
 void sq_free_string(char* s);
 
+/* ── Logging ───────────────────────────────────────────────────── */
+
+/// Set log level globally. 0=off, 1=warn, 2=info, 3=debug, 4=trace.
+/// Does not require an SqEngine handle.
+void sq_set_log_level(int level);
+
+/// Set a callback to receive log messages. Pass NULL to revert to stderr.
+/// The callback receives: level (int), message (const char*), userData.
+/// Callback is invoked from the control thread only.
+void sq_set_log_callback(void (*callback)(int level, const char* message, void* user_data),
+                         void* user_data);
+
 /* ── Engine lifecycle ──────────────────────────────────────────── */
 
 /// Create a new engine. Returns NULL on failure (sets *error).

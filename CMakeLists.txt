@@ -18,6 +18,7 @@ FetchContent_MakeAvailable(juce)
 # --- Squeeze Core (static library) ---
 add_library(squeeze_core STATIC
     src/core/Engine.cpp
+    src/core/Logger.cpp
 )
 
 target_include_directories(squeeze_core PUBLIC src)
@@ -55,6 +56,8 @@ FetchContent_MakeAvailable(Catch2)
 
 # --- Tests ---
 add_executable(squeeze_tests
+    tests/core/LoggerTests.cpp
+    tests/ffi/LoggerFFITests.cpp
     tests/ffi/EngineFFITests.cpp
 )
 

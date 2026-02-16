@@ -1,5 +1,6 @@
 #include "ffi/squeeze_ffi.h"
 #include "core/Engine.h"
+#include "core/Logger.h"
 
 #include <juce_events/juce_events.h>
 #include <cstring>
@@ -45,6 +46,19 @@ static char* to_c_string(const std::string& s)
 static void set_error(char** error, const std::string& msg)
 {
     if (error) *error = to_c_string(msg);
+}
+
+// --- Logger API ---
+
+void sq_set_log_level(int level)
+{
+    squeeze::Logger::setLevel(static_cast<squeeze::LogLevel>(level));
+}
+
+void sq_set_log_callback(void (*callback)(int level, const char* message, void* user_data),
+                         void* user_data)
+{
+    squeeze::Logger::setCallback(callback, user_data);
 }
 
 // --- API implementation ---
