@@ -20,6 +20,7 @@ add_library(squeeze_core STATIC
     src/core/Engine.cpp
     src/core/Graph.cpp
     src/core/Logger.cpp
+    src/core/MidiRouter.cpp
     src/core/Port.cpp
 )
 
@@ -65,6 +66,7 @@ add_executable(squeeze_unit_tests
     tests/core/GraphTests.cpp
     tests/core/SPSCQueueTests.cpp
     tests/core/CommandQueueTests.cpp
+    tests/core/MidiRouterTests.cpp
 )
 
 target_link_libraries(squeeze_unit_tests PRIVATE
