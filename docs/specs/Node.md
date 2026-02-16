@@ -104,7 +104,7 @@ Parameters are identified by **name only**. No index appears in the public API (
 | `name` | Unique string identifier — the only key |
 | `defaultValue` | Normalized default (0.0–1.0) |
 | `numSteps` | 0 = continuous, >0 = discrete steps |
-| `automatable` | Whether EventQueue can target this parameter |
+| `automatable` | Whether EventScheduler can target this parameter |
 | `boolean` | Two-state parameter (0.0 or 1.0) |
 | `label` | Unit string for display: `"dB"`, `"Hz"`, `"%"`, `""` |
 | `group` | Grouping label for UI: `"filter"`, `"envelope"`, `""` |
@@ -128,7 +128,7 @@ Subclasses store parameters however they choose. Common patterns:
 
 ### RT-safe parameter dispatch (Engine concern)
 
-Sample-accurate parameter automation (EventQueue) requires RT-safe dispatch on the audio thread. Since `std::string` operations are not RT-safe, the **Engine** pre-resolves parameter names to internal tokens at scheduling time (control thread). The audio thread dispatches using these tokens. This is an Engine/EventQueue implementation detail — Node's public interface stays string-based.
+Sample-accurate parameter automation (EventScheduler) requires RT-safe dispatch on the audio thread. Since `std::string` operations are not RT-safe, the **Engine** pre-resolves parameter names to internal tokens at scheduling time (control thread). The audio thread dispatches using these tokens. This is an Engine/EventScheduler implementation detail — Node's public interface stays string-based.
 
 ## Node Identity
 
@@ -155,7 +155,7 @@ Node does **not** store its own ID. IDs are assigned by `Graph::addNode()` as mo
 - Connection logic or cycle detection (Graph)
 - Thread safety of control-thread mutations (Engine's controlMutex_)
 - Deferred deletion (Engine manages via pendingDeletions_)
-- RT-safe parameter dispatch optimization (Engine/EventQueue)
+- RT-safe parameter dispatch optimization (Engine/EventScheduler)
 
 ## Dependencies
 - Port (`PortDescriptor`, `PortDirection`, `SignalType`)

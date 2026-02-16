@@ -17,7 +17,7 @@ Engine grows incrementally across tiers. This spec documents both the current sh
 - Warn at info level when a node's audio output has no consumers
 
 ### Later tiers
-- Scheduler, Transport, Buffer, PerfMonitor, audio device management, sub-block parameter splitting
+- CommandQueue, Transport, Buffer, PerfMonitor, audio device management, sub-block parameter splitting
 
 ## Interface
 

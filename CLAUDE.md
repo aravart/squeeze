@@ -35,7 +35,7 @@ Two concentric concerns:
 
 1. **Audio thread** — owns the audio callback, strictly lock-free
 2. **Control thread(s)** — FFI callers (Python, Rust, Node.js, etc.); serialized by `Engine::controlMutex_`
-3. **Communication** — lock-free SPSC queues bridging control → audio (Scheduler for infrastructure commands, EventQueue for beat-timed musical events)
+3. **Communication** — lock-free SPSC queues bridging control → audio (CommandQueue for infrastructure commands, EventScheduler for beat-timed musical events)
 
 The host language (Python REPL, Rust CLI, etc.) provides the user-facing interface. Squeeze exposes only the C ABI — no scripting runtime, no network servers.
 
@@ -63,7 +63,7 @@ Build bottom-up. A component may only depend on those above it:
 5.  GroupNode             (Node, Graph, Engine)
 6.  MidiSplitterNode      (Node — graph-level MIDI routing with note-range filtering)
 7.  SPSCQueue             (no dependencies)
-8.  Scheduler             (SPSCQueue)
+8.  CommandQueue           (SPSCQueue)
 9.  Transport             (no dependencies)
 10. Buffer                (no dependencies)
 11. PerfMonitor           (no dependencies)
@@ -74,13 +74,13 @@ Build bottom-up. A component may only depend on those above it:
 16. SamplerNode           (Node, VoiceAllocator, TimeStretchEngine, Buffer)
 17. RecorderNode          (Node, Buffer)
 18. MidiRouter            (SPSCQueue)
-19. EventQueue            (SPSCQueue)
+19. EventScheduler        (SPSCQueue)
 20. ScopeTap / Metering   (SPSCQueue / SeqLock)
 ```
 
 Logger is tier 0 — it has no dependencies and every subsequent component uses it. It ships with `sq_set_log_level`, `sq_set_log_callback`, and corresponding Python functions.
 
-Engine grows incrementally across tiers. At tier 4 it provides node ownership, a global ID allocator, and topology cascade handling. Later tiers add Scheduler, Transport, Buffer, PerfMonitor, and audio device management.
+Engine grows incrementally across tiers. At tier 4 it provides node ownership, a global ID allocator, and topology cascade handling. Later tiers add CommandQueue, Transport, Buffer, PerfMonitor, and audio device management.
 
 GroupNode is tier 5 — a core graph primitive that depends on Engine for ID allocation. Composite node types (mixers, channel strips, kits) are GroupNode configurations, not separate node classes.
 
@@ -199,13 +199,13 @@ Old graph snapshots and buffers are pushed to a garbage queue by the audio threa
 ## Key Design Patterns
 
 ### Graph snapshot swap
-The control thread builds a `GraphSnapshot` (execution order, pre-allocated buffers per node), then atomically swaps it in via the Scheduler. The audio thread never modifies the graph.
+The control thread builds a `GraphSnapshot` (execution order, pre-allocated buffers per node), then atomically swaps it in via the CommandQueue. The audio thread never modifies the graph.
 
 ### Topology is derived
 Users declare data flow between nodes; the engine computes execution order automatically.
 
 ### Sub-block parameter splitting
-When parameter changes arrive mid-block (from EventQueue), the engine splits processing into sub-blocks at each change point. Nodes are unaware — they just see shorter `numSamples`.
+When parameter changes arrive mid-block (from EventScheduler), the engine splits processing into sub-blocks at each change point. Nodes are unaware — they just see shorter `numSamples`.
 
 ### Error reporting
 Internal C++ functions return `bool`/`int` with `std::string& errorMessage` out-params. The C ABI returns error codes (`SqResult`) and provides `sq_error_message()` for the last error string.
@@ -245,7 +245,7 @@ Audio thread publishes metering data via SeqLock (like PerfMonitor). Scope taps 
 - **Namespace:** `squeeze`
 - **Headers:** `.h` with `#pragma once`
 - **Naming:** `camelCase` for methods/variables, `PascalCase` for types, `kConstantName` for enum values, `member_` suffix for private members
-- **Parameters:** String-based API on `Node` — `getParameter(name)`, `setParameter(name, value)`. No index in the public interface (Node, C ABI, or Python). RT-safe dispatch for sample-accurate automation is an Engine/EventQueue concern (pre-resolved tokens), not a Node concern. Subclasses store parameters however they choose internally.
+- **Parameters:** String-based API on `Node` — `getParameter(name)`, `setParameter(name, value)`. No index in the public interface (Node, C ABI, or Python). RT-safe dispatch for sample-accurate automation is an Engine/EventScheduler concern (pre-resolved tokens), not a Node concern. Subclasses store parameters however they choose internally.
 - **No over-engineering:** No features beyond the spec. No premature abstractions. Three similar lines > one premature helper.
 
 ### Logging Standards

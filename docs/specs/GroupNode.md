@@ -207,8 +207,8 @@ In practice, the Engine enforces this: every structural mutation triggers a snap
 ## Does NOT Handle
 
 - Transport (uses parent Engine's transport)
-- Scheduler / command queuing (parent Engine handles atomicity)
-- EventQueue / sample-accurate automation (parent Engine handles sub-block splitting)
+- CommandQueue / command queuing (parent Engine handles atomicity)
+- EventScheduler / sample-accurate automation (parent Engine handles sub-block splitting)
 - Deferred deletion (parent Engine's snapshot swap handles this)
 - Audio device management
 - controlMutex_ (shares parent Engine's lock)
