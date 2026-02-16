@@ -69,3 +69,68 @@ class Squeeze:
         """Engine version string."""
         raw = lib.sq_version(self._handle)
         return raw.decode()
+
+    # --- Node management ---
+
+    def add_gain(self) -> int:
+        """Add a GainNode. Returns node id."""
+        return lib.sq_add_gain(self._handle)
+
+    def remove_node(self, node_id: int) -> bool:
+        """Remove a node by id. Returns False if not found."""
+        return lib.sq_remove_node(self._handle, node_id)
+
+    def node_name(self, node_id: int) -> str:
+        """Return the node's type name, or empty string if invalid."""
+        raw = lib.sq_node_name(self._handle, node_id)
+        if raw is None:
+            return ""
+        return raw.decode()
+
+    def get_ports(self, node_id: int) -> list:
+        """Return list of port dicts for a node."""
+        port_list = lib.sq_get_ports(self._handle, node_id)
+        result = []
+        for i in range(port_list.count):
+            p = port_list.ports[i]
+            result.append({
+                "name": p.name.decode(),
+                "direction": "input" if p.direction == 0 else "output",
+                "signal_type": "audio" if p.signal_type == 0 else "midi",
+                "channels": p.channels,
+            })
+        lib.sq_free_port_list(port_list)
+        return result
+
+    def param_descriptors(self, node_id: int) -> list:
+        """Return list of parameter descriptor dicts for a node."""
+        desc_list = lib.sq_param_descriptors(self._handle, node_id)
+        result = []
+        for i in range(desc_list.count):
+            d = desc_list.descriptors[i]
+            result.append({
+                "name": d.name.decode(),
+                "default_value": d.default_value,
+                "num_steps": d.num_steps,
+                "automatable": d.automatable,
+                "boolean": d.boolean_param,
+                "label": d.label.decode(),
+                "group": d.group.decode(),
+            })
+        lib.sq_free_param_descriptor_list(desc_list)
+        return result
+
+    def get_param(self, node_id: int, name: str) -> float:
+        """Get a parameter value by name."""
+        return lib.sq_get_param(self._handle, node_id, name.encode())
+
+    def set_param(self, node_id: int, name: str, value: float) -> bool:
+        """Set a parameter value by name."""
+        return lib.sq_set_param(self._handle, node_id, name.encode(), value)
+
+    def param_text(self, node_id: int, name: str) -> str:
+        """Get parameter display text."""
+        raw = lib.sq_param_text(self._handle, node_id, name.encode())
+        if raw is None:
+            return ""
+        return raw.decode()

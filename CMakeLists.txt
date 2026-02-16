@@ -27,6 +27,7 @@ target_include_directories(squeeze_core PUBLIC src)
 target_link_libraries(squeeze_core PUBLIC
     juce::juce_core
     juce::juce_events
+    juce::juce_audio_basics
 )
 
 target_compile_definitions(squeeze_core PUBLIC
@@ -59,6 +60,7 @@ FetchContent_MakeAvailable(Catch2)
 add_executable(squeeze_unit_tests
     tests/core/LoggerTests.cpp
     tests/core/PortTests.cpp
+    tests/core/NodeTests.cpp
 )
 
 target_link_libraries(squeeze_unit_tests PRIVATE
@@ -70,6 +72,7 @@ target_link_libraries(squeeze_unit_tests PRIVATE
 add_executable(squeeze_ffi_tests
     tests/ffi/LoggerFFITests.cpp
     tests/ffi/EngineFFITests.cpp
+    tests/ffi/NodeFFITests.cpp
 )
 
 target_link_libraries(squeeze_ffi_tests PRIVATE
