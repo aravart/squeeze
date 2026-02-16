@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "squeeze"
+version = "0.2.0"
+description = "Python client for the Squeeze audio engine"
+requires-python = ">=3.10"
+license = "GPL-3.0-only"
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+
+[tool.setuptools.packages.find]
+include = ["squeeze*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

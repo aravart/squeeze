@@ -1,13 +1,8 @@
-"""Pythonic wrapper around the Squeeze C ABI (squeeze_ffi)."""
+"""Low-level ctypes bindings to libsqueeze_ffi. Internal module."""
 
 import ctypes
 import os
 import platform
-
-
-class SqueezeError(Exception):
-    """Raised when a Squeeze FFI call fails."""
-    pass
 
 
 def _find_lib():
@@ -19,8 +14,8 @@ def _find_lib():
         "Windows": "squeeze_ffi.dll",
     }.get(platform.system(), "libsqueeze_ffi.so")
 
-    # Check common build locations
-    for subdir in ["../build", "../build/Release", "../build/Debug"]:
+    # Check common build locations (relative to python/squeeze/)
+    for subdir in ["../../build", "../../build/Release", "../../build/Debug"]:
         path = os.path.join(base, subdir, name)
         if os.path.exists(path):
             return path
@@ -53,44 +48,14 @@ def _load_lib():
     return lib
 
 
-_lib = _load_lib()
+lib = _load_lib()
 
 
-def _check_error(error_ptr):
+def check_error(error_ptr):
     """Raise SqueezeError if the error pointer was set."""
+    from squeeze import SqueezeError
+
     if error_ptr.value is not None:
         msg = error_ptr.value.decode()
-        _lib.sq_free_string(error_ptr)
+        lib.sq_free_string(error_ptr)
         raise SqueezeError(msg)
-
-
-class Squeeze:
-    """Squeeze audio engine."""
-
-    def __init__(self):
-        error = ctypes.c_char_p(None)
-        self._handle = _lib.sq_engine_create(ctypes.byref(error))
-        if not self._handle:
-            _check_error(error)
-            raise SqueezeError("Failed to create engine")
-
-    def __del__(self):
-        self.close()
-
-    def close(self):
-        """Destroy the engine. Safe to call multiple times."""
-        if self._handle:
-            _lib.sq_engine_destroy(self._handle)
-            self._handle = None
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *args):
-        self.close()
-
-    @property
-    def version(self) -> str:
-        """Engine version string."""
-        raw = _lib.sq_version(self._handle)
-        return raw.decode()

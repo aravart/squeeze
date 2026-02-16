@@ -11,7 +11,7 @@ v2 is a ground-up rewrite. The v1 codebase lives in `./squeeze/` for reference (
 - **Language:** C++17
 - **Framework:** JUCE (plugin hosting, audio I/O, DSP, MIDI, GUI)
 - **Public API:** C ABI (`squeeze_ffi`) — opaque handles, plain C types, no C++ in the public header
-- **Python client:** `python/squeeze.py` — Pythonic wrapper around the C ABI via ctypes. Maintained alongside `squeeze_ffi.h`.
+- **Python package:** `python/` — proper Python package (`squeeze`) wrapping the C ABI via ctypes. Maintained alongside `squeeze_ffi.h`. Includes its own unit tests, buildable via `pyproject.toml`.
 - **Build:** CMake 3.24+
 - **Tests:** Catch2 v3
 - **Dependencies fetched via CMake FetchContent:** JUCE, signalsmith-stretch, Catch2
@@ -231,6 +231,53 @@ Audio thread publishes metering data via SeqLock (like PerfMonitor). Scope taps 
 - **Naming:** `camelCase` for methods/variables, `PascalCase` for types, `kConstantName` for enum values, `member_` suffix for private members
 - **Parameters:** Index-based virtual system on `Node`. `PluginNode` uses `std::unordered_map<std::string, int>` for O(1) name lookup. `SamplerNode` uses flat normalized `float[]` with per-parameter mapping functions.
 - **No over-engineering:** No features beyond the spec. No premature abstractions. Three similar lines > one premature helper.
+
+---
+
+## Python Package (`python/`)
+
+The `python/` directory is a proper Python package, buildable and eventually publishable.
+
+### Structure
+
+```
+python/
+├── pyproject.toml          # Package metadata, dependencies, build config
+├── squeeze/
+│   ├── __init__.py         # Public API re-exports
+│   ├── engine.py           # Engine wrapper class
+│   ├── ...                 # Other modules as the API surface grows
+│   └── _ffi.py             # ctypes bindings (internal)
+└── tests/
+    ├── conftest.py          # Shared fixtures (e.g. lib path, engine setup)
+    └── test_engine.py       # Tests mirroring the C FFI acceptance tests
+```
+
+### Conventions
+
+- **Test framework:** pytest
+- **Test location:** `python/tests/`
+- **Run tests:** `cd python && pytest`
+- **Every `sq_` function** exposed through the C ABI must have a corresponding Python method and a Python test
+- **Python tests mirror C FFI tests.** If a Catch2 FFI test exercises `sq_foo()`, there should be a pytest case exercising `squeeze.Engine.foo()` (or equivalent).
+- **No standalone scripts.** `squeeze.py` as a single-file module is replaced by the package layout above.
+
+### Build & Install
+
+```bash
+cd python
+pip install -e .          # Editable install for development
+pytest                    # Run Python tests
+```
+
+### Development Cycle Integration
+
+The existing rule — **every tier ships a working FFI and Python client** — extends to the Python test suite. When implementing a new component:
+
+1. Add the `sq_` C ABI functions
+2. Add the Python wrapper methods in `squeeze/`
+3. Add Python tests in `python/tests/`
+4. All three (C++ Catch2 tests, C FFI Catch2 tests, Python pytest tests) must pass before the tier is complete
 
 ---
 
