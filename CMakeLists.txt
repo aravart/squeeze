@@ -63,6 +63,7 @@ add_executable(squeeze_unit_tests
     tests/core/PortTests.cpp
     tests/core/NodeTests.cpp
     tests/core/GraphTests.cpp
+    tests/core/SPSCQueueTests.cpp
 )
 
 target_link_libraries(squeeze_unit_tests PRIVATE
