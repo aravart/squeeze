@@ -134,3 +134,38 @@ class Squeeze:
         if raw is None:
             return ""
         return raw.decode()
+
+    # --- Connection management ---
+
+    def connect(self, src_node: int, src_port: str,
+                dst_node: int, dst_port: str) -> int:
+        """Connect two ports. Returns connection id. Raises SqueezeError on failure."""
+        error = ctypes.c_char_p(None)
+        conn_id = lib.sq_connect(self._handle,
+                                 src_node, src_port.encode(),
+                                 dst_node, dst_port.encode(),
+                                 ctypes.byref(error))
+        if conn_id < 0:
+            check_error(error)
+            raise SqueezeError("Connection failed")
+        return conn_id
+
+    def disconnect(self, conn_id: int) -> bool:
+        """Disconnect by connection id. Returns False if not found."""
+        return lib.sq_disconnect(self._handle, conn_id)
+
+    def connections(self) -> list:
+        """Return list of connection dicts."""
+        conn_list = lib.sq_connections(self._handle)
+        result = []
+        for i in range(conn_list.count):
+            c = conn_list.connections[i]
+            result.append({
+                "id": c.id,
+                "src_node": c.src_node,
+                "src_port": c.src_port.decode(),
+                "dst_node": c.dst_node,
+                "dst_port": c.dst_port.decode(),
+            })
+        lib.sq_free_connection_list(conn_list)
+        return result

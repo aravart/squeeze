@@ -217,3 +217,58 @@ char* sq_param_text(SqEngine engine, int node_id, const char* name)
     if (text.empty()) return nullptr;
     return to_c_string(text);
 }
+
+// --- Connection management ---
+
+int sq_connect(SqEngine engine, int src_node, const char* src_port,
+               int dst_node, const char* dst_port, char** error)
+{
+    std::string err;
+    int result = eng(engine).connect(src_node, src_port, dst_node, dst_port, err);
+    if (result < 0)
+    {
+        set_error(error, err);
+    }
+    else
+    {
+        if (error) *error = nullptr;
+    }
+    return result;
+}
+
+bool sq_disconnect(SqEngine engine, int conn_id)
+{
+    return eng(engine).disconnect(conn_id);
+}
+
+SqConnectionList sq_connections(SqEngine engine)
+{
+    SqConnectionList result = {nullptr, 0};
+    auto conns = eng(engine).getConnections();
+    if (conns.empty()) return result;
+
+    result.count = static_cast<int>(conns.size());
+    result.connections = static_cast<SqConnection*>(
+        malloc(sizeof(SqConnection) * conns.size()));
+
+    for (int i = 0; i < result.count; i++)
+    {
+        result.connections[i].id = conns[static_cast<size_t>(i)].id;
+        result.connections[i].src_node = conns[static_cast<size_t>(i)].source.nodeId;
+        result.connections[i].src_port = strdup(conns[static_cast<size_t>(i)].source.portName.c_str());
+        result.connections[i].dst_node = conns[static_cast<size_t>(i)].dest.nodeId;
+        result.connections[i].dst_port = strdup(conns[static_cast<size_t>(i)].dest.portName.c_str());
+    }
+
+    return result;
+}
+
+void sq_free_connection_list(SqConnectionList list)
+{
+    for (int i = 0; i < list.count; i++)
+    {
+        free(list.connections[i].src_port);
+        free(list.connections[i].dst_port);
+    }
+    free(list.connections);
+}

@@ -18,6 +18,7 @@ FetchContent_MakeAvailable(juce)
 # --- Squeeze Core (static library) ---
 add_library(squeeze_core STATIC
     src/core/Engine.cpp
+    src/core/Graph.cpp
     src/core/Logger.cpp
     src/core/Port.cpp
 )
@@ -61,6 +62,7 @@ add_executable(squeeze_unit_tests
     tests/core/LoggerTests.cpp
     tests/core/PortTests.cpp
     tests/core/NodeTests.cpp
+    tests/core/GraphTests.cpp
 )
 
 target_link_libraries(squeeze_unit_tests PRIVATE
@@ -73,6 +75,7 @@ add_executable(squeeze_ffi_tests
     tests/ffi/LoggerFFITests.cpp
     tests/ffi/EngineFFITests.cpp
     tests/ffi/NodeFFITests.cpp
+    tests/ffi/GraphFFITests.cpp
 )
 
 target_link_libraries(squeeze_ffi_tests PRIVATE

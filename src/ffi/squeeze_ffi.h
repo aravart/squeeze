@@ -111,6 +111,37 @@ bool sq_set_param(SqEngine engine, int node_id, const char* name, float value);
 /// Returns NULL if node_id or name is invalid.
 char* sq_param_text(SqEngine engine, int node_id, const char* name);
 
+/* ── Connection C structs ─────────────────────────────────────────── */
+
+typedef struct {
+    int   id;
+    int   src_node;
+    char* src_port;
+    int   dst_node;
+    char* dst_port;
+} SqConnection;
+
+typedef struct {
+    SqConnection* connections;
+    int           count;
+} SqConnectionList;
+
+/* ── Connection management ────────────────────────────────────────── */
+
+/// Connect two ports. Returns connection id (>= 0) on success, -1 on failure.
+/// On failure, *error is set (caller must sq_free_string it). On success, *error is NULL.
+int sq_connect(SqEngine engine, int src_node, const char* src_port,
+               int dst_node, const char* dst_port, char** error);
+
+/// Disconnect by connection id. Returns false if not found.
+bool sq_disconnect(SqEngine engine, int conn_id);
+
+/// Get all connections. Free with sq_free_connection_list().
+SqConnectionList sq_connections(SqEngine engine);
+
+/// Free a connection list returned by sq_connections().
+void sq_free_connection_list(SqConnectionList list);
+
 #ifdef __cplusplus
 }
 #endif

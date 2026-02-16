@@ -58,6 +58,21 @@ class SqParamDescriptorList(ctypes.Structure):
         ("count", ctypes.c_int),
     ]
 
+class SqConnection(ctypes.Structure):
+    _fields_ = [
+        ("id", ctypes.c_int),
+        ("src_node", ctypes.c_int),
+        ("src_port", ctypes.c_char_p),
+        ("dst_node", ctypes.c_int),
+        ("dst_port", ctypes.c_char_p),
+    ]
+
+class SqConnectionList(ctypes.Structure):
+    _fields_ = [
+        ("connections", ctypes.POINTER(SqConnection)),
+        ("count", ctypes.c_int),
+    ]
+
 
 LogCallbackType = ctypes.CFUNCTYPE(None, ctypes.c_int, ctypes.c_char_p, ctypes.c_void_p)
 
@@ -131,6 +146,26 @@ def _load_lib():
     # sq_param_text
     lib.sq_param_text.restype = ctypes.c_char_p
     lib.sq_param_text.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_char_p]
+
+    # --- Connection management ---
+
+    # sq_connect
+    lib.sq_connect.restype = ctypes.c_int
+    lib.sq_connect.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_char_p,
+                               ctypes.c_int, ctypes.c_char_p,
+                               ctypes.POINTER(ctypes.c_char_p)]
+
+    # sq_disconnect
+    lib.sq_disconnect.restype = ctypes.c_bool
+    lib.sq_disconnect.argtypes = [ctypes.c_void_p, ctypes.c_int]
+
+    # sq_connections
+    lib.sq_connections.restype = SqConnectionList
+    lib.sq_connections.argtypes = [ctypes.c_void_p]
+
+    # sq_free_connection_list
+    lib.sq_free_connection_list.restype = None
+    lib.sq_free_connection_list.argtypes = [SqConnectionList]
 
     return lib
 
