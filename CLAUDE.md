@@ -11,6 +11,7 @@ v2 is a ground-up rewrite. The v1 codebase lives in `./squeeze/` for reference (
 - **Language:** C++17
 - **Framework:** JUCE (plugin hosting, audio I/O, DSP, MIDI, GUI)
 - **Public API:** C ABI (`squeeze_ffi`) — opaque handles, plain C types, no C++ in the public header
+- **Python client:** `python/squeeze.py` — Pythonic wrapper around the C ABI via ctypes. Maintained alongside `squeeze_ffi.h`.
 - **Build:** CMake 3.24+
 - **Tests:** Catch2 v3
 - **Dependencies fetched via CMake FetchContent:** JUCE, signalsmith-stretch, Catch2
@@ -76,7 +77,7 @@ Build bottom-up. A component may only depend on those above it:
 20. C ABI (squeeze_ffi)   (Engine, all node types)
 ```
 
-**Every tier ships a working FFI.** Each tier extends both the C++ engine and the C API surface together. Do not build internal components without their corresponding `sq_` functions.
+**Every tier ships a working FFI and Python client.** Each tier extends the C++ engine, the C API surface, and `python/squeeze.py` together. Do not build internal components without their corresponding `sq_` functions and Python methods.
 
 Do not skip ahead. Each component: spec → tests → implement → review.
 
@@ -141,12 +142,14 @@ Before any code, create a specification document in `docs/specs/{Component}.md`.
 
 ### Step 3: Implement to Pass Tests
 
+This includes the C++ component, its `sq_` functions in `squeeze_ffi.h`/`.cpp`, and the corresponding Python methods in `python/squeeze.py`.
+
 ### Step 4: Review
 
 **Review checklist for generated implementation:**
 
 - [ ] All tests pass
-- [ ] Public interface matches spec exactly
+- [ ] Public interface matches spec exactly (C++, C ABI, and Python)
 - [ ] No functionality beyond what's specified
 - [ ] Realtime safety (if applicable): no allocation, no blocking, no unbounded loops
 - [ ] Thread safety
