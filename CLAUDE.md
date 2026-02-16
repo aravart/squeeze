@@ -55,27 +55,34 @@ The host language (Python REPL, Rust CLI, etc.) provides the user-facing interfa
 Build bottom-up. A component may only depend on those above it:
 
 ```
+0.  Logger                (no dependencies — owns its internal lock-free ring buffer)
 1.  Port                  (no dependencies)
 2.  Node                  (Port)
 3.  Graph                 (Node, Port)
-4.  SPSCQueue             (no dependencies)
-5.  Scheduler             (SPSCQueue)
-6.  Transport             (no dependencies)
-7.  Buffer                (no dependencies)
-8.  PerfMonitor           (no dependencies)
-9.  Engine                (Graph, Scheduler, Transport, Buffer, PerfMonitor)
-10. PluginNode            (Node, JUCE plugin hosting)
-11. SamplerVoice          (Buffer)
-12. TimeStretchEngine     (signalsmith-stretch)
-13. VoiceAllocator        (SamplerVoice)
-14. SamplerNode           (Node, VoiceAllocator, TimeStretchEngine, Buffer)
-15. RecorderNode          (Node, Buffer)
-16. MidiRouter            (SPSCQueue)
-17. EventQueue            (SPSCQueue)
-18. GroupNode             (Node, Graph — composite subgraph node)
-19. ScopeTap / Metering   (SPSCQueue / SeqLock)
-20. C ABI (squeeze_ffi)   (Engine, all node types)
+4.  Engine                (Graph — node ownership, ID allocator, topology cascade handling)
+5.  GroupNode             (Node, Graph, Engine)
+6.  MidiSplitterNode      (Node — graph-level MIDI routing with note-range filtering)
+7.  SPSCQueue             (no dependencies)
+8.  Scheduler             (SPSCQueue)
+9.  Transport             (no dependencies)
+10. Buffer                (no dependencies)
+11. PerfMonitor           (no dependencies)
+12. PluginNode            (Node, JUCE plugin hosting)
+13. SamplerVoice          (Buffer)
+14. TimeStretchEngine     (signalsmith-stretch)
+15. VoiceAllocator        (SamplerVoice)
+16. SamplerNode           (Node, VoiceAllocator, TimeStretchEngine, Buffer)
+17. RecorderNode          (Node, Buffer)
+18. MidiRouter            (SPSCQueue)
+19. EventQueue            (SPSCQueue)
+20. ScopeTap / Metering   (SPSCQueue / SeqLock)
 ```
+
+Logger is tier 0 — it has no dependencies and every subsequent component uses it. It ships with `sq_set_log_level`, `sq_set_log_callback`, and corresponding Python functions.
+
+Engine grows incrementally across tiers. At tier 4 it provides node ownership, a global ID allocator, and topology cascade handling. Later tiers add Scheduler, Transport, Buffer, PerfMonitor, and audio device management.
+
+GroupNode is tier 5 — a core graph primitive that depends on Engine for ID allocation. Composite node types (mixers, channel strips, kits) are GroupNode configurations, not separate node classes.
 
 **Every tier ships a working FFI and Python client.** Each tier extends the C++ engine, the C API surface, and `python/squeeze.py` together. Do not build internal components without their corresponding `sq_` functions and Python methods.
 
@@ -204,13 +211,22 @@ When parameter changes arrive mid-block (from EventQueue), the engine splits pro
 Internal C++ functions return `bool`/`int` with `std::string& errorMessage` out-params. The C ABI returns error codes (`SqResult`) and provides `sq_error_message()` for the last error string.
 
 ### Connections as API
-Topology is derived from explicit `connect()` calls. Connections validate: matching signal types, no audio fan-in, no cycles (BFS detection). MIDI allows fan-in.
+Topology is derived from explicit `connect()` calls. Connections validate: matching signal types, no cycles (BFS detection). Both audio and MIDI allow fan-in — the Engine sums multiple audio sources into the input buffer before calling `process()`.
 
-### Audio leaf summing
-Nodes with audio outputs that nothing reads are "audio leaves." Their outputs are summed to the device output.
+### Explicit output routing
+No auto-summing anywhere. Audio goes where you connect it, nowhere else. Engine provides a built-in output node representing the audio device. All audio chains must explicitly connect to it:
+
+```python
+engine.connect(synth, "out", engine.output, "in")
+```
+
+Nodes with unconnected audio outputs are warned about at info level ("node 'Diva' output 'out' is unconnected") but produce no sound. This applies uniformly to Engine and GroupNode — all routing is explicit at every level.
 
 ### GroupNode (composite subgraph)
-A `GroupNode` owns an internal `Graph` and implements the `Node` interface. It exports selected internal ports as group-level ports. From the parent graph's perspective, it's just another node. Designed in from the start (v1 lacked this).
+A `GroupNode` owns an internal `Graph` and implements the `Node` interface. It exports selected internal ports as group-level ports via `exportPort()` / `unexportPort()`. From the parent graph's perspective, it's just another node. Designed in from the start as a core primitive (tier 4) — composite node types like mixers, channel strips, and kits are GroupNode configurations, not separate classes.
+
+### Dynamic ports
+Most nodes declare fixed ports at construction. GroupNode supports dynamic port export/unexport on the control thread — adding an input to a mixer bus or inserting an FX slot does not require tearing down and rebuilding the node. Port changes are graph mutations: modify ports, reconnect, rebuild snapshot, atomic swap. Removing a port auto-disconnects any connections referencing it.
 
 ### Scope / meter taps
 Audio thread publishes metering data via SeqLock (like PerfMonitor). Scope taps use SPSC ring buffers. FFI callers read the latest values — no IPC, no shared memory, just in-process lock-free reads.
@@ -229,8 +245,27 @@ Audio thread publishes metering data via SeqLock (like PerfMonitor). Scope taps 
 - **Namespace:** `squeeze`
 - **Headers:** `.h` with `#pragma once`
 - **Naming:** `camelCase` for methods/variables, `PascalCase` for types, `kConstantName` for enum values, `member_` suffix for private members
-- **Parameters:** Index-based virtual system on `Node`. `PluginNode` uses `std::unordered_map<std::string, int>` for O(1) name lookup. `SamplerNode` uses flat normalized `float[]` with per-parameter mapping functions.
+- **Parameters:** String-based API on `Node` — `getParameter(name)`, `setParameter(name, value)`. No index in the public interface (Node, C ABI, or Python). RT-safe dispatch for sample-accurate automation is an Engine/EventQueue concern (pre-resolved tokens), not a Node concern. Subclasses store parameters however they choose internally.
 - **No over-engineering:** No features beyond the spec. No premature abstractions. Three similar lines > one premature helper.
+
+### Logging Standards
+
+Every component must include comprehensive logging using the `SQ_*` macros. Logging is not optional — it is part of the implementation, not an afterthought.
+
+**Level guidelines:**
+
+| Level | When to use | Examples |
+|-------|-------------|---------|
+| `SQ_WARN` / `SQ_WARN_RT` | Something went wrong or was dropped | Xruns, queue overflows, failed operations, dropped events |
+| `SQ_INFO` / `SQ_INFO_RT` | High-level operational milestones | Engine start/stop, device open/close, plugin loaded, graph rebuilt |
+| `SQ_DEBUG` / `SQ_DEBUG_RT` | Every public API call and state transition | connect/disconnect, node add/remove, buffer load, snapshot swap |
+| `SQ_TRACE` / `SQ_TRACE_RT` | Per-message/per-event granularity | Individual MIDI messages, per-event scheduling, per-block details |
+
+**Rules:**
+- Use `SQ_*_RT` variants on the audio thread, plain `SQ_*` on the control thread. Never `fprintf`/`std::cout` directly.
+- Log all public method entry points at `debug` or `info` level with key parameters.
+- Log all error paths at `warn` level with enough context to diagnose the problem.
+- Format: include relevant IDs, names, and numeric values — `SQ_DEBUG("connect: %d:%s -> %d:%s", srcId, srcPort, dstId, dstPort)`, not `SQ_DEBUG("connected")`.
 
 ---
 

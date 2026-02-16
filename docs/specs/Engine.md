@@ -1,12 +1,23 @@
-# Engine Specification (Tier 0 — Empty Shell)
+# Engine Specification
 
-This is the initial Engine spec covering only lifecycle and version. It will grow as components are added.
+Engine grows incrementally across tiers. This spec documents both the current shell and the design commitments for future tiers.
 
 ## Responsibilities
 
+### Tier 0 (current — shell)
 - Provide the top-level object that FFI callers create and destroy
 - Report the engine version string
 - Manage JUCE initialization (lazy, process-wide, never torn down)
+
+### Tier 4 (graph management)
+- Own all nodes (`std::unique_ptr<Node>`) and provide a global ID allocator
+- Own the top-level `Graph` (topology, connections, cycle detection)
+- Provide a built-in **output node** representing the audio device
+- Detect and handle cascading topology changes from GroupNode port mutations
+- Warn at info level when a node's audio output has no consumers
+
+### Later tiers
+- Scheduler, Transport, Buffer, PerfMonitor, audio device management, sub-block parameter splitting
 
 ## Interface
 
@@ -59,10 +70,24 @@ struct EngineHandle {
 - `sq_engine_create`: allocation failure or JUCE init failure → returns NULL, sets `*error`
 - `sq_engine_create`: NULL `error` pointer is safe — error message is discarded
 
-## Does NOT Handle
+## Built-in Output Node (Tier 4)
+
+Engine creates a built-in output node at construction. This node represents the audio device and is the only path to audible output. All routing is explicit — there is no auto-summing of unconnected nodes.
+
+- The output node has a well-known ID (e.g., `SQ_OUTPUT` / `engine.output`) accessible via the C ABI and Python
+- It has a stereo audio input port `"in"` (channel count may be configurable later)
+- It cannot be removed
+- Audio chains must explicitly connect to it: `sq_connect(engine, synth, "out", SQ_OUTPUT, "in", &error)`
+- Nodes with unconnected audio outputs are warned about at info level during snapshot rebuild
+
+```python
+synth = engine.add_plugin("Diva")
+engine.connect(synth, "out", engine.output, "in")  # explicit — no sound without this
+```
+
+## Does NOT Handle (current tier)
 
 - Audio device management (future tier)
-- Graph, nodes, connections (future tier)
 - Transport, MIDI, scheduling (future tier)
 - Plugin hosting (future tier)
 
