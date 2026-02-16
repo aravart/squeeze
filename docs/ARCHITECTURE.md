@@ -103,43 +103,76 @@ Wraps `MidiRouter`. Handles MIDI device open/close and routing rules. Uses its o
 
 ## Component Dependency Order
 
-Build bottom-up. A component may only depend on those above it:
+Build bottom-up, organized into phases. A component may only depend on those above it. The order is optimized for an early proof-of-concept: **load a plugin, open a MIDI keyboard, route, and play.**
+
+### Phase 1: Foundations (tiers 0–6)
 
 ```
 0.  Logger                (no dependencies — owns its internal lock-free ring buffer)
 1.  Port                  (no dependencies)
 2.  Node                  (Port)
 3.  Graph                 (Node, Port)
-4.  Engine                (Graph — node ownership, ID allocator, topology cascade handling)
-5.  GroupNode             (Node, Graph, Engine)
-6.  MidiSplitterNode      (Node — graph-level MIDI routing with note-range filtering)
-7.  SPSCQueue             (no dependencies)
-8.  CommandQueue           (SPSCQueue)
-9.  Transport             (no dependencies)
-10. Buffer                (no dependencies)
-11. PerfMonitor           (no dependencies)
-12. PluginNode            (Node, JUCE plugin hosting)
-13. SamplerVoice          (Buffer)
-14. TimeStretchEngine     (signalsmith-stretch)
-15. VoiceAllocator        (SamplerVoice)
-16. SamplerNode           (Node, VoiceAllocator, TimeStretchEngine, Buffer)
-17. RecorderNode          (Node, Buffer)
-18. MidiRouter            (SPSCQueue)
-19. EventScheduler        (SPSCQueue)
-20. ScopeTap / Metering   (SPSCQueue / SeqLock)
-21. AudioDevice           (Engine, JUCE AudioDeviceManager)
-22. PluginManager          (Node, JUCE AudioPluginFormatManager)
-23. BufferLibrary          (Buffer, JUCE AudioFormatManager)
-24. MidiDeviceManager      (MidiRouter, SPSCQueue)
+4.  SPSCQueue             (no dependencies)
+5.  CommandQueue           (SPSCQueue)
+6.  MidiRouter            (SPSCQueue)
 ```
+
+### Phase 2: Engine + Plugin Playback (tiers 7–11) — POC milestone
+
+```
+7.  Engine                (Graph, CommandQueue, MidiRouter)
+8.  PluginNode            (Node, JUCE plugin hosting)
+9.  PluginManager          (PluginNode, JUCE AudioPluginFormatManager)
+10. AudioDevice           (Engine, JUCE AudioDeviceManager)
+11. MidiDeviceManager      (MidiRouter)
+```
+
+**★ After tier 11:** load a VST plugin from cache, open a MIDI keyboard, route MIDI to the plugin, hear audio output. The first working end-to-end demo.
+
+### Phase 3: Composite Nodes (tier 12)
+
+```
+12. GroupNode             (Node, Graph, Engine)
+```
+
+GroupNode is a core graph primitive — composite node types (mixers, channel strips, kits) are GroupNode configurations, not separate node classes. Built early to ensure the subgraph model is solid before adding more features on top.
+
+### Phase 4: Transport & Scheduling (tiers 13–15)
+
+```
+13. Transport             (no dependencies)
+14. EventScheduler        (SPSCQueue)
+15. PerfMonitor           (no dependencies)
+```
+
+After phase 4, Engine's processBlock gains transport advance, beat-timed event resolution, loop boundary splitting, and audio thread instrumentation.
+
+### Phase 5: Sample Playback (tiers 16–21)
+
+```
+16. Buffer                (no dependencies)
+17. SamplerVoice          (Buffer)
+18. TimeStretchEngine     (signalsmith-stretch)
+19. VoiceAllocator        (SamplerVoice)
+20. SamplerNode           (Node, VoiceAllocator, TimeStretchEngine, Buffer)
+21. BufferLibrary          (Buffer, JUCE AudioFormatManager)
+```
+
+### Phase 6: Advanced (tiers 22–25)
+
+```
+22. RecorderNode          (Node, Buffer)
+23. MidiSplitterNode      (Node — graph-level MIDI routing with note-range filtering)
+24. ScopeTap / Metering   (SPSCQueue / SeqLock)
+```
+
+### Notes
 
 Logger is tier 0 — it has no dependencies and every subsequent component uses it.
 
-Engine grows incrementally across tiers. At tier 4 it provides node ownership, a global ID allocator, and topology cascade handling. Later tiers add CommandQueue, Transport, EventScheduler, PerfMonitor, and processBlock logic.
+Engine is built at tier 7 with a simplified processBlock: drain commands, dispatch MIDI, process nodes. Transport advance (step 5), event resolution (in processSubBlock), and perf monitoring (steps 1/8) are added when those components land in phase 4.
 
-GroupNode is tier 5 — a core graph primitive that depends on Engine for ID allocation. Composite node types (mixers, channel strips, kits) are GroupNode configurations, not separate node classes.
-
-Peripheral components (AudioDevice, PluginManager, BufferLibrary, MidiDeviceManager) are built after Engine's core is complete. They extend the system without bloating the Engine class.
+Peripheral components (AudioDevice, PluginManager, BufferLibrary, MidiDeviceManager) are separate from Engine. They extend the system without bloating the Engine class. The FFI layer orchestrates across them via EngineHandle.
 
 ---
 
@@ -318,5 +351,6 @@ Audio thread publishes metering data via SeqLock (like PerfMonitor). Scope taps 
 | 2026-02-16 | AudioDevice depends on Engine, not vice versa | Engine doesn't know about JUCE audio devices. AudioDevice wraps DeviceManager and calls processBlock(). Enables headless testing via prepareForTesting(). |
 | 2026-02-16 | PluginManager: cache + instantiation in one class | Replaces v1's separate PluginCache. Owns AudioPluginFormatManager, loads XML cache, creates PluginNode instances. No Engine dependency — returns nodes. |
 | 2026-02-16 | BufferLibrary: separate component with ID registry | Owns AudioFormatManager and buffer ID map. Monotonic IDs (never reused). removeBuffer() returns unique_ptr for deferred deletion. No Engine dependency. |
-| 2026-02-16 | MidiDeviceManager / MidiRouter two-class split | MidiRouter (tier 18) handles routing table + audio-thread dispatch. MidiDeviceManager (tier 24) adds JUCE device open/close. Router works standalone (programmatic MIDI via EventScheduler). |
+| 2026-02-16 | MidiDeviceManager / MidiRouter two-class split | MidiRouter (tier 6) handles routing table + audio-thread dispatch. MidiDeviceManager (tier 11) adds JUCE device open/close. Router works standalone (programmatic MIDI via EventScheduler). |
 | 2026-02-16 | EngineHandle holds all top-level components | FFI layer orchestrates across Engine, AudioDevice, PluginManager, BufferLibrary, MidiDeviceManager. Engine never knows about peripheral components. |
+| 2026-02-16 | Reorder tiers for plugin+MIDI POC | First milestone is "load plugin, open MIDI keyboard, play." Moved SPSCQueue/CommandQueue/MidiRouter to phase 1, PluginNode/PluginManager/AudioDevice/MidiDeviceManager to phase 2. Transport/EventScheduler/PerfMonitor deferred to phase 3. GroupNode deferred to phase 5. |
