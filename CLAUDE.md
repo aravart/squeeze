@@ -92,9 +92,13 @@ Do not skip ahead. Each component: spec → tests → implement → review.
 
 ## Development Cycle
 
-### Step 1: Write the Specification
+### Step 1: Write or Update the Specification
 
-Before any code, create a specification document in `docs/specs/{Component}.md`.
+Before any code, create or update a specification document in `docs/specs/{Component}.md`.
+
+- **New component:** Write the spec from scratch before any implementation.
+- **Existing component:** If the implementation will change the interface, add new behavior, or expand responsibilities, **update the spec first**. The spec is the source of truth — implementation must not diverge from it. If you discover during implementation that the spec needs to change, stop and update the spec before continuing.
+- **Spec drift is a bug.** Every public-facing change (new method, new command type, new parameter, changed behavior) must be reflected in the spec.
 
 **Specification template:**
 
