@@ -29,62 +29,11 @@ cd build && ctest --output-on-failure
 
 ---
 
-## Architecture Overview
+## Architecture
 
-Two concentric concerns:
+See `docs/ARCHITECTURE.md` for system design, component architecture, thread model, dependency order, data flow examples, realtime safety rules, and design patterns.
 
-1. **Audio thread** — owns the audio callback, strictly lock-free
-2. **Control thread(s)** — FFI callers (Python, Rust, Node.js, etc.); serialized by `Engine::controlMutex_`
-3. **Communication** — lock-free SPSC queues bridging control → audio (CommandQueue for infrastructure commands, EventScheduler for beat-timed musical events)
-
-The host language (Python REPL, Rust CLI, etc.) provides the user-facing interface. Squeeze exposes only the C ABI — no scripting runtime, no network servers.
-
-### Thread Model
-
-| Thread | Locks controlMutex? | May block? |
-|--------|---------------------|------------|
-| Audio (processBlock) | Never | Never |
-| FFI caller (host language) | Yes | Yes |
-| MIDI callback | Never | No |
-| GUI / message thread | Never | Yes |
-
-**Lock ordering:** `controlMutex_` must never be held when acquiring `MessageManagerLock`.
-
-### Component Dependency Order
-
-Build bottom-up. A component may only depend on those above it:
-
-```
-0.  Logger                (no dependencies — owns its internal lock-free ring buffer)
-1.  Port                  (no dependencies)
-2.  Node                  (Port)
-3.  Graph                 (Node, Port)
-4.  Engine                (Graph — node ownership, ID allocator, topology cascade handling)
-5.  GroupNode             (Node, Graph, Engine)
-6.  MidiSplitterNode      (Node — graph-level MIDI routing with note-range filtering)
-7.  SPSCQueue             (no dependencies)
-8.  CommandQueue           (SPSCQueue)
-9.  Transport             (no dependencies)
-10. Buffer                (no dependencies)
-11. PerfMonitor           (no dependencies)
-12. PluginNode            (Node, JUCE plugin hosting)
-13. SamplerVoice          (Buffer)
-14. TimeStretchEngine     (signalsmith-stretch)
-15. VoiceAllocator        (SamplerVoice)
-16. SamplerNode           (Node, VoiceAllocator, TimeStretchEngine, Buffer)
-17. RecorderNode          (Node, Buffer)
-18. MidiRouter            (SPSCQueue)
-19. EventScheduler        (SPSCQueue)
-20. ScopeTap / Metering   (SPSCQueue / SeqLock)
-```
-
-Logger is tier 0 — it has no dependencies and every subsequent component uses it. It ships with `sq_set_log_level`, `sq_set_log_callback`, and corresponding Python functions.
-
-Engine grows incrementally across tiers. At tier 4 it provides node ownership, a global ID allocator, and topology cascade handling. Later tiers add CommandQueue, Transport, Buffer, PerfMonitor, and audio device management.
-
-GroupNode is tier 5 — a core graph primitive that depends on Engine for ID allocation. Composite node types (mixers, channel strips, kits) are GroupNode configurations, not separate node classes.
-
-**Every tier ships a working FFI and Python client.** Each tier extends the C++ engine, the C API surface, and `python/squeeze.py` together. Do not build internal components without their corresponding `sq_` functions and Python methods.
+**Every tier ships a working FFI and Python client.** Each tier extends the C++ engine, the C API surface, and the Python package together. Do not build internal components without their corresponding `sq_` functions and Python methods.
 
 Do not skip ahead. Each component: spec → tests → implement → review.
 
@@ -174,73 +123,6 @@ After implementation, verify the component works with its dependencies:
 - If dependencies were mocked, write integration tests with real components
 - Run the full test suite to catch regressions
 - Update the architecture document if any decisions were made
-
----
-
-## Realtime Safety Rules
-
-All code on the audio thread must be RT-safe.
-
-### Forbidden on audio thread
-- `new` / `delete` / `malloc` / `free`
-- `std::vector::push_back`, `std::map` insert, any allocating container op
-- `std::mutex`, `std::condition_variable`, any blocking primitive
-- File I/O, network I/O, `std::cout`
-- `std::string` construction (allocates)
-
-### Allowed on audio thread
-- Lock-free SPSC queues
-- Atomic operations
-- `std::array`, pre-allocated buffers
-- Arithmetic, DSP, SIMD
-- Calling `Node::process()` (nodes must also be RT-safe)
-
-### Deferred deletion pattern
-Old graph snapshots and buffers are pushed to a garbage queue by the audio thread and freed later by the control thread.
-
----
-
-## Key Design Patterns
-
-### Graph snapshot swap
-The control thread builds a `GraphSnapshot` (execution order, pre-allocated buffers per node), then atomically swaps it in via the CommandQueue. The audio thread never modifies the graph.
-
-### Topology is derived
-Users declare data flow between nodes; the engine computes execution order automatically.
-
-### Sub-block parameter splitting
-When parameter changes arrive mid-block (from EventScheduler), the engine splits processing into sub-blocks at each change point. Nodes are unaware — they just see shorter `numSamples`.
-
-### Error reporting
-Internal C++ functions return `bool`/`int` with `std::string& errorMessage` out-params. The C ABI returns error codes (`SqResult`) and provides `sq_error_message()` for the last error string.
-
-### Connections as API
-Topology is derived from explicit `connect()` calls. Connections validate: matching signal types, no cycles (BFS detection). Both audio and MIDI allow fan-in — the Engine sums multiple audio sources into the input buffer before calling `process()`.
-
-### Explicit output routing
-No auto-summing anywhere. Audio goes where you connect it, nowhere else. Engine provides a built-in output node representing the audio device. All audio chains must explicitly connect to it:
-
-```python
-engine.connect(synth, "out", engine.output, "in")
-```
-
-Nodes with unconnected audio outputs are warned about at info level ("node 'Diva' output 'out' is unconnected") but produce no sound. This applies uniformly to Engine and GroupNode — all routing is explicit at every level.
-
-### GroupNode (composite subgraph)
-A `GroupNode` owns an internal `Graph` and implements the `Node` interface. It exports selected internal ports as group-level ports via `exportPort()` / `unexportPort()`. From the parent graph's perspective, it's just another node. Designed in from the start as a core primitive (tier 4) — composite node types like mixers, channel strips, and kits are GroupNode configurations, not separate classes.
-
-### Dynamic ports
-Most nodes declare fixed ports at construction. GroupNode supports dynamic port export/unexport on the control thread — adding an input to a mixer bus or inserting an FX slot does not require tearing down and rebuilding the node. Port changes are graph mutations: modify ports, reconnect, rebuild snapshot, atomic swap. Removing a port auto-disconnects any connections referencing it.
-
-### Scope / meter taps
-Audio thread publishes metering data via SeqLock (like PerfMonitor). Scope taps use SPSC ring buffers. FFI callers read the latest values — no IPC, no shared memory, just in-process lock-free reads.
-
-### C ABI conventions
-- Opaque handles: `SqEngine`, `SqNode`, `SqScope`, etc. (pointers to internal C++ objects)
-- All functions prefixed `sq_`
-- Error returns via `SqResult` enum
-- No C++ types in the public header — plain C, `extern "C"`
-- Caller manages handle lifetime via `sq_*_create` / `sq_*_destroy` pairs
 
 ---
 
