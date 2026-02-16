@@ -8,6 +8,7 @@
 - Own `Transport` (tempo, position, loop state)
 - Own `EventScheduler` (beat-timed event resolution)
 - Own `PerfMonitor` (audio thread instrumentation)
+- Own `MidiRouter` (MIDI device queue dispatch in processBlock)
 - Provide a built-in **output node** representing the audio device
 - Build and swap `GraphSnapshot` (execution order + pre-allocated buffers)
 - Execute `processBlock()`: drain commands, advance transport, resolve events, route buffers, process nodes
@@ -84,6 +85,7 @@ public:
 
     // --- Testing ---
     void prepareForTesting(double sampleRate, int blockSize);
+    void render(int numSamples);  // process one block in test mode (allocates output buffer internally)
 
     // --- Query ---
     std::vector<std::pair<int, std::string>> getNodes() const;
@@ -111,6 +113,7 @@ private:
     Transport transport_;
     EventScheduler eventScheduler_;
     PerfMonitor perfMonitor_;
+    MidiRouter midiRouter_;
 
     // Internal
     void buildAndSwapSnapshot();
@@ -133,10 +136,14 @@ char*    sq_version(SqEngine engine);
 void     sq_free_string(char* s);
 
 // Node management
-int  sq_add_node(SqEngine engine, /* type-specific params */, char** error);
+// No generic sq_add_node — node creation is type-specific at the FFI level:
+//   sq_add_plugin(engine, name, &error)  → PluginManager creates, Engine owns
+//   sq_add_gain(engine, &error)          → built-in test/utility nodes
+// Each creator returns a node ID (or -1 on failure).
 bool sq_remove_node(SqEngine engine, int node_id);
 int  sq_output_node(SqEngine engine);
 char* sq_node_name(SqEngine engine, int node_id);
+int  sq_node_count(SqEngine engine);
 SqIdNameList sq_nodes(SqEngine engine);
 
 // Connections
@@ -177,9 +184,49 @@ bool sq_schedule_param_change(SqEngine engine, int node_id, double beat_time,
 
 // Testing
 void sq_prepare_for_testing(SqEngine engine, double sample_rate, int block_size);
+void sq_render(SqEngine engine, int num_samples);
 
 // Message pump (process-global, not Engine-specific)
 void sq_pump(void);
+```
+
+### FFI List Types
+
+Shared return types for functions that return variable-length lists. The caller frees each with its corresponding `sq_free_*` function.
+
+```c
+typedef struct {
+    int* ids;
+    char** names;
+    int count;
+} SqIdNameList;
+
+typedef struct {
+    int* ids;
+    int* src_nodes;
+    char** src_ports;
+    int* dst_nodes;
+    char** dst_ports;
+    int count;
+} SqConnectionList;
+
+typedef struct {
+    char** names;
+    float* min_values;
+    float* max_values;
+    float* default_values;
+    int count;
+} SqParamDescriptorList;
+
+typedef struct {
+    char** items;
+    int count;
+} SqStringList;
+
+void sq_free_id_name_list(SqIdNameList list);
+void sq_free_connection_list(SqConnectionList list);
+void sq_free_param_descriptor_list(SqParamDescriptorList list);
+void sq_free_string_list(SqStringList list);
 ```
 
 ### EngineHandle (internal)
@@ -227,20 +274,24 @@ processBlock(outputChannels, numChannels, numSamples):
      — transport commands: forward to transport_
      — transport stop/seek: also clear eventScheduler_
 
-  3. if no active snapshot → write silence, return
+  3. midiRouter_.dispatch(snapshot nodeBuffers, numSamples)
+     — drain per-device SPSC queues
+     — route messages to destination node MidiBuffers per routing table
 
-  4. transport_.advance(numSamples)
+  4. if no active snapshot → write silence, return
+
+  5. transport_.advance(numSamples)
      — detect loop boundary → compute splitSample
 
-  5. if loop wraps mid-block:
+  6. if loop wraps mid-block:
        processSubBlock(0, splitSample, prewrapBeats)
        processSubBlock(splitSample, numSamples, postwrapBeats)
      else:
        processSubBlock(0, numSamples, blockBeats)
 
-  6. copy output node's buffer → outputChannels
+  7. copy output node's buffer → outputChannels
 
-  7. perfMonitor_.endBlock()
+  8. perfMonitor_.endBlock()
 ```
 
 ### processSubBlock
@@ -261,6 +312,37 @@ processSubBlock(startSample, endSample, beatRange):
          — node->process(context)
          — apply parameter changes at sub-block boundaries
 ```
+
+## GraphSnapshot (internal)
+
+`GraphSnapshot` is an immutable, pre-computed structure built by the control thread and swapped into the audio thread atomically via CommandQueue. The audio thread reads the active snapshot — it never modifies Graph directly.
+
+```cpp
+struct GraphSnapshot {
+    // Execution order (topologically sorted node IDs)
+    std::vector<int> executionOrder;
+
+    // Per-node pre-allocated buffers
+    struct NodeBuffers {
+        juce::AudioBuffer<float> audio;   // pre-sized to max channels × block size
+        juce::MidiBuffer midi;
+    };
+    std::unordered_map<int, NodeBuffers> nodeBuffers;
+
+    // Fan-in connection lists (which sources feed each node's input)
+    struct FanIn {
+        int sourceNodeId;
+        std::string sourcePort;
+        std::string destPort;
+    };
+    std::unordered_map<int, std::vector<FanIn>> audioFanIn;
+    std::unordered_map<int, std::vector<FanIn>> midiFanIn;
+};
+```
+
+**Lifecycle:** Built by `buildAndSwapSnapshot()` on the control thread → sent via CommandQueue → installed on the audio thread → old snapshot pushed to garbage queue → freed on control thread by `collectGarbage()`.
+
+**Key property:** All buffers are pre-allocated at snapshot build time. The audio thread never allocates — it writes into existing buffers.
 
 ## Garbage Collection
 
@@ -286,6 +368,8 @@ When a GroupNode's external ports change (via `unexportPort()` or removal of an 
 - Every structural mutation (add/remove node, connect/disconnect) triggers a snapshot rebuild
 - `controlMutex_` serializes all control-thread operations
 - Garbage is collected at the top of every control-thread operation
+- `render()` requires `prepareForTesting()` to have been called first
+- `render()` allocates the output buffer internally — it is a testing convenience, not RT-safe
 
 ## Error Conditions
 
@@ -320,6 +404,7 @@ When a GroupNode's external ports change (via `unexportPort()` or removal of an 
 - Transport (tempo, position, loop)
 - EventScheduler (beat-timed event resolution)
 - PerfMonitor (audio thread instrumentation)
+- MidiRouter (MIDI device queue dispatch in processBlock)
 - JUCE (`juce_core`, `juce_events` for MessageManager, `juce_audio_basics` for AudioBuffer/MidiBuffer)
 - C standard library (`malloc`, `free`, `strdup`)
 
@@ -336,6 +421,7 @@ When a GroupNode's external ports change (via `unexportPort()` or removal of an 
 | `processBlock()` | Audio | Never locks, reads snapshot, drains queues |
 | `getNode()` / `getNodes()` / queries | Control | Acquires `controlMutex_` |
 | `prepareForTesting()` | Control | Acquires `controlMutex_`, sets up test mode |
+| `render()` | Control | Acquires `controlMutex_`, calls processBlock internally |
 
 JUCE init is guarded by a static flag (single-threaded assumption for first create call).
 
@@ -361,6 +447,10 @@ engine.transport_play()
 
 # Event scheduling
 engine.schedule_note_on(synth, beat_time=1.0, channel=1, note=60, velocity=0.8)
+
+# Headless testing (no audio device)
+engine.prepare_for_testing(sample_rate=44100.0, block_size=512)
+engine.render(512)  # process one block
 
 # Cleanup
 engine.close()
@@ -399,7 +489,7 @@ int main() {
 }
 ```
 
-### Headless testing
+### Headless testing (C++)
 
 ```cpp
 Engine engine;
@@ -412,7 +502,22 @@ std::string error;
 int connId = engine.connect(gainId, "out", engine.getOutputNodeId(), "in", error);
 assert(connId >= 0);
 
-// Process a block directly (no audio device needed)
+// Option 1: render() convenience (allocates output buffer internally)
+engine.render(512);
+
+// Option 2: processBlock() with caller-supplied buffers
 float* outputs[2] = { leftBuf, rightBuf };
 engine.processBlock(outputs, 2, 512);
+```
+
+### Headless testing (C ABI)
+
+```c
+SqEngine engine = sq_engine_create(&error);
+sq_prepare_for_testing(engine, 44100.0, 512);
+
+// ... add nodes, connect ...
+
+sq_render(engine, 512);  // process one block
+sq_engine_destroy(engine);
 ```
