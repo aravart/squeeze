@@ -11,7 +11,7 @@
 
 MidiDeviceManager is the hardware MIDI layer. It wraps JUCE's MIDI input system, manages physical device connections, and feeds incoming messages into MidiRouter's per-device SPSC queues. MidiRouter handles routing, dispatch, and monitoring — MidiDeviceManager is strictly the device layer.
 
-This is a two-class split: MidiRouter (tier 18) handles the routing table and audio-thread dispatch. MidiDeviceManager (tier 24) adds JUCE device management on top. MidiRouter can function without MidiDeviceManager (e.g., with programmatic MIDI via EventScheduler), but MidiDeviceManager requires MidiRouter.
+This is a two-class split: MidiRouter (tier 6) handles the routing table and audio-thread dispatch. MidiDeviceManager (tier 11) adds JUCE device management on top. MidiRouter can function without MidiDeviceManager (e.g., with programmatic MIDI via EventScheduler), but MidiDeviceManager requires MidiRouter.
 
 ## Interface
 
