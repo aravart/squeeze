@@ -96,11 +96,13 @@ void AudioDevice::audioDeviceAboutToStart(juce::AudioIODevice* device)
 
     SQ_INFO("AudioDevice::audioDeviceAboutToStart: sr=%.0f bs=%d", sr, bs);
 
+    if (sr != engine_.getSampleRate())
+        SQ_WARN("AudioDevice: device SR %.0f differs from engine SR %.0f",
+                sr, engine_.getSampleRate());
+
     sampleRate_ = sr;
     blockSize_ = bs;
     running_.store(true);
-
-    engine_.prepareForTesting(sr, bs);
 }
 
 void AudioDevice::audioDeviceStopped()

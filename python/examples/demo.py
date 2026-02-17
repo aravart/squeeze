@@ -34,7 +34,7 @@ def main():
 
     set_log_level(args.log_level)
 
-    with Squeeze() as sq:
+    with Squeeze(44100.0, 512) as sq:
         print(f"Squeeze v{sq.version}")
         print()
 
@@ -61,7 +61,7 @@ def main():
         synth_name = None
 
         if args.plugin:
-            sq.prepare_for_testing(44100.0, 512)
+
             try:
                 synth_id = sq.add_plugin(args.plugin)
                 synth_name = args.plugin
@@ -131,7 +131,7 @@ def main():
         except SqueezeError:
             print("No audio device available — rendering offline instead.")
             print()
-            sq.prepare_for_testing(44100.0, 512)
+
 
             # Schedule a C major arpeggio
             sq.transport_set_tempo(120.0)

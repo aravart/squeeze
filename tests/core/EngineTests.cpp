@@ -14,7 +14,7 @@ using namespace squeeze;
 
 TEST_CASE("Engine creates output node at construction")
 {
-    Engine engine;
+    Engine engine(44100.0, 512);
     int outId = engine.getOutputNodeId();
     REQUIRE(outId > 0);
     REQUIRE(engine.getNode(outId) != nullptr);
@@ -22,7 +22,7 @@ TEST_CASE("Engine creates output node at construction")
 
 TEST_CASE("Output node has stereo audio input port 'in'")
 {
-    Engine engine;
+    Engine engine(44100.0, 512);
     Node* out = engine.getNode(engine.getOutputNodeId());
     REQUIRE(out != nullptr);
 
@@ -39,7 +39,7 @@ TEST_CASE("Output node has stereo audio input port 'in'")
 
 TEST_CASE("Output node cannot be removed")
 {
-    Engine engine;
+    Engine engine(44100.0, 512);
     int outId = engine.getOutputNodeId();
     REQUIRE_FALSE(engine.removeNode(outId));
     REQUIRE(engine.getNode(outId) != nullptr);
@@ -47,7 +47,7 @@ TEST_CASE("Output node cannot be removed")
 
 TEST_CASE("Output node name is 'output'")
 {
-    Engine engine;
+    Engine engine(44100.0, 512);
     CHECK(engine.getNodeName(engine.getOutputNodeId()) == "output");
 }
 
@@ -57,7 +57,7 @@ TEST_CASE("Output node name is 'output'")
 
 TEST_CASE("addNode assigns unique IDs")
 {
-    Engine engine;
+    Engine engine(44100.0, 512);
     int a = engine.addNode("gain1", std::make_unique<GainNode>());
     int b = engine.addNode("gain2", std::make_unique<GainNode>());
     REQUIRE(a > 0);
@@ -69,14 +69,14 @@ TEST_CASE("addNode assigns unique IDs")
 
 TEST_CASE("addNode with null returns -1")
 {
-    Engine engine;
+    Engine engine(44100.0, 512);
     int id = engine.addNode("bad", nullptr);
     REQUIRE(id == -1);
 }
 
 TEST_CASE("removeNode works for non-output nodes")
 {
-    Engine engine;
+    Engine engine(44100.0, 512);
     int id = engine.addNode("gain", std::make_unique<GainNode>());
     REQUIRE(engine.getNode(id) != nullptr);
     REQUIRE(engine.removeNode(id));
@@ -85,13 +85,13 @@ TEST_CASE("removeNode works for non-output nodes")
 
 TEST_CASE("removeNode returns false for unknown ID")
 {
-    Engine engine;
+    Engine engine(44100.0, 512);
     REQUIRE_FALSE(engine.removeNode(9999));
 }
 
 TEST_CASE("getNodeCount includes output node")
 {
-    Engine engine;
+    Engine engine(44100.0, 512);
     REQUIRE(engine.getNodeCount() == 1); // output only
     int id = engine.addNode("gain", std::make_unique<GainNode>());
     REQUIRE(engine.getNodeCount() == 2);
@@ -101,7 +101,7 @@ TEST_CASE("getNodeCount includes output node")
 
 TEST_CASE("getNodes returns all nodes including output")
 {
-    Engine engine;
+    Engine engine(44100.0, 512);
     engine.addNode("gain", std::make_unique<GainNode>());
     auto nodes = engine.getNodes();
     REQUIRE(nodes.size() == 2);
@@ -121,23 +121,16 @@ TEST_CASE("getNodes returns all nodes including output")
 // Snapshot and processBlock
 // ═══════════════════════════════════════════════════════════════════
 
-TEST_CASE("prepareForTesting does not crash")
-{
-    Engine engine;
-    engine.prepareForTesting(44100.0, 512);
-}
-
 TEST_CASE("render does not crash")
 {
-    Engine engine;
-    engine.prepareForTesting(44100.0, 512);
+    Engine engine(44100.0, 512);
     engine.render(512);
 }
 
 TEST_CASE("processBlock outputs silence with no connections")
 {
-    Engine engine;
-    engine.prepareForTesting(44100.0, 512);
+    Engine engine(44100.0, 512);
+
     engine.render(512); // drain snapshot command
 
     const int N = 512;
@@ -158,8 +151,8 @@ TEST_CASE("processBlock outputs silence with no connections")
 
 TEST_CASE("Gain node chain processes audio through to output")
 {
-    Engine engine;
-    engine.prepareForTesting(44100.0, 512);
+    Engine engine(44100.0, 512);
+
 
     int gainId = engine.addNode("gain", std::make_unique<GainNode>());
     engine.setParameter(gainId, "gain", 0.5f);
@@ -188,8 +181,8 @@ TEST_CASE("Gain node chain processes audio through to output")
 
 TEST_CASE("Fan-in sums audio from multiple sources")
 {
-    Engine engine;
-    engine.prepareForTesting(44100.0, 512);
+    Engine engine(44100.0, 512);
+
 
     int g1 = engine.addNode("gain1", std::make_unique<GainNode>());
     int g2 = engine.addNode("gain2", std::make_unique<GainNode>());
@@ -209,7 +202,7 @@ TEST_CASE("Fan-in sums audio from multiple sources")
 
 TEST_CASE("getParameter and setParameter route through engine")
 {
-    Engine engine;
+    Engine engine(44100.0, 512);
     int gainId = engine.addNode("gain", std::make_unique<GainNode>());
 
     CHECK(engine.getParameter(gainId, "gain") == 1.0f);
@@ -219,13 +212,13 @@ TEST_CASE("getParameter and setParameter route through engine")
 
 TEST_CASE("setParameter returns false for unknown node")
 {
-    Engine engine;
+    Engine engine(44100.0, 512);
     CHECK_FALSE(engine.setParameter(9999, "gain", 0.5f));
 }
 
 TEST_CASE("getParameterDescriptors routes through engine")
 {
-    Engine engine;
+    Engine engine(44100.0, 512);
     int gainId = engine.addNode("gain", std::make_unique<GainNode>());
     auto descs = engine.getParameterDescriptors(gainId);
     REQUIRE(descs.size() == 1);
@@ -234,7 +227,7 @@ TEST_CASE("getParameterDescriptors routes through engine")
 
 TEST_CASE("getParameterText routes through engine")
 {
-    Engine engine;
+    Engine engine(44100.0, 512);
     int gainId = engine.addNode("gain", std::make_unique<GainNode>());
     auto text = engine.getParameterText(gainId, "gain");
     CHECK_FALSE(text.empty());
@@ -246,7 +239,7 @@ TEST_CASE("getParameterText routes through engine")
 
 TEST_CASE("Transport query stubs return defaults")
 {
-    Engine engine;
+    Engine engine(44100.0, 512);
     CHECK(engine.getTransportPosition() == 0.0);
     CHECK(engine.getTransportTempo() == 120.0);
     CHECK_FALSE(engine.isTransportPlaying());
@@ -254,8 +247,8 @@ TEST_CASE("Transport query stubs return defaults")
 
 TEST_CASE("Transport commands do not crash")
 {
-    Engine engine;
-    engine.prepareForTesting(44100.0, 512);
+    Engine engine(44100.0, 512);
+
     engine.transportPlay();
     engine.transportStop();
     engine.transportPause();
@@ -274,7 +267,7 @@ TEST_CASE("Transport commands do not crash")
 
 TEST_CASE("Event scheduling stubs return false")
 {
-    Engine engine;
+    Engine engine(44100.0, 512);
     CHECK_FALSE(engine.scheduleNoteOn(1, 0.0, 1, 60, 0.8f));
     CHECK_FALSE(engine.scheduleNoteOff(1, 1.0, 1, 60));
     CHECK_FALSE(engine.scheduleCC(1, 0.0, 1, 1, 64));
@@ -287,7 +280,7 @@ TEST_CASE("Event scheduling stubs return false")
 
 TEST_CASE("getExecutionOrder includes all nodes")
 {
-    Engine engine;
+    Engine engine(44100.0, 512);
     engine.addNode("g1", std::make_unique<GainNode>());
     engine.addNode("g2", std::make_unique<GainNode>());
     auto order = engine.getExecutionOrder();

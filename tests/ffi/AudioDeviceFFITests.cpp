@@ -9,7 +9,7 @@
 
 TEST_CASE("sq_is_running returns false before sq_start")
 {
-    SqEngine engine = sq_engine_create(nullptr);
+    SqEngine engine = sq_engine_create(44100.0, 512, nullptr);
     REQUIRE(engine != nullptr);
 
     CHECK_FALSE(sq_is_running(engine));
@@ -19,7 +19,7 @@ TEST_CASE("sq_is_running returns false before sq_start")
 
 TEST_CASE("sq_sample_rate returns 0.0 when not running")
 {
-    SqEngine engine = sq_engine_create(nullptr);
+    SqEngine engine = sq_engine_create(44100.0, 512, nullptr);
     REQUIRE(engine != nullptr);
 
     CHECK(sq_sample_rate(engine) == 0.0);
@@ -29,7 +29,7 @@ TEST_CASE("sq_sample_rate returns 0.0 when not running")
 
 TEST_CASE("sq_block_size returns 0 when not running")
 {
-    SqEngine engine = sq_engine_create(nullptr);
+    SqEngine engine = sq_engine_create(44100.0, 512, nullptr);
     REQUIRE(engine != nullptr);
 
     CHECK(sq_block_size(engine) == 0);
@@ -43,7 +43,7 @@ TEST_CASE("sq_block_size returns 0 when not running")
 
 TEST_CASE("sq_stop when not running is a no-op")
 {
-    SqEngine engine = sq_engine_create(nullptr);
+    SqEngine engine = sq_engine_create(44100.0, 512, nullptr);
     REQUIRE(engine != nullptr);
 
     sq_stop(engine); // must not crash
@@ -58,7 +58,7 @@ TEST_CASE("sq_stop when not running is a no-op")
 
 TEST_CASE("sq_start attempts to open audio device")
 {
-    SqEngine engine = sq_engine_create(nullptr);
+    SqEngine engine = sq_engine_create(44100.0, 512, nullptr);
     REQUIRE(engine != nullptr);
 
     char* error = nullptr;
@@ -90,7 +90,7 @@ TEST_CASE("sq_start attempts to open audio device")
 
 TEST_CASE("sq_start with NULL error pointer does not crash on failure")
 {
-    SqEngine engine = sq_engine_create(nullptr);
+    SqEngine engine = sq_engine_create(44100.0, 512, nullptr);
     REQUIRE(engine != nullptr);
 
     // Even if it succeeds, passing nullptr for error should be safe
@@ -107,7 +107,7 @@ TEST_CASE("sq_start with NULL error pointer does not crash on failure")
 
 TEST_CASE("sq_stop resets sample_rate and block_size to 0")
 {
-    SqEngine engine = sq_engine_create(nullptr);
+    SqEngine engine = sq_engine_create(44100.0, 512, nullptr);
     REQUIRE(engine != nullptr);
 
     char* error = nullptr;
@@ -134,7 +134,7 @@ TEST_CASE("sq_stop resets sample_rate and block_size to 0")
 
 TEST_CASE("sq_stop called twice is safe")
 {
-    SqEngine engine = sq_engine_create(nullptr);
+    SqEngine engine = sq_engine_create(44100.0, 512, nullptr);
     REQUIRE(engine != nullptr);
 
     char* error = nullptr;

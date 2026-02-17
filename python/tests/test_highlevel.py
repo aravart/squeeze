@@ -12,7 +12,7 @@ from squeeze import (
 @pytest.fixture
 def eng():
     """Create a high-level Engine, destroy it after the test."""
-    e = Engine()
+    e = Engine(44100.0, 512)
     yield e
     e.close()
 
@@ -21,11 +21,11 @@ def eng():
 
 class TestEngineLifecycle:
     def test_create_and_close(self):
-        e = Engine()
+        e = Engine(44100.0, 512)
         e.close()
 
     def test_context_manager(self):
-        with Engine() as e:
+        with Engine(44100.0, 512) as e:
             assert e.version
 
     def test_version(self, eng):
@@ -320,12 +320,12 @@ class TestTransport:
         assert eng.transport is eng.transport
 
     def test_play_stop_do_not_crash(self, eng):
-        eng.prepare_for_testing()
+
         eng.transport.play()
         eng.transport.stop()
 
     def test_pause_does_not_crash(self, eng):
-        eng.prepare_for_testing()
+
         eng.transport.play()
         eng.transport.pause()
 
@@ -343,11 +343,11 @@ class TestTransport:
         assert eng.transport.playing is False
 
     def test_seek_beats(self, eng):
-        eng.prepare_for_testing()
+
         eng.transport.seek(beats=4.0)  # stub — may not change position
 
     def test_seek_samples(self, eng):
-        eng.prepare_for_testing()
+
         eng.transport.seek(samples=44100)  # stub
 
     def test_seek_neither_raises(self, eng):
@@ -442,7 +442,7 @@ class TestTestingMode:
     def test_prepare_and_render(self, eng):
         synth = eng.add_test_synth()
         synth >> eng.output
-        eng.prepare_for_testing(44100.0, 512)
+
         eng.render(512)
 
 

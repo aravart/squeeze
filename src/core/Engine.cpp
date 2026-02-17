@@ -11,13 +11,19 @@ namespace squeeze {
 // Construction / Destruction
 // ═══════════════════════════════════════════════════════════════════
 
-Engine::Engine()
+Engine::Engine(double sampleRate, int blockSize)
+    : sampleRate_(sampleRate), blockSize_(blockSize)
 {
     auto outputNode = std::make_unique<OutputNode>();
     outputNodeId_ = nextNodeId_++;
-    SQ_INFO("Engine: created output node id=%d", outputNodeId_);
+    SQ_INFO("Engine: created output node id=%d sr=%.0f bs=%d", outputNodeId_, sampleRate, blockSize);
+
+    Node* raw = outputNode.get();
     nodes_[outputNodeId_] = {"output", std::move(outputNode)};
-    graph_.addNode(outputNodeId_, nodes_[outputNodeId_].node.get());
+    graph_.addNode(outputNodeId_, raw);
+    raw->prepare(sampleRate_, blockSize_);
+
+    buildAndSwapSnapshot();
 }
 
 Engine::~Engine()
@@ -67,8 +73,7 @@ int Engine::addNode(const std::string& name, std::unique_ptr<Node> node)
     nodes_[id] = {name, std::move(node)};
     graph_.addNode(id, raw);
 
-    if (prepared_)
-        raw->prepare(sampleRate_, blockSize_);
+    raw->prepare(sampleRate_, blockSize_);
 
     buildAndSwapSnapshot();
     return id;
@@ -396,7 +401,7 @@ void Engine::buildAndSwapSnapshot()
     }
 
     // Allocate per-node buffers
-    int bs = blockSize_ > 0 ? blockSize_ : 512;
+    int bs = blockSize_;
     for (int nodeId : snapshot->executionOrder)
     {
         auto it = nodes_.find(nodeId);
@@ -592,23 +597,6 @@ MidiRouter& Engine::getMidiRouter()
 // ═══════════════════════════════════════════════════════════════════
 // Testing
 // ═══════════════════════════════════════════════════════════════════
-
-void Engine::prepareForTesting(double sampleRate, int blockSize)
-{
-    std::lock_guard<std::mutex> lock(controlMutex_);
-    collectGarbage();
-
-    sampleRate_ = sampleRate;
-    blockSize_ = blockSize;
-    prepared_ = true;
-
-    SQ_INFO("Engine::prepareForTesting: sr=%f bs=%d", sampleRate, blockSize);
-
-    for (auto& pair : nodes_)
-        pair.second.node->prepare(sampleRate, blockSize);
-
-    buildAndSwapSnapshot();
-}
 
 void Engine::render(int numSamples)
 {

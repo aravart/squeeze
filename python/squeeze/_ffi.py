@@ -108,7 +108,7 @@ def _load_lib():
 
     # sq_engine_create
     lib.sq_engine_create.restype = ctypes.c_void_p
-    lib.sq_engine_create.argtypes = [ctypes.POINTER(ctypes.c_char_p)]
+    lib.sq_engine_create.argtypes = [ctypes.c_double, ctypes.c_int, ctypes.POINTER(ctypes.c_char_p)]
 
     # sq_engine_destroy
     lib.sq_engine_destroy.restype = None
@@ -343,9 +343,6 @@ def _load_lib():
     lib.sq_process_events.argtypes = [ctypes.c_int]
 
     # --- Testing ---
-
-    lib.sq_prepare_for_testing.restype = None
-    lib.sq_prepare_for_testing.argtypes = [ctypes.c_void_p, ctypes.c_double, ctypes.c_int]
 
     lib.sq_render.restype = None
     lib.sq_render.argtypes = [ctypes.c_void_p, ctypes.c_int]

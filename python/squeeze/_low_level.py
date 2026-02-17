@@ -42,9 +42,9 @@ def set_log_callback(handler=None) -> None:
 class Squeeze:
     """Squeeze audio engine."""
 
-    def __init__(self):
+    def __init__(self, sample_rate: float, block_size: int):
         error = ctypes.c_char_p(None)
-        self._handle = lib.sq_engine_create(ctypes.byref(error))
+        self._handle = lib.sq_engine_create(sample_rate, block_size, ctypes.byref(error))
         if not self._handle:
             check_error(error)
             raise SqueezeError("Failed to create engine")
@@ -353,10 +353,6 @@ class Squeeze:
         lib.sq_process_events(timeout_ms)
 
     # --- Testing ---
-
-    def prepare_for_testing(self, sample_rate: float = 44100.0, block_size: int = 512):
-        """Prepare engine for headless testing."""
-        lib.sq_prepare_for_testing(self._handle, sample_rate, block_size)
 
     def render(self, num_samples: int = 512):
         """Render one block in test mode."""

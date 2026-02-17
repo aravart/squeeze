@@ -97,7 +97,7 @@ Before any code, create or update a specification document in `docs/specs/{Compo
 - **Naming:** Descriptive sentences — `"sq_connect rejects connections that would create cycles"`
 - **Independence:** Each test creates own fixtures, no shared mutable state
 - **Coverage:** All `sq_` functions exercised, all error codes returned, edge cases (0, 1, max, empty, boundary)
-- **Engine testing:** `Engine::prepareForTesting(sr, bs)` bypasses audio device for headless tests
+- **Engine testing:** `Engine(sr, bs)` is always prepared from construction — use `render()` for headless tests
 - **Mocks:** Implement real interfaces, record calls, return configurable values. Keep unit tests with mocks even after integration tests exist.
 
 ### Step 3: Implement to Pass Tests

@@ -15,7 +15,7 @@
 - Manage garbage collection (deferred deletion of old snapshots via `CommandQueue::collectGarbage()`)
 - Detect and handle cascading topology changes from GroupNode port mutations
 - Warn at info level when a node's audio output has no consumers
-- Provide `prepareForTesting(sr, bs)` for headless unit tests
+- Accept `sampleRate` and `blockSize` as constructor parameters (immutable for the engine's lifetime)
 - Report the engine version string
 
 ## Overview
@@ -33,7 +33,7 @@ namespace squeeze {
 
 class Engine {
 public:
-    Engine();
+    Engine(double sampleRate, int blockSize);
     ~Engine();
 
     std::string getVersion() const;  // Returns "0.2.0"
@@ -84,7 +84,6 @@ public:
     void processBlock(float** outputChannels, int numChannels, int numSamples);
 
     // --- Testing ---
-    void prepareForTesting(double sampleRate, int blockSize);
     void render(int numSamples);  // process one block in test mode (allocates output buffer internally)
 
     // --- Query ---
@@ -130,7 +129,7 @@ private:
 typedef void* SqEngine;
 
 // Lifecycle
-SqEngine sq_engine_create(char** error);
+SqEngine sq_engine_create(double sample_rate, int block_size, char** error);
 void     sq_engine_destroy(SqEngine engine);
 char*    sq_version(SqEngine engine);
 void     sq_free_string(char* s);
@@ -183,7 +182,6 @@ bool sq_schedule_param_change(SqEngine engine, int node_id, double beat_time,
                               const char* param_name, float value);
 
 // Testing
-void sq_prepare_for_testing(SqEngine engine, double sample_rate, int block_size);
 void sq_render(SqEngine engine, int num_samples);
 
 // Message pump (process-global, not Engine-specific)
@@ -241,7 +239,7 @@ struct EngineHandle {
 };
 ```
 
-`sq_engine_create()` allocates an `EngineHandle` on the heap. The returned opaque `SqEngine` pointer is the only handle the caller needs. Peripheral components (AudioDevice, PluginManager, BufferLibrary, MidiDeviceManager) are peers of Engine within the handle — Engine never knows about them.
+`sq_engine_create(sr, bs)` allocates an `EngineHandle` on the heap. The returned opaque `SqEngine` pointer is the only handle the caller needs. Peripheral components (AudioDevice, PluginManager, BufferLibrary, MidiDeviceManager) are peers of Engine within the handle — Engine never knows about them.
 
 **FFI orchestration:** Some `sq_*` functions span multiple components. For example, `sq_add_plugin(handle, "Diva", &err)` calls `handle->pluginManager.createNode("Diva", ...)` then `handle->engine.addNode(std::move(node), "Diva")`. Similarly, `sq_load_buffer` uses BufferLibrary, and buffer assignment to nodes is orchestrated through both BufferLibrary and Engine. These are FFI-layer concerns, not Engine methods.
 
@@ -368,7 +366,8 @@ When a GroupNode's external ports change (via `unexportPort()` or removal of an 
 - Every structural mutation (add/remove node, connect/disconnect) triggers a snapshot rebuild
 - `controlMutex_` serializes all control-thread operations
 - Garbage is collected at the top of every control-thread operation
-- `render()` requires `prepareForTesting()` to have been called first
+- Sample rate and block size are immutable — set at construction, never changed
+- The engine is always prepared from birth — no separate preparation step needed
 - `render()` allocates the output buffer internally — it is a testing convenience, not RT-safe
 
 ## Error Conditions
@@ -420,7 +419,6 @@ When a GroupNode's external ports change (via `unexportPort()` or removal of an 
 | `scheduleNoteOn()` / etc. | Control | Acquires `controlMutex_`, writes to EventScheduler |
 | `processBlock()` | Audio | Never locks, reads snapshot, drains queues |
 | `getNode()` / `getNodes()` / queries | Control | Acquires `controlMutex_` |
-| `prepareForTesting()` | Control | Acquires `controlMutex_`, sets up test mode |
 | `render()` | Control | Acquires `controlMutex_`, calls processBlock internally |
 
 JUCE init is guarded by a static flag (single-threaded assumption for first create call).
@@ -430,7 +428,7 @@ JUCE init is guarded by a static flag (single-threaded assumption for first crea
 ```python
 from squeeze import Engine
 
-engine = Engine()
+engine = Engine(44100.0, 512)
 print(engine.version)       # "0.2.0"
 
 # Node management
@@ -449,7 +447,6 @@ engine.transport_play()
 engine.schedule_note_on(synth, beat_time=1.0, channel=1, note=60, velocity=0.8)
 
 # Headless testing (no audio device)
-engine.prepare_for_testing(sample_rate=44100.0, block_size=512)
 engine.render(512)  # process one block
 
 # Cleanup
@@ -466,7 +463,7 @@ engine.close()
 
 int main() {
     char* error = NULL;
-    SqEngine engine = sq_engine_create(&error);
+    SqEngine engine = sq_engine_create(44100.0, 512, &error);
     if (!engine) {
         fprintf(stderr, "Failed: %s\n", error);
         sq_free_string(error);
@@ -492,8 +489,7 @@ int main() {
 ### Headless testing (C++)
 
 ```cpp
-Engine engine;
-engine.prepareForTesting(44100.0, 512);
+Engine engine(44100.0, 512);
 
 auto gain = std::make_unique<GainNode>();
 int gainId = engine.addNode(std::move(gain), "gain");
@@ -513,8 +509,7 @@ engine.processBlock(outputs, 2, 512);
 ### Headless testing (C ABI)
 
 ```c
-SqEngine engine = sq_engine_create(&error);
-sq_prepare_for_testing(engine, 44100.0, 512);
+SqEngine engine = sq_engine_create(44100.0, 512, &error);
 
 // ... add nodes, connect ...
 

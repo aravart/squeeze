@@ -5,7 +5,7 @@
 // Helper: create an engine for each test
 struct GraphFFIFixture {
     SqEngine engine;
-    GraphFFIFixture()  { engine = sq_engine_create(nullptr); }
+    GraphFFIFixture()  { engine = sq_engine_create(44100.0, 512, nullptr); }
     ~GraphFFIFixture() { sq_engine_destroy(engine); }
 };
 

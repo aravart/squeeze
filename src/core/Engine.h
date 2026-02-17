@@ -37,7 +37,7 @@ struct GraphSnapshot {
 
 class Engine {
 public:
-    Engine();
+    Engine(double sampleRate, int blockSize);
     ~Engine();
 
     std::string getVersion() const;
@@ -96,7 +96,6 @@ public:
     MidiRouter& getMidiRouter();
 
     // --- Testing ---
-    void prepareForTesting(double sampleRate, int blockSize);
     void render(int numSamples);
 
 private:
@@ -116,9 +115,8 @@ private:
     CommandQueue commandQueue_;
     MidiRouter midiRouter_;
 
-    double sampleRate_ = 0.0;
-    int blockSize_ = 0;
-    bool prepared_ = false;
+    double sampleRate_;
+    int blockSize_;
 
     void collectGarbage();
     void buildAndSwapSnapshot();

@@ -34,7 +34,7 @@ def main():
 
     set_log_level(args.log_level)
 
-    with Engine() as engine:
+    with Engine(44100.0, 512) as engine:
         print(f"Squeeze v{engine.version}")
         print()
 
@@ -60,7 +60,7 @@ def main():
         synth = None
 
         if args.plugin:
-            engine.prepare_for_testing(44100.0, 512)
+
             try:
                 synth = engine.add_plugin(args.plugin)
             except SqueezeError as e:
@@ -121,7 +121,7 @@ def main():
         except SqueezeError:
             print("No audio device available — rendering offline instead.")
             print()
-            engine.prepare_for_testing(44100.0, 512)
+
 
             # Schedule a C major arpeggio
             engine.transport.tempo = 120.0

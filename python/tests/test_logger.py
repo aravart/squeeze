@@ -29,7 +29,7 @@ def test_log_callback_captures_messages():
     # The callback is installed — verify it doesn't crash.
     # We can't easily trigger log messages from Python (Engine doesn't log yet),
     # but at minimum verify the callback setup is stable.
-    eng = squeeze.Squeeze()
+    eng = squeeze.Squeeze(44100.0, 512)
     eng.close()
 
     # Verify handler is callable and the setup didn't crash
@@ -54,7 +54,7 @@ def test_log_callback_none_reverts():
     squeeze.set_log_callback(None)
 
     # Further engine operations should not crash and should not call handler
-    eng = squeeze.Squeeze()
+    eng = squeeze.Squeeze(44100.0, 512)
     eng.close()
 
     assert len(captured) == count_after_setup

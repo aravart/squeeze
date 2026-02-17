@@ -13,7 +13,7 @@ def test_engine_create(engine):
 
 def test_engine_close_is_idempotent():
     """sq_engine_destroy with already-closed engine is safe."""
-    eng = Squeeze()
+    eng = Squeeze(44100.0, 512)
     eng.close()
     eng.close()  # must not crash
 
@@ -30,15 +30,15 @@ def test_version_value(engine):
 
 def test_context_manager():
     """Engine works as a context manager."""
-    with Squeeze() as eng:
+    with Squeeze(44100.0, 512) as eng:
         assert eng._handle is not None
     assert eng._handle is None
 
 
 def test_multiple_engines():
     """Multiple engines can be created and destroyed independently."""
-    a = Squeeze()
-    b = Squeeze()
+    a = Squeeze(44100.0, 512)
+    b = Squeeze(44100.0, 512)
     assert a._handle != b._handle
     assert a.version == b.version
     a.close()
@@ -80,15 +80,14 @@ def test_output_node_has_in_port(engine):
 # Testing and processBlock
 # ═══════════════════════════════════════════════════════════════════
 
-def test_prepare_for_testing_and_render(engine):
-    """prepare_for_testing and render do not crash."""
-    engine.prepare_for_testing(44100.0, 512)
+def test_render(engine):
+    """render does not crash."""
     engine.render(512)
 
 
 def test_connect_gain_to_output_and_render(engine):
     """Connect gain to output and render."""
-    engine.prepare_for_testing(44100.0, 512)
+
     g = engine.add_gain()
     engine.connect(g, "out", engine.output, "in")
     engine.render(512)
@@ -100,7 +99,7 @@ def test_connect_gain_to_output_and_render(engine):
 
 def test_transport_stubs_do_not_crash(engine):
     """Transport stubs don't crash and return defaults."""
-    engine.prepare_for_testing(44100.0, 512)
+
     engine.transport_play()
     engine.transport_stop()
     engine.transport_pause()
@@ -172,7 +171,7 @@ def test_test_synth_parameters(engine):
 
 def test_test_synth_connect_and_render(engine):
     """Connect test synth to output and render."""
-    engine.prepare_for_testing(44100.0, 512)
+
     synth = engine.add_test_synth()
     engine.connect(synth, "out", engine.output, "in")
     engine.render(512)
@@ -232,7 +231,7 @@ def test_available_plugins_sorted_after_loading(engine):
 
 def test_add_plugin_unknown_name_raises(engine):
     """add_plugin with unknown name raises SqueezeError."""
-    engine.prepare_for_testing(44100.0, 512)
+
     with pytest.raises(SqueezeError):
         engine.add_plugin("NonexistentPlugin")
 

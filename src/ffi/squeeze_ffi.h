@@ -32,10 +32,11 @@ void sq_set_log_callback(void (*callback)(int level, const char* message, void* 
 
 /* ── Engine lifecycle ──────────────────────────────────────────── */
 
-/// Create a new engine. Returns NULL on failure (sets *error).
+/// Create a new engine with the given sample rate and block size.
+/// Returns NULL on failure (sets *error).
 /// Caller owns the returned handle; free with sq_engine_destroy().
 /// Initializes JUCE MessageManager on first call (static, process-wide).
-SqEngine sq_engine_create(char** error);
+SqEngine sq_engine_create(double sample_rate, int block_size, char** error);
 
 /// Destroy the engine and free all resources.
 /// Passing NULL is safe (no-op).
@@ -197,7 +198,6 @@ int sq_add_test_synth(SqEngine engine);
 bool sq_load_plugin_cache(SqEngine engine, const char* path, char** error);
 
 /// Add a plugin by name. Returns node id (>0) on success, -1 on failure (sets *error).
-/// The engine must be prepared (prepareForTesting or audio device) before calling this.
 int sq_add_plugin(SqEngine engine, const char* name, char** error);
 
 /// Return the list of available plugin names (sorted). Free with sq_free_string_list().
@@ -291,9 +291,6 @@ bool sq_has_editor(SqEngine engine, int node_id);
 void sq_process_events(int timeout_ms);
 
 /* ── Testing ──────────────────────────────────────────────────── */
-
-/// Prepare engine for headless testing. Must be called before sq_render().
-void sq_prepare_for_testing(SqEngine engine, double sample_rate, int block_size);
 
 /// Render one block in test mode (allocates output buffer internally).
 void sq_render(SqEngine engine, int num_samples);

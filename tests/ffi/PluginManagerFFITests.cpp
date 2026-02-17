@@ -10,7 +10,7 @@
 
 TEST_CASE("sq_num_plugins returns 0 initially")
 {
-    SqEngine engine = sq_engine_create(nullptr);
+    SqEngine engine = sq_engine_create(44100.0, 512, nullptr);
     REQUIRE(engine != nullptr);
 
     CHECK(sq_num_plugins(engine) == 0);
@@ -20,7 +20,7 @@ TEST_CASE("sq_num_plugins returns 0 initially")
 
 TEST_CASE("sq_available_plugins returns empty list initially")
 {
-    SqEngine engine = sq_engine_create(nullptr);
+    SqEngine engine = sq_engine_create(44100.0, 512, nullptr);
     REQUIRE(engine != nullptr);
 
     SqStringList list = sq_available_plugins(engine);
@@ -36,7 +36,7 @@ TEST_CASE("sq_available_plugins returns empty list initially")
 
 TEST_CASE("sq_load_plugin_cache with nonexistent file returns false and sets error")
 {
-    SqEngine engine = sq_engine_create(nullptr);
+    SqEngine engine = sq_engine_create(44100.0, 512, nullptr);
     REQUIRE(engine != nullptr);
 
     char* error = nullptr;
@@ -53,7 +53,7 @@ TEST_CASE("sq_load_plugin_cache with nonexistent file returns false and sets err
 
 TEST_CASE("sq_load_plugin_cache with real cache file succeeds")
 {
-    SqEngine engine = sq_engine_create(nullptr);
+    SqEngine engine = sq_engine_create(44100.0, 512, nullptr);
     REQUIRE(engine != nullptr);
 
     // Use the real plugin-cache.xml at the project root
@@ -99,9 +99,9 @@ TEST_CASE("sq_load_plugin_cache with real cache file succeeds")
 
 TEST_CASE("sq_add_plugin with unknown name returns -1 and sets error")
 {
-    SqEngine engine = sq_engine_create(nullptr);
+    SqEngine engine = sq_engine_create(44100.0, 512, nullptr);
     REQUIRE(engine != nullptr);
-    sq_prepare_for_testing(engine, 44100.0, 512);
+
 
     char* error = nullptr;
     int id = sq_add_plugin(engine, "NonexistentPlugin", &error);
@@ -125,7 +125,7 @@ TEST_CASE("sq_free_string_list with empty list is safe")
 
 TEST_CASE("sq_free_string_list with NULL error pointer in sq_load_plugin_cache is safe")
 {
-    SqEngine engine = sq_engine_create(nullptr);
+    SqEngine engine = sq_engine_create(44100.0, 512, nullptr);
     REQUIRE(engine != nullptr);
 
     bool ok = sq_load_plugin_cache(engine, "/no/such/file.xml", nullptr);

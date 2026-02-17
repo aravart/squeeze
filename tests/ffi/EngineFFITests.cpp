@@ -9,14 +9,14 @@
 TEST_CASE("sq_engine_create returns a non-NULL handle")
 {
     char* error = nullptr;
-    SqEngine engine = sq_engine_create(&error);
+    SqEngine engine = sq_engine_create(44100.0, 512, &error);
     REQUIRE(engine != nullptr);
     sq_engine_destroy(engine);
 }
 
 TEST_CASE("sq_engine_create with NULL error pointer does not crash")
 {
-    SqEngine engine = sq_engine_create(nullptr);
+    SqEngine engine = sq_engine_create(44100.0, 512, nullptr);
     REQUIRE(engine != nullptr);
     sq_engine_destroy(engine);
 }
@@ -33,7 +33,7 @@ TEST_CASE("sq_free_string with NULL is a no-op")
 
 TEST_CASE("sq_version returns a non-NULL version string")
 {
-    SqEngine engine = sq_engine_create(nullptr);
+    SqEngine engine = sq_engine_create(44100.0, 512, nullptr);
     REQUIRE(engine != nullptr);
 
     char* version = sq_version(engine);
@@ -46,7 +46,7 @@ TEST_CASE("sq_version returns a non-NULL version string")
 
 TEST_CASE("sq_version returns expected version")
 {
-    SqEngine engine = sq_engine_create(nullptr);
+    SqEngine engine = sq_engine_create(44100.0, 512, nullptr);
     char* version = sq_version(engine);
 
     REQUIRE(std::string(version) == "0.2.0");
@@ -57,8 +57,8 @@ TEST_CASE("sq_version returns expected version")
 
 TEST_CASE("Multiple engines can be created and destroyed independently")
 {
-    SqEngine a = sq_engine_create(nullptr);
-    SqEngine b = sq_engine_create(nullptr);
+    SqEngine a = sq_engine_create(44100.0, 512, nullptr);
+    SqEngine b = sq_engine_create(44100.0, 512, nullptr);
     REQUIRE(a != nullptr);
     REQUIRE(b != nullptr);
     REQUIRE(a != b);
@@ -79,7 +79,7 @@ TEST_CASE("Multiple engines can be created and destroyed independently")
 
 TEST_CASE("sq_output_node returns valid ID")
 {
-    SqEngine engine = sq_engine_create(nullptr);
+    SqEngine engine = sq_engine_create(44100.0, 512, nullptr);
     int outId = sq_output_node(engine);
     REQUIRE(outId > 0);
     sq_engine_destroy(engine);
@@ -87,7 +87,7 @@ TEST_CASE("sq_output_node returns valid ID")
 
 TEST_CASE("sq_remove_node on output node returns false")
 {
-    SqEngine engine = sq_engine_create(nullptr);
+    SqEngine engine = sq_engine_create(44100.0, 512, nullptr);
     int outId = sq_output_node(engine);
     REQUIRE_FALSE(sq_remove_node(engine, outId));
     sq_engine_destroy(engine);
@@ -95,7 +95,7 @@ TEST_CASE("sq_remove_node on output node returns false")
 
 TEST_CASE("sq_node_count includes output node")
 {
-    SqEngine engine = sq_engine_create(nullptr);
+    SqEngine engine = sq_engine_create(44100.0, 512, nullptr);
     REQUIRE(sq_node_count(engine) == 1);
 
     int g = sq_add_gain(engine);
@@ -109,7 +109,7 @@ TEST_CASE("sq_node_count includes output node")
 
 TEST_CASE("Output node has 'in' port")
 {
-    SqEngine engine = sq_engine_create(nullptr);
+    SqEngine engine = sq_engine_create(44100.0, 512, nullptr);
     int outId = sq_output_node(engine);
 
     SqPortList ports = sq_get_ports(engine, outId);
@@ -131,18 +131,17 @@ TEST_CASE("Output node has 'in' port")
 // Testing and processBlock
 // ═══════════════════════════════════════════════════════════════════
 
-TEST_CASE("sq_prepare_for_testing and sq_render do not crash")
+TEST_CASE("sq_render does not crash")
 {
-    SqEngine engine = sq_engine_create(nullptr);
-    sq_prepare_for_testing(engine, 44100.0, 512);
+    SqEngine engine = sq_engine_create(44100.0, 512, nullptr);
     sq_render(engine, 512);
     sq_engine_destroy(engine);
 }
 
 TEST_CASE("Connect gain to output, render succeeds")
 {
-    SqEngine engine = sq_engine_create(nullptr);
-    sq_prepare_for_testing(engine, 44100.0, 512);
+    SqEngine engine = sq_engine_create(44100.0, 512, nullptr);
+
 
     int g = sq_add_gain(engine);
     int out = sq_output_node(engine);
@@ -162,8 +161,8 @@ TEST_CASE("Connect gain to output, render succeeds")
 
 TEST_CASE("Transport stubs do not crash and return defaults")
 {
-    SqEngine engine = sq_engine_create(nullptr);
-    sq_prepare_for_testing(engine, 44100.0, 512);
+    SqEngine engine = sq_engine_create(44100.0, 512, nullptr);
+
 
     sq_transport_play(engine);
     sq_transport_stop(engine);
@@ -189,7 +188,7 @@ TEST_CASE("Transport stubs do not crash and return defaults")
 
 TEST_CASE("Event scheduling stubs return false")
 {
-    SqEngine engine = sq_engine_create(nullptr);
+    SqEngine engine = sq_engine_create(44100.0, 512, nullptr);
     CHECK_FALSE(sq_schedule_note_on(engine, 1, 0.0, 1, 60, 0.8f));
     CHECK_FALSE(sq_schedule_note_off(engine, 1, 1.0, 1, 60));
     CHECK_FALSE(sq_schedule_cc(engine, 1, 0.0, 1, 1, 64));
@@ -203,7 +202,7 @@ TEST_CASE("Event scheduling stubs return false")
 
 TEST_CASE("sq_get_param and sq_set_param work through engine")
 {
-    SqEngine engine = sq_engine_create(nullptr);
+    SqEngine engine = sq_engine_create(44100.0, 512, nullptr);
     int g = sq_add_gain(engine);
 
     CHECK(sq_get_param(engine, g, "gain") == 1.0f);
@@ -219,7 +218,7 @@ TEST_CASE("sq_get_param and sq_set_param work through engine")
 
 TEST_CASE("sq_add_test_synth returns valid ID")
 {
-    SqEngine engine = sq_engine_create(nullptr);
+    SqEngine engine = sq_engine_create(44100.0, 512, nullptr);
     int synth = sq_add_test_synth(engine);
     REQUIRE(synth > 0);
     CHECK(sq_node_count(engine) == 2); // output + synth
@@ -228,7 +227,7 @@ TEST_CASE("sq_add_test_synth returns valid ID")
 
 TEST_CASE("Test synth has correct ports")
 {
-    SqEngine engine = sq_engine_create(nullptr);
+    SqEngine engine = sq_engine_create(44100.0, 512, nullptr);
     int synth = sq_add_test_synth(engine);
 
     SqPortList ports = sq_get_ports(engine, synth);
@@ -257,7 +256,7 @@ TEST_CASE("Test synth has correct ports")
 
 TEST_CASE("Test synth parameters accessible via sq_get_param/sq_set_param")
 {
-    SqEngine engine = sq_engine_create(nullptr);
+    SqEngine engine = sq_engine_create(44100.0, 512, nullptr);
     int synth = sq_add_test_synth(engine);
 
     CHECK(sq_get_param(engine, synth, "Gain") == 1.0f);
@@ -269,8 +268,8 @@ TEST_CASE("Test synth parameters accessible via sq_get_param/sq_set_param")
 
 TEST_CASE("Connect test synth to output, render succeeds")
 {
-    SqEngine engine = sq_engine_create(nullptr);
-    sq_prepare_for_testing(engine, 44100.0, 512);
+    SqEngine engine = sq_engine_create(44100.0, 512, nullptr);
+
 
     int synth = sq_add_test_synth(engine);
     int out = sq_output_node(engine);
@@ -285,7 +284,7 @@ TEST_CASE("Connect test synth to output, render succeeds")
 
 TEST_CASE("sq_param_descriptors returns expected params for test synth")
 {
-    SqEngine engine = sq_engine_create(nullptr);
+    SqEngine engine = sq_engine_create(44100.0, 512, nullptr);
     int synth = sq_add_test_synth(engine);
 
     SqParamDescriptorList descs = sq_param_descriptors(engine, synth);

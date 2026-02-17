@@ -6,7 +6,7 @@
 // Helper: create an engine for each test
 struct FFIFixture {
     SqEngine engine;
-    FFIFixture()  { engine = sq_engine_create(nullptr); }
+    FFIFixture()  { engine = sq_engine_create(44100.0, 512, nullptr); }
     ~FFIFixture() { sq_engine_destroy(engine); }
 };
 

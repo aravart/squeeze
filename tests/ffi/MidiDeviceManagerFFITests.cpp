@@ -10,7 +10,7 @@
 
 TEST_CASE("sq_midi_devices returns a list (may be empty in CI)")
 {
-    SqEngine engine = sq_engine_create(nullptr);
+    SqEngine engine = sq_engine_create(44100.0, 512, nullptr);
     REQUIRE(engine != nullptr);
 
     SqStringList list = sq_midi_devices(engine);
@@ -23,7 +23,7 @@ TEST_CASE("sq_midi_devices returns a list (may be empty in CI)")
 
 TEST_CASE("sq_midi_open_devices returns empty list initially")
 {
-    SqEngine engine = sq_engine_create(nullptr);
+    SqEngine engine = sq_engine_create(44100.0, 512, nullptr);
     REQUIRE(engine != nullptr);
 
     SqStringList list = sq_midi_open_devices(engine);
@@ -39,7 +39,7 @@ TEST_CASE("sq_midi_open_devices returns empty list initially")
 
 TEST_CASE("sq_midi_open with unknown device returns false and sets error")
 {
-    SqEngine engine = sq_engine_create(nullptr);
+    SqEngine engine = sq_engine_create(44100.0, 512, nullptr);
     REQUIRE(engine != nullptr);
 
     char* error = nullptr;
@@ -54,7 +54,7 @@ TEST_CASE("sq_midi_open with unknown device returns false and sets error")
 
 TEST_CASE("sq_midi_open with NULL error pointer does not crash on failure")
 {
-    SqEngine engine = sq_engine_create(nullptr);
+    SqEngine engine = sq_engine_create(44100.0, 512, nullptr);
     REQUIRE(engine != nullptr);
 
     bool ok = sq_midi_open(engine, "NonexistentMidiDevice12345", nullptr);
@@ -65,7 +65,7 @@ TEST_CASE("sq_midi_open with NULL error pointer does not crash on failure")
 
 TEST_CASE("sq_midi_close with unknown name is a no-op")
 {
-    SqEngine engine = sq_engine_create(nullptr);
+    SqEngine engine = sq_engine_create(44100.0, 512, nullptr);
     REQUIRE(engine != nullptr);
 
     sq_midi_close(engine, "NonexistentMidiDevice12345"); // must not crash
@@ -79,7 +79,7 @@ TEST_CASE("sq_midi_close with unknown name is a no-op")
 
 TEST_CASE("sq_midi_route with unregistered device returns -1 and sets error")
 {
-    SqEngine engine = sq_engine_create(nullptr);
+    SqEngine engine = sq_engine_create(44100.0, 512, nullptr);
     REQUIRE(engine != nullptr);
 
     char* error = nullptr;
@@ -93,7 +93,7 @@ TEST_CASE("sq_midi_route with unregistered device returns -1 and sets error")
 
 TEST_CASE("sq_midi_unroute with invalid id returns false")
 {
-    SqEngine engine = sq_engine_create(nullptr);
+    SqEngine engine = sq_engine_create(44100.0, 512, nullptr);
     REQUIRE(engine != nullptr);
 
     CHECK_FALSE(sq_midi_unroute(engine, 999));
@@ -103,7 +103,7 @@ TEST_CASE("sq_midi_unroute with invalid id returns false")
 
 TEST_CASE("sq_midi_routes returns empty list initially")
 {
-    SqEngine engine = sq_engine_create(nullptr);
+    SqEngine engine = sq_engine_create(44100.0, 512, nullptr);
     REQUIRE(engine != nullptr);
 
     SqMidiRouteList routes = sq_midi_routes(engine);
@@ -135,7 +135,7 @@ TEST_CASE("sq_free_string_list with empty midi device list is safe")
 
 TEST_CASE("sq_midi_open with real device succeeds if available")
 {
-    SqEngine engine = sq_engine_create(nullptr);
+    SqEngine engine = sq_engine_create(44100.0, 512, nullptr);
     REQUIRE(engine != nullptr);
 
     SqStringList devices = sq_midi_devices(engine);

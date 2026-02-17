@@ -13,14 +13,14 @@ class Engine:
     """Squeeze audio engine — high-level Pythonic interface.
 
     Usage:
-        with Engine() as engine:
+        with Engine(44100.0, 512) as engine:
             synth = engine.add_test_synth()
             synth >> engine.output
-            engine.start()
+            engine.render(512)
     """
 
-    def __init__(self):
-        self._sq = Squeeze()
+    def __init__(self, sample_rate: float, block_size: int):
+        self._sq = Squeeze(sample_rate, block_size)
         self._transport: Transport | None = None
         self._midi: Midi | None = None
 
@@ -199,11 +199,6 @@ class Engine:
         Squeeze.process_events(timeout_ms)
 
     # --- Testing ---
-
-    def prepare_for_testing(self, sample_rate: float = 44100.0,
-                            block_size: int = 512) -> None:
-        """Prepare engine for headless testing (no audio device)."""
-        self._sq.prepare_for_testing(sample_rate, block_size)
 
     def render(self, num_samples: int = 512) -> None:
         """Render one block in test mode."""

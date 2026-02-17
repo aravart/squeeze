@@ -23,6 +23,8 @@ struct EngineHandle {
     squeeze::MidiDeviceManager midiDeviceManager{engine.getMidiRouter()};
     squeeze::EditorManager editorManager;
     std::mutex audioMutex;
+
+    EngineHandle(double sr, int bs) : engine(sr, bs) {}
 };
 
 static EngineHandle* cast(SqEngine e)
@@ -81,12 +83,12 @@ void sq_free_string(char* s)
     free(s);
 }
 
-SqEngine sq_engine_create(char** error)
+SqEngine sq_engine_create(double sample_rate, int block_size, char** error)
 {
     ensureJuceInit();
     try
     {
-        return static_cast<SqEngine>(new EngineHandle());
+        return static_cast<SqEngine>(new EngineHandle(sample_rate, block_size));
     }
     catch (const std::exception& e)
     {
@@ -587,11 +589,6 @@ void sq_process_events(int timeout_ms)
 }
 
 // --- Testing ---
-
-void sq_prepare_for_testing(SqEngine engine, double sample_rate, int block_size)
-{
-    eng(engine).prepareForTesting(sample_rate, block_size);
-}
 
 void sq_render(SqEngine engine, int num_samples)
 {
