@@ -167,6 +167,80 @@ def _load_lib():
     lib.sq_free_connection_list.restype = None
     lib.sq_free_connection_list.argtypes = [SqConnectionList]
 
+    # --- Output node and node count ---
+
+    # sq_output_node
+    lib.sq_output_node.restype = ctypes.c_int
+    lib.sq_output_node.argtypes = [ctypes.c_void_p]
+
+    # sq_node_count
+    lib.sq_node_count.restype = ctypes.c_int
+    lib.sq_node_count.argtypes = [ctypes.c_void_p]
+
+    # --- Transport ---
+
+    lib.sq_transport_play.restype = None
+    lib.sq_transport_play.argtypes = [ctypes.c_void_p]
+
+    lib.sq_transport_stop.restype = None
+    lib.sq_transport_stop.argtypes = [ctypes.c_void_p]
+
+    lib.sq_transport_pause.restype = None
+    lib.sq_transport_pause.argtypes = [ctypes.c_void_p]
+
+    lib.sq_transport_set_tempo.restype = None
+    lib.sq_transport_set_tempo.argtypes = [ctypes.c_void_p, ctypes.c_double]
+
+    lib.sq_transport_set_time_signature.restype = None
+    lib.sq_transport_set_time_signature.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int]
+
+    lib.sq_transport_seek_samples.restype = None
+    lib.sq_transport_seek_samples.argtypes = [ctypes.c_void_p, ctypes.c_int64]
+
+    lib.sq_transport_seek_beats.restype = None
+    lib.sq_transport_seek_beats.argtypes = [ctypes.c_void_p, ctypes.c_double]
+
+    lib.sq_transport_set_loop_points.restype = None
+    lib.sq_transport_set_loop_points.argtypes = [ctypes.c_void_p, ctypes.c_double, ctypes.c_double]
+
+    lib.sq_transport_set_looping.restype = None
+    lib.sq_transport_set_looping.argtypes = [ctypes.c_void_p, ctypes.c_bool]
+
+    lib.sq_transport_position.restype = ctypes.c_double
+    lib.sq_transport_position.argtypes = [ctypes.c_void_p]
+
+    lib.sq_transport_tempo.restype = ctypes.c_double
+    lib.sq_transport_tempo.argtypes = [ctypes.c_void_p]
+
+    lib.sq_transport_is_playing.restype = ctypes.c_bool
+    lib.sq_transport_is_playing.argtypes = [ctypes.c_void_p]
+
+    # --- Event scheduling ---
+
+    lib.sq_schedule_note_on.restype = ctypes.c_bool
+    lib.sq_schedule_note_on.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_double,
+                                        ctypes.c_int, ctypes.c_int, ctypes.c_float]
+
+    lib.sq_schedule_note_off.restype = ctypes.c_bool
+    lib.sq_schedule_note_off.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_double,
+                                         ctypes.c_int, ctypes.c_int]
+
+    lib.sq_schedule_cc.restype = ctypes.c_bool
+    lib.sq_schedule_cc.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_double,
+                                   ctypes.c_int, ctypes.c_int, ctypes.c_int]
+
+    lib.sq_schedule_param_change.restype = ctypes.c_bool
+    lib.sq_schedule_param_change.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_double,
+                                             ctypes.c_char_p, ctypes.c_float]
+
+    # --- Testing ---
+
+    lib.sq_prepare_for_testing.restype = None
+    lib.sq_prepare_for_testing.argtypes = [ctypes.c_void_p, ctypes.c_double, ctypes.c_int]
+
+    lib.sq_render.restype = None
+    lib.sq_render.argtypes = [ctypes.c_void_p, ctypes.c_int]
+
     return lib
 
 

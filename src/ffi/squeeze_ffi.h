@@ -80,8 +80,14 @@ typedef struct {
 /// Add a GainNode. Returns node id (>0).
 int sq_add_gain(SqEngine engine);
 
-/// Remove a node by id. Returns false if not found.
+/// Remove a node by id. Returns false if not found (or if node is the output).
 bool sq_remove_node(SqEngine engine, int node_id);
+
+/// Returns the built-in output node id.
+int sq_output_node(SqEngine engine);
+
+/// Returns the total number of nodes (including the output node).
+int sq_node_count(SqEngine engine);
 
 /// Returns the node's type name. Caller must sq_free_string().
 /// Returns NULL if node_id is invalid.
@@ -141,6 +147,40 @@ SqConnectionList sq_connections(SqEngine engine);
 
 /// Free a connection list returned by sq_connections().
 void sq_free_connection_list(SqConnectionList list);
+
+/* ── Transport ────────────────────────────────────────────────── */
+
+void   sq_transport_play(SqEngine engine);
+void   sq_transport_stop(SqEngine engine);
+void   sq_transport_pause(SqEngine engine);
+void   sq_transport_set_tempo(SqEngine engine, double bpm);
+void   sq_transport_set_time_signature(SqEngine engine, int numerator, int denominator);
+void   sq_transport_seek_samples(SqEngine engine, int64_t samples);
+void   sq_transport_seek_beats(SqEngine engine, double beats);
+void   sq_transport_set_loop_points(SqEngine engine, double start_beats, double end_beats);
+void   sq_transport_set_looping(SqEngine engine, bool enabled);
+double sq_transport_position(SqEngine engine);
+double sq_transport_tempo(SqEngine engine);
+bool   sq_transport_is_playing(SqEngine engine);
+
+/* ── Event scheduling ─────────────────────────────────────────── */
+
+bool sq_schedule_note_on(SqEngine engine, int node_id, double beat_time,
+                         int channel, int note, float velocity);
+bool sq_schedule_note_off(SqEngine engine, int node_id, double beat_time,
+                          int channel, int note);
+bool sq_schedule_cc(SqEngine engine, int node_id, double beat_time,
+                    int channel, int cc_num, int cc_val);
+bool sq_schedule_param_change(SqEngine engine, int node_id, double beat_time,
+                              const char* param_name, float value);
+
+/* ── Testing ──────────────────────────────────────────────────── */
+
+/// Prepare engine for headless testing. Must be called before sq_render().
+void sq_prepare_for_testing(SqEngine engine, double sample_rate, int block_size);
+
+/// Render one block in test mode (allocates output buffer internally).
+void sq_render(SqEngine engine, int num_samples);
 
 #ifdef __cplusplus
 }

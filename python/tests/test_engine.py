@@ -40,3 +40,88 @@ def test_multiple_engines():
     assert a.version == b.version
     a.close()
     b.close()
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Output node
+# ═══════════════════════════════════════════════════════════════════
+
+def test_output_node_exists(engine):
+    """Output node has a valid ID."""
+    assert engine.output > 0
+
+
+def test_output_node_cannot_be_removed(engine):
+    """Output node cannot be removed."""
+    assert engine.remove_node(engine.output) is False
+
+
+def test_node_count_includes_output(engine):
+    """node_count includes the output node."""
+    assert engine.node_count() == 1
+    g = engine.add_gain()
+    assert engine.node_count() == 2
+    engine.remove_node(g)
+    assert engine.node_count() == 1
+
+
+def test_output_node_has_in_port(engine):
+    """Output node has an audio input port named 'in'."""
+    ports = engine.get_ports(engine.output)
+    in_ports = [p for p in ports if p["name"] == "in" and p["direction"] == "input"]
+    assert len(in_ports) == 1
+    assert in_ports[0]["signal_type"] == "audio"
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Testing and processBlock
+# ═══════════════════════════════════════════════════════════════════
+
+def test_prepare_for_testing_and_render(engine):
+    """prepare_for_testing and render do not crash."""
+    engine.prepare_for_testing(44100.0, 512)
+    engine.render(512)
+
+
+def test_connect_gain_to_output_and_render(engine):
+    """Connect gain to output and render."""
+    engine.prepare_for_testing(44100.0, 512)
+    g = engine.add_gain()
+    engine.connect(g, "out", engine.output, "in")
+    engine.render(512)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Transport stubs
+# ═══════════════════════════════════════════════════════════════════
+
+def test_transport_stubs_do_not_crash(engine):
+    """Transport stubs don't crash and return defaults."""
+    engine.prepare_for_testing(44100.0, 512)
+    engine.transport_play()
+    engine.transport_stop()
+    engine.transport_pause()
+    engine.transport_set_tempo(140.0)
+    engine.transport_set_time_signature(3, 4)
+    engine.transport_seek_samples(0)
+    engine.transport_seek_beats(0.0)
+    engine.transport_set_loop_points(0.0, 4.0)
+    engine.transport_set_looping(True)
+
+    assert engine.transport_position == 0.0
+    assert engine.transport_tempo == 120.0
+    assert engine.transport_is_playing is False
+
+    engine.render(512)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Event scheduling stubs
+# ═══════════════════════════════════════════════════════════════════
+
+def test_event_scheduling_stubs_return_false(engine):
+    """Event scheduling stubs return False."""
+    assert engine.schedule_note_on(1, 0.0, 1, 60, 0.8) is False
+    assert engine.schedule_note_off(1, 1.0, 1, 60) is False
+    assert engine.schedule_cc(1, 0.0, 1, 1, 64) is False
+    assert engine.schedule_param_change(1, 0.0, "gain", 0.5) is False

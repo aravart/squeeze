@@ -169,3 +169,87 @@ class Squeeze:
             })
         lib.sq_free_connection_list(conn_list)
         return result
+
+    # --- Output node ---
+
+    @property
+    def output(self) -> int:
+        """The built-in output node id."""
+        return lib.sq_output_node(self._handle)
+
+    def node_count(self) -> int:
+        """Return total number of nodes (including output)."""
+        return lib.sq_node_count(self._handle)
+
+    # --- Testing ---
+
+    def prepare_for_testing(self, sample_rate: float = 44100.0, block_size: int = 512):
+        """Prepare engine for headless testing."""
+        lib.sq_prepare_for_testing(self._handle, sample_rate, block_size)
+
+    def render(self, num_samples: int = 512):
+        """Render one block in test mode."""
+        lib.sq_render(self._handle, num_samples)
+
+    # --- Transport ---
+
+    def transport_play(self):
+        lib.sq_transport_play(self._handle)
+
+    def transport_stop(self):
+        lib.sq_transport_stop(self._handle)
+
+    def transport_pause(self):
+        lib.sq_transport_pause(self._handle)
+
+    def transport_set_tempo(self, bpm: float):
+        lib.sq_transport_set_tempo(self._handle, bpm)
+
+    def transport_set_time_signature(self, numerator: int, denominator: int):
+        lib.sq_transport_set_time_signature(self._handle, numerator, denominator)
+
+    def transport_seek_samples(self, samples: int):
+        lib.sq_transport_seek_samples(self._handle, samples)
+
+    def transport_seek_beats(self, beats: float):
+        lib.sq_transport_seek_beats(self._handle, beats)
+
+    def transport_set_loop_points(self, start_beats: float, end_beats: float):
+        lib.sq_transport_set_loop_points(self._handle, start_beats, end_beats)
+
+    def transport_set_looping(self, enabled: bool):
+        lib.sq_transport_set_looping(self._handle, enabled)
+
+    @property
+    def transport_position(self) -> float:
+        return lib.sq_transport_position(self._handle)
+
+    @property
+    def transport_tempo(self) -> float:
+        return lib.sq_transport_tempo(self._handle)
+
+    @property
+    def transport_is_playing(self) -> bool:
+        return lib.sq_transport_is_playing(self._handle)
+
+    # --- Event scheduling ---
+
+    def schedule_note_on(self, node_id: int, beat_time: float,
+                         channel: int, note: int, velocity: float) -> bool:
+        return lib.sq_schedule_note_on(self._handle, node_id, beat_time,
+                                       channel, note, velocity)
+
+    def schedule_note_off(self, node_id: int, beat_time: float,
+                          channel: int, note: int) -> bool:
+        return lib.sq_schedule_note_off(self._handle, node_id, beat_time,
+                                        channel, note)
+
+    def schedule_cc(self, node_id: int, beat_time: float,
+                    channel: int, cc_num: int, cc_val: int) -> bool:
+        return lib.sq_schedule_cc(self._handle, node_id, beat_time,
+                                  channel, cc_num, cc_val)
+
+    def schedule_param_change(self, node_id: int, beat_time: float,
+                              param_name: str, value: float) -> bool:
+        return lib.sq_schedule_param_change(self._handle, node_id, beat_time,
+                                            param_name.encode(), value)

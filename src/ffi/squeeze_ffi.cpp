@@ -106,6 +106,16 @@ bool sq_remove_node(SqEngine engine, int node_id)
     return eng(engine).removeNode(node_id);
 }
 
+int sq_output_node(SqEngine engine)
+{
+    return eng(engine).getOutputNodeId();
+}
+
+int sq_node_count(SqEngine engine)
+{
+    return eng(engine).getNodeCount();
+}
+
 char* sq_node_name(SqEngine engine, int node_id)
 {
     auto name = eng(engine).getNodeName(node_id);
@@ -271,4 +281,63 @@ void sq_free_connection_list(SqConnectionList list)
         free(list.connections[i].dst_port);
     }
     free(list.connections);
+}
+
+// --- Transport ---
+
+void sq_transport_play(SqEngine engine) { eng(engine).transportPlay(); }
+void sq_transport_stop(SqEngine engine) { eng(engine).transportStop(); }
+void sq_transport_pause(SqEngine engine) { eng(engine).transportPause(); }
+void sq_transport_set_tempo(SqEngine engine, double bpm) { eng(engine).transportSetTempo(bpm); }
+void sq_transport_set_time_signature(SqEngine engine, int numerator, int denominator)
+{
+    eng(engine).transportSetTimeSignature(numerator, denominator);
+}
+void sq_transport_seek_samples(SqEngine engine, int64_t samples) { eng(engine).transportSeekSamples(samples); }
+void sq_transport_seek_beats(SqEngine engine, double beats) { eng(engine).transportSeekBeats(beats); }
+void sq_transport_set_loop_points(SqEngine engine, double start_beats, double end_beats)
+{
+    eng(engine).transportSetLoopPoints(start_beats, end_beats);
+}
+void sq_transport_set_looping(SqEngine engine, bool enabled) { eng(engine).transportSetLooping(enabled); }
+double sq_transport_position(SqEngine engine) { return eng(engine).getTransportPosition(); }
+double sq_transport_tempo(SqEngine engine) { return eng(engine).getTransportTempo(); }
+bool sq_transport_is_playing(SqEngine engine) { return eng(engine).isTransportPlaying(); }
+
+// --- Event scheduling ---
+
+bool sq_schedule_note_on(SqEngine engine, int node_id, double beat_time,
+                         int channel, int note, float velocity)
+{
+    return eng(engine).scheduleNoteOn(node_id, beat_time, channel, note, velocity);
+}
+
+bool sq_schedule_note_off(SqEngine engine, int node_id, double beat_time,
+                          int channel, int note)
+{
+    return eng(engine).scheduleNoteOff(node_id, beat_time, channel, note);
+}
+
+bool sq_schedule_cc(SqEngine engine, int node_id, double beat_time,
+                    int channel, int cc_num, int cc_val)
+{
+    return eng(engine).scheduleCC(node_id, beat_time, channel, cc_num, cc_val);
+}
+
+bool sq_schedule_param_change(SqEngine engine, int node_id, double beat_time,
+                              const char* param_name, float value)
+{
+    return eng(engine).scheduleParamChange(node_id, beat_time, param_name, value);
+}
+
+// --- Testing ---
+
+void sq_prepare_for_testing(SqEngine engine, double sample_rate, int block_size)
+{
+    eng(engine).prepareForTesting(sample_rate, block_size);
+}
+
+void sq_render(SqEngine engine, int num_samples)
+{
+    eng(engine).render(num_samples);
 }

@@ -67,6 +67,7 @@ add_executable(squeeze_unit_tests
     tests/core/SPSCQueueTests.cpp
     tests/core/CommandQueueTests.cpp
     tests/core/MidiRouterTests.cpp
+    tests/core/EngineTests.cpp
 )
 
 target_link_libraries(squeeze_unit_tests PRIVATE
