@@ -1,6 +1,9 @@
 """Engine tests — mirrors tests/ffi/EngineFFITests.cpp."""
 
-from squeeze import Squeeze
+import os
+
+import pytest
+from squeeze import Squeeze, SqueezeError
 
 
 def test_engine_create(engine):
@@ -173,3 +176,62 @@ def test_test_synth_connect_and_render(engine):
     synth = engine.add_test_synth()
     engine.connect(synth, "out", engine.output, "in")
     engine.render(512)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# PluginManager
+# ═══════════════════════════════════════════════════════════════════
+
+def test_num_plugins_starts_at_zero(engine):
+    """num_plugins returns 0 before any cache is loaded."""
+    assert engine.num_plugins == 0
+
+
+def test_available_plugins_empty_initially(engine):
+    """available_plugins returns empty list before loading."""
+    assert engine.available_plugins == []
+
+
+def test_load_plugin_cache_bad_path_raises(engine):
+    """load_plugin_cache with nonexistent file raises SqueezeError."""
+    with pytest.raises(SqueezeError):
+        engine.load_plugin_cache("/no/such/file.xml")
+
+
+def _find_plugin_cache():
+    """Locate plugin-cache.xml relative to this test file."""
+    base = os.path.dirname(os.path.abspath(__file__))
+    for rel in ["../../plugin-cache.xml", "../../../plugin-cache.xml"]:
+        path = os.path.join(base, rel)
+        if os.path.exists(path):
+            return os.path.abspath(path)
+    return None
+
+
+def test_load_plugin_cache_real_file(engine):
+    """load_plugin_cache with real cache file succeeds."""
+    path = _find_plugin_cache()
+    if path is None:
+        pytest.skip("plugin-cache.xml not found")
+
+    engine.load_plugin_cache(path)
+    assert engine.num_plugins > 0
+
+
+def test_available_plugins_sorted_after_loading(engine):
+    """available_plugins returns sorted list after loading real cache."""
+    path = _find_plugin_cache()
+    if path is None:
+        pytest.skip("plugin-cache.xml not found")
+
+    engine.load_plugin_cache(path)
+    plugins = engine.available_plugins
+    assert len(plugins) > 0
+    assert plugins == sorted(plugins)
+
+
+def test_add_plugin_unknown_name_raises(engine):
+    """add_plugin with unknown name raises SqueezeError."""
+    engine.prepare_for_testing(44100.0, 512)
+    with pytest.raises(SqueezeError):
+        engine.add_plugin("NonexistentPlugin")

@@ -21,6 +21,7 @@ add_library(squeeze_core STATIC
     src/core/Graph.cpp
     src/core/Logger.cpp
     src/core/MidiRouter.cpp
+    src/core/PluginManager.cpp
     src/core/PluginNode.cpp
     src/core/Port.cpp
 )
@@ -71,6 +72,7 @@ add_executable(squeeze_unit_tests
     tests/core/MidiRouterTests.cpp
     tests/core/EngineTests.cpp
     tests/core/PluginNodeTests.cpp
+    tests/core/PluginManagerTests.cpp
 )
 
 target_link_libraries(squeeze_unit_tests PRIVATE
@@ -84,6 +86,7 @@ add_executable(squeeze_ffi_tests
     tests/ffi/EngineFFITests.cpp
     tests/ffi/NodeFFITests.cpp
     tests/ffi/GraphFFITests.cpp
+    tests/ffi/PluginManagerFFITests.cpp
 )
 
 target_link_libraries(squeeze_ffi_tests PRIVATE

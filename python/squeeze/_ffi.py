@@ -73,6 +73,12 @@ class SqConnectionList(ctypes.Structure):
         ("count", ctypes.c_int),
     ]
 
+class SqStringList(ctypes.Structure):
+    _fields_ = [
+        ("items", ctypes.POINTER(ctypes.c_char_p)),
+        ("count", ctypes.c_int),
+    ]
+
 
 LogCallbackType = ctypes.CFUNCTYPE(None, ctypes.c_int, ctypes.c_char_p, ctypes.c_void_p)
 
@@ -236,6 +242,25 @@ def _load_lib():
     lib.sq_schedule_param_change.restype = ctypes.c_bool
     lib.sq_schedule_param_change.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_double,
                                              ctypes.c_char_p, ctypes.c_float]
+
+    # --- Plugin manager ---
+
+    lib.sq_load_plugin_cache.restype = ctypes.c_bool
+    lib.sq_load_plugin_cache.argtypes = [ctypes.c_void_p, ctypes.c_char_p,
+                                          ctypes.POINTER(ctypes.c_char_p)]
+
+    lib.sq_add_plugin.restype = ctypes.c_int
+    lib.sq_add_plugin.argtypes = [ctypes.c_void_p, ctypes.c_char_p,
+                                   ctypes.POINTER(ctypes.c_char_p)]
+
+    lib.sq_available_plugins.restype = SqStringList
+    lib.sq_available_plugins.argtypes = [ctypes.c_void_p]
+
+    lib.sq_free_string_list.restype = None
+    lib.sq_free_string_list.argtypes = [SqStringList]
+
+    lib.sq_num_plugins.restype = ctypes.c_int
+    lib.sq_num_plugins.argtypes = [ctypes.c_void_p]
 
     # --- Testing ---
 

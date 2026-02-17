@@ -571,6 +571,20 @@ void Engine::processBlock(float** outputChannels, int numChannels, int numSample
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// Accessors
+// ═══════════════════════════════════════════════════════════════════
+
+double Engine::getSampleRate() const
+{
+    return sampleRate_;
+}
+
+int Engine::getBlockSize() const
+{
+    return blockSize_;
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // Testing
 // ═══════════════════════════════════════════════════════════════════
 

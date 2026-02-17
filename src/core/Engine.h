@@ -90,6 +90,10 @@ public:
     // --- Audio processing (audio thread) ---
     void processBlock(float** outputChannels, int numChannels, int numSamples);
 
+    // --- Accessors ---
+    double getSampleRate() const;
+    int getBlockSize() const;
+
     // --- Testing ---
     void prepareForTesting(double sampleRate, int blockSize);
     void render(int numSamples);

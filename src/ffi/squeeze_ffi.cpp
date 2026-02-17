@@ -2,6 +2,7 @@
 #include "core/Engine.h"
 #include "core/GainNode.h"
 #include "core/Logger.h"
+#include "core/PluginManager.h"
 #include "core/PluginNode.h"
 #include "core/TestProcessor.h"
 
@@ -13,6 +14,7 @@
 
 struct EngineHandle {
     squeeze::Engine engine;
+    squeeze::PluginManager pluginManager;
 };
 
 static EngineHandle* cast(SqEngine e)
@@ -339,6 +341,66 @@ int sq_add_test_synth(SqEngine engine)
     auto proc = std::make_unique<squeeze::TestProcessor>(0, 2, true);
     auto node = std::make_unique<squeeze::PluginNode>(std::move(proc), 0, 2, true);
     return eng(engine).addNode("test_synth", std::move(node));
+}
+
+// --- String list ---
+
+void sq_free_string_list(SqStringList list)
+{
+    for (int i = 0; i < list.count; i++)
+        free(list.items[i]);
+    free(list.items);
+}
+
+// --- Plugin manager ---
+
+bool sq_load_plugin_cache(SqEngine engine, const char* path, char** error)
+{
+    std::string err;
+    bool ok = cast(engine)->pluginManager.loadCache(path, err);
+    if (!ok)
+        set_error(error, err);
+    else if (error)
+        *error = nullptr;
+    return ok;
+}
+
+int sq_add_plugin(SqEngine engine, const char* name, char** error)
+{
+    auto* handle = cast(engine);
+    double sr = handle->engine.getSampleRate();
+    int bs = handle->engine.getBlockSize();
+
+    std::string err;
+    auto node = handle->pluginManager.createNode(name, sr, bs, err);
+    if (!node)
+    {
+        set_error(error, err);
+        return -1;
+    }
+
+    if (error) *error = nullptr;
+    return handle->engine.addNode(name, std::move(node));
+}
+
+SqStringList sq_available_plugins(SqEngine engine)
+{
+    SqStringList result = {nullptr, 0};
+    auto names = cast(engine)->pluginManager.getAvailablePlugins();
+    if (names.empty()) return result;
+
+    result.count = static_cast<int>(names.size());
+    result.items = static_cast<char**>(malloc(sizeof(char*) * names.size()));
+
+    for (int i = 0; i < result.count; i++)
+        result.items[i] = strdup(names[static_cast<size_t>(i)].c_str());
+
+    return result;
+}
+
+int sq_num_plugins(SqEngine engine)
+{
+    return cast(engine)->pluginManager.getNumPlugins();
 }
 
 // --- Testing ---

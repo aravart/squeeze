@@ -2,7 +2,7 @@
 
 import ctypes
 
-from squeeze._ffi import lib, check_error, LogCallbackType
+from squeeze._ffi import lib, check_error, LogCallbackType, SqStringList
 
 
 class SqueezeError(Exception):
@@ -140,6 +140,38 @@ class Squeeze:
         if raw is None:
             return ""
         return raw.decode()
+
+    # --- Plugin manager ---
+
+    def load_plugin_cache(self, path: str) -> None:
+        """Load plugin cache from XML file. Raises SqueezeError on failure."""
+        error = ctypes.c_char_p(None)
+        ok = lib.sq_load_plugin_cache(self._handle, path.encode(), ctypes.byref(error))
+        if not ok:
+            check_error(error)
+            raise SqueezeError("Failed to load plugin cache")
+
+    def add_plugin(self, name: str) -> int:
+        """Add a plugin by name. Returns node id. Raises SqueezeError on failure."""
+        error = ctypes.c_char_p(None)
+        node_id = lib.sq_add_plugin(self._handle, name.encode(), ctypes.byref(error))
+        if node_id < 0:
+            check_error(error)
+            raise SqueezeError(f"Failed to add plugin '{name}'")
+        return node_id
+
+    @property
+    def available_plugins(self) -> list:
+        """List of available plugin names (sorted alphabetically)."""
+        string_list = lib.sq_available_plugins(self._handle)
+        result = [string_list.items[i].decode() for i in range(string_list.count)]
+        lib.sq_free_string_list(string_list)
+        return result
+
+    @property
+    def num_plugins(self) -> int:
+        """Number of plugins in the loaded cache."""
+        return lib.sq_num_plugins(self._handle)
 
     # --- Connection management ---
 
