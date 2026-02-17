@@ -475,7 +475,7 @@ void Engine::handleCommand(const Command& cmd)
 // processBlock (audio thread)
 // ═══════════════════════════════════════════════════════════════════
 
-void Engine::processBlock(float** outputChannels, int numChannels, int numSamples)
+void Engine::processBlock(float* const* outputChannels, int numChannels, int numSamples)
 {
     // 1. Drain pending commands
     commandQueue_.processPending([this](const Command& cmd) { handleCommand(cmd); });

@@ -243,6 +243,24 @@ def _load_lib():
     lib.sq_schedule_param_change.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_double,
                                              ctypes.c_char_p, ctypes.c_float]
 
+    # --- Audio device ---
+
+    lib.sq_start.restype = ctypes.c_bool
+    lib.sq_start.argtypes = [ctypes.c_void_p, ctypes.c_double, ctypes.c_int,
+                              ctypes.POINTER(ctypes.c_char_p)]
+
+    lib.sq_stop.restype = None
+    lib.sq_stop.argtypes = [ctypes.c_void_p]
+
+    lib.sq_is_running.restype = ctypes.c_bool
+    lib.sq_is_running.argtypes = [ctypes.c_void_p]
+
+    lib.sq_sample_rate.restype = ctypes.c_double
+    lib.sq_sample_rate.argtypes = [ctypes.c_void_p]
+
+    lib.sq_block_size.restype = ctypes.c_int
+    lib.sq_block_size.argtypes = [ctypes.c_void_p]
+
     # --- Plugin manager ---
 
     lib.sq_load_plugin_cache.restype = ctypes.c_bool

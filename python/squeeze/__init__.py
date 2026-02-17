@@ -219,6 +219,35 @@ class Squeeze:
         """Return total number of nodes (including output)."""
         return lib.sq_node_count(self._handle)
 
+    # --- Audio device ---
+
+    def start(self, sample_rate: float = 44100.0, block_size: int = 512) -> None:
+        """Start audio device. Raises SqueezeError if no device or start fails."""
+        error = ctypes.c_char_p(None)
+        ok = lib.sq_start(self._handle, sample_rate, block_size, ctypes.byref(error))
+        if not ok:
+            check_error(error)
+            raise SqueezeError("Failed to start audio device")
+
+    def stop(self) -> None:
+        """Stop audio device. No-op if not running."""
+        lib.sq_stop(self._handle)
+
+    @property
+    def is_running(self) -> bool:
+        """True if the audio device is currently running."""
+        return lib.sq_is_running(self._handle)
+
+    @property
+    def sample_rate(self) -> float:
+        """Actual device sample rate (0.0 if not running)."""
+        return lib.sq_sample_rate(self._handle)
+
+    @property
+    def block_size(self) -> int:
+        """Actual device block size (0 if not running)."""
+        return lib.sq_block_size(self._handle)
+
     # --- Testing ---
 
     def prepare_for_testing(self, sample_rate: float = 44100.0, block_size: int = 512):

@@ -1,4 +1,5 @@
 #include "ffi/squeeze_ffi.h"
+#include "core/AudioDevice.h"
 #include "core/Engine.h"
 #include "core/GainNode.h"
 #include "core/Logger.h"
@@ -8,6 +9,7 @@
 
 #include <juce_events/juce_events.h>
 #include <cstring>
+#include <mutex>
 #include <new>
 
 // --- EngineHandle ---
@@ -15,6 +17,8 @@
 struct EngineHandle {
     squeeze::Engine engine;
     squeeze::PluginManager pluginManager;
+    squeeze::AudioDevice audioDevice{engine};
+    std::mutex audioMutex;
 };
 
 static EngineHandle* cast(SqEngine e)
@@ -401,6 +405,43 @@ SqStringList sq_available_plugins(SqEngine engine)
 int sq_num_plugins(SqEngine engine)
 {
     return cast(engine)->pluginManager.getNumPlugins();
+}
+
+// --- Audio device ---
+
+bool sq_start(SqEngine engine, double sample_rate, int block_size, char** error)
+{
+    auto* h = cast(engine);
+    std::lock_guard<std::mutex> lock(h->audioMutex);
+    std::string err;
+    bool ok = h->audioDevice.start(sample_rate, block_size, err);
+    if (!ok)
+        set_error(error, err);
+    else if (error)
+        *error = nullptr;
+    return ok;
+}
+
+void sq_stop(SqEngine engine)
+{
+    auto* h = cast(engine);
+    std::lock_guard<std::mutex> lock(h->audioMutex);
+    h->audioDevice.stop();
+}
+
+bool sq_is_running(SqEngine engine)
+{
+    return cast(engine)->audioDevice.isRunning();
+}
+
+double sq_sample_rate(SqEngine engine)
+{
+    return cast(engine)->audioDevice.getSampleRate();
+}
+
+int sq_block_size(SqEngine engine)
+{
+    return cast(engine)->audioDevice.getBlockSize();
 }
 
 // --- Testing ---

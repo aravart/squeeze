@@ -206,6 +206,25 @@ SqStringList sq_available_plugins(SqEngine engine);
 /// Return the number of plugins in the loaded cache.
 int sq_num_plugins(SqEngine engine);
 
+/* ── Audio device ─────────────────────────────────────────────── */
+
+/// Start the audio device with the given sample rate and block size hints.
+/// Returns false on failure (sets *error). The actual device SR/BS may differ
+/// from the hints — use sq_sample_rate() / sq_block_size() to query actual values.
+bool sq_start(SqEngine engine, double sample_rate, int block_size, char** error);
+
+/// Stop the audio device. No-op if not running.
+void sq_stop(SqEngine engine);
+
+/// Returns true if the audio device is currently running.
+bool sq_is_running(SqEngine engine);
+
+/// Returns the actual device sample rate (0.0 if not running).
+double sq_sample_rate(SqEngine engine);
+
+/// Returns the actual device block size (0 if not running).
+int sq_block_size(SqEngine engine);
+
 /* ── Testing ──────────────────────────────────────────────────── */
 
 /// Prepare engine for headless testing. Must be called before sq_render().

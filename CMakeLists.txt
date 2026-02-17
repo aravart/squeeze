@@ -17,6 +17,7 @@ FetchContent_MakeAvailable(juce)
 
 # --- Squeeze Core (static library) ---
 add_library(squeeze_core STATIC
+    src/core/AudioDevice.cpp
     src/core/Engine.cpp
     src/core/Graph.cpp
     src/core/Logger.cpp
@@ -32,6 +33,7 @@ target_link_libraries(squeeze_core PUBLIC
     juce::juce_core
     juce::juce_events
     juce::juce_audio_basics
+    juce::juce_audio_devices
     juce::juce_audio_processors
 )
 
@@ -87,6 +89,7 @@ add_executable(squeeze_ffi_tests
     tests/ffi/NodeFFITests.cpp
     tests/ffi/GraphFFITests.cpp
     tests/ffi/PluginManagerFFITests.cpp
+    tests/ffi/AudioDeviceFFITests.cpp
 )
 
 target_link_libraries(squeeze_ffi_tests PRIVATE

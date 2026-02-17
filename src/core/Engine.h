@@ -88,7 +88,7 @@ public:
     bool scheduleParamChange(int nodeId, double beatTime, const std::string& paramName, float value);
 
     // --- Audio processing (audio thread) ---
-    void processBlock(float** outputChannels, int numChannels, int numSamples);
+    void processBlock(float* const* outputChannels, int numChannels, int numSamples);
 
     // --- Accessors ---
     double getSampleRate() const;
