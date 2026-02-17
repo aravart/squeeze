@@ -76,6 +76,12 @@ class Squeeze:
         """Add a GainNode. Returns node id."""
         return lib.sq_add_gain(self._handle)
 
+    def add_test_synth(self) -> int:
+        """Add a test synth (PluginNode wrapping TestProcessor).
+        0 audio in, 2 audio out, accepts MIDI. Has 'Gain' and 'Mix' params.
+        Returns node id."""
+        return lib.sq_add_test_synth(self._handle)
+
     def remove_node(self, node_id: int) -> bool:
         """Remove a node by id. Returns False if not found."""
         return lib.sq_remove_node(self._handle, node_id)

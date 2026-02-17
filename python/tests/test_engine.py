@@ -125,3 +125,51 @@ def test_event_scheduling_stubs_return_false(engine):
     assert engine.schedule_note_off(1, 1.0, 1, 60) is False
     assert engine.schedule_cc(1, 0.0, 1, 1, 64) is False
     assert engine.schedule_param_change(1, 0.0, "gain", 0.5) is False
+
+
+# ═══════════════════════════════════════════════════════════════════
+# PluginNode / Test Synth
+# ═══════════════════════════════════════════════════════════════════
+
+def test_add_test_synth_returns_valid_id(engine):
+    """add_test_synth returns a valid node id."""
+    synth = engine.add_test_synth()
+    assert synth > 0
+    assert engine.node_count() == 2  # output + synth
+
+
+def test_test_synth_ports(engine):
+    """Test synth has audio out, MIDI in, and MIDI out ports."""
+    synth = engine.add_test_synth()
+    ports = engine.get_ports(synth)
+
+    names = {p["name"] for p in ports}
+    assert "out" in names
+    assert "midi_in" in names
+    assert "midi_out" in names
+
+    audio_out = [p for p in ports if p["name"] == "out"]
+    assert len(audio_out) == 1
+    assert audio_out[0]["signal_type"] == "audio"
+    assert audio_out[0]["channels"] == 2
+
+
+def test_test_synth_parameters(engine):
+    """Test synth has Gain and Mix parameters."""
+    synth = engine.add_test_synth()
+    descs = engine.param_descriptors(synth)
+    param_names = {d["name"] for d in descs}
+    assert "Gain" in param_names
+    assert "Mix" in param_names
+
+    assert engine.get_param(synth, "Gain") == 1.0
+    engine.set_param(synth, "Gain", 0.25)
+    assert engine.get_param(synth, "Gain") != 1.0
+
+
+def test_test_synth_connect_and_render(engine):
+    """Connect test synth to output and render."""
+    engine.prepare_for_testing(44100.0, 512)
+    synth = engine.add_test_synth()
+    engine.connect(synth, "out", engine.output, "in")
+    engine.render(512)

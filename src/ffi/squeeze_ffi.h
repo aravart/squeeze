@@ -174,6 +174,13 @@ bool sq_schedule_cc(SqEngine engine, int node_id, double beat_time,
 bool sq_schedule_param_change(SqEngine engine, int node_id, double beat_time,
                               const char* param_name, float value);
 
+/* ── Plugin nodes ─────────────────────────────────────────────── */
+
+/// Add a built-in test synth (PluginNode wrapping TestProcessor).
+/// 0 audio inputs, 2 audio outputs, accepts MIDI. Has "Gain" and "Mix" parameters.
+/// Returns node id (>0).
+int sq_add_test_synth(SqEngine engine);
+
 /* ── Testing ──────────────────────────────────────────────────── */
 
 /// Prepare engine for headless testing. Must be called before sq_render().

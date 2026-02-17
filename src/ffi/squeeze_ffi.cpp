@@ -2,6 +2,8 @@
 #include "core/Engine.h"
 #include "core/GainNode.h"
 #include "core/Logger.h"
+#include "core/PluginNode.h"
+#include "core/TestProcessor.h"
 
 #include <juce_events/juce_events.h>
 #include <cstring>
@@ -328,6 +330,15 @@ bool sq_schedule_param_change(SqEngine engine, int node_id, double beat_time,
                               const char* param_name, float value)
 {
     return eng(engine).scheduleParamChange(node_id, beat_time, param_name, value);
+}
+
+// --- Plugin nodes ---
+
+int sq_add_test_synth(SqEngine engine)
+{
+    auto proc = std::make_unique<squeeze::TestProcessor>(0, 2, true);
+    auto node = std::make_unique<squeeze::PluginNode>(std::move(proc), 0, 2, true);
+    return eng(engine).addNode("test_synth", std::move(node));
 }
 
 // --- Testing ---

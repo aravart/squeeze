@@ -21,6 +21,7 @@ add_library(squeeze_core STATIC
     src/core/Graph.cpp
     src/core/Logger.cpp
     src/core/MidiRouter.cpp
+    src/core/PluginNode.cpp
     src/core/Port.cpp
 )
 
@@ -30,6 +31,7 @@ target_link_libraries(squeeze_core PUBLIC
     juce::juce_core
     juce::juce_events
     juce::juce_audio_basics
+    juce::juce_audio_processors
 )
 
 target_compile_definitions(squeeze_core PUBLIC
@@ -68,6 +70,7 @@ add_executable(squeeze_unit_tests
     tests/core/CommandQueueTests.cpp
     tests/core/MidiRouterTests.cpp
     tests/core/EngineTests.cpp
+    tests/core/PluginNodeTests.cpp
 )
 
 target_link_libraries(squeeze_unit_tests PRIVATE

@@ -111,6 +111,10 @@ def _load_lib():
     lib.sq_add_gain.restype = ctypes.c_int
     lib.sq_add_gain.argtypes = [ctypes.c_void_p]
 
+    # sq_add_test_synth
+    lib.sq_add_test_synth.restype = ctypes.c_int
+    lib.sq_add_test_synth.argtypes = [ctypes.c_void_p]
+
     # sq_remove_node
     lib.sq_remove_node.restype = ctypes.c_bool
     lib.sq_remove_node.argtypes = [ctypes.c_void_p, ctypes.c_int]
