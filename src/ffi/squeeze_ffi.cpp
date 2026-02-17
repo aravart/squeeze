@@ -3,6 +3,7 @@
 #include "core/Engine.h"
 #include "core/GainNode.h"
 #include "core/Logger.h"
+#include "core/MidiDeviceManager.h"
 #include "core/PluginManager.h"
 #include "core/PluginNode.h"
 #include "core/TestProcessor.h"
@@ -18,6 +19,7 @@ struct EngineHandle {
     squeeze::Engine engine;
     squeeze::PluginManager pluginManager;
     squeeze::AudioDevice audioDevice{engine};
+    squeeze::MidiDeviceManager midiDeviceManager{engine.getMidiRouter()};
     std::mutex audioMutex;
 };
 
@@ -405,6 +407,105 @@ SqStringList sq_available_plugins(SqEngine engine)
 int sq_num_plugins(SqEngine engine)
 {
     return cast(engine)->pluginManager.getNumPlugins();
+}
+
+// --- MIDI device management ---
+
+void sq_free_midi_route_list(SqMidiRouteList list)
+{
+    for (int i = 0; i < list.count; i++)
+        free(list.routes[i].device);
+    free(list.routes);
+}
+
+SqStringList sq_midi_devices(SqEngine engine)
+{
+    SqStringList result = {nullptr, 0};
+    auto names = cast(engine)->midiDeviceManager.getAvailableDevices();
+    if (names.empty()) return result;
+
+    result.count = static_cast<int>(names.size());
+    result.items = static_cast<char**>(malloc(sizeof(char*) * names.size()));
+    for (int i = 0; i < result.count; i++)
+        result.items[i] = strdup(names[static_cast<size_t>(i)].c_str());
+    return result;
+}
+
+bool sq_midi_open(SqEngine engine, const char* name, char** error)
+{
+    std::string err;
+    bool ok = cast(engine)->midiDeviceManager.openDevice(name, err);
+    if (!ok)
+        set_error(error, err);
+    else if (error)
+        *error = nullptr;
+    return ok;
+}
+
+void sq_midi_close(SqEngine engine, const char* name)
+{
+    cast(engine)->midiDeviceManager.closeDevice(name);
+}
+
+SqStringList sq_midi_open_devices(SqEngine engine)
+{
+    SqStringList result = {nullptr, 0};
+    auto names = cast(engine)->midiDeviceManager.getOpenDevices();
+    if (names.empty()) return result;
+
+    result.count = static_cast<int>(names.size());
+    result.items = static_cast<char**>(malloc(sizeof(char*) * names.size()));
+    for (int i = 0; i < result.count; i++)
+        result.items[i] = strdup(names[static_cast<size_t>(i)].c_str());
+    return result;
+}
+
+// --- MIDI routing ---
+
+int sq_midi_route(SqEngine engine, const char* device, int node_id,
+                  int channel_filter, int note_filter, char** error)
+{
+    auto& router = eng(engine).getMidiRouter();
+    std::string err;
+    int id = router.addRoute(device, node_id, channel_filter, note_filter, err);
+    if (id < 0)
+    {
+        set_error(error, err);
+        return -1;
+    }
+    router.commit();
+    if (error) *error = nullptr;
+    return id;
+}
+
+bool sq_midi_unroute(SqEngine engine, int route_id)
+{
+    auto& router = eng(engine).getMidiRouter();
+    bool ok = router.removeRoute(route_id);
+    if (ok)
+        router.commit();
+    return ok;
+}
+
+SqMidiRouteList sq_midi_routes(SqEngine engine)
+{
+    SqMidiRouteList result = {nullptr, 0};
+    auto routes = eng(engine).getMidiRouter().getRoutes();
+    if (routes.empty()) return result;
+
+    result.count = static_cast<int>(routes.size());
+    result.routes = static_cast<SqMidiRoute*>(
+        malloc(sizeof(SqMidiRoute) * routes.size()));
+
+    for (int i = 0; i < result.count; i++)
+    {
+        result.routes[i].id = routes[static_cast<size_t>(i)].id;
+        result.routes[i].device = strdup(routes[static_cast<size_t>(i)].deviceName.c_str());
+        result.routes[i].node_id = routes[static_cast<size_t>(i)].nodeId;
+        result.routes[i].channel_filter = routes[static_cast<size_t>(i)].channelFilter;
+        result.routes[i].note_filter = routes[static_cast<size_t>(i)].noteFilter;
+    }
+    return result;
 }
 
 // --- Audio device ---

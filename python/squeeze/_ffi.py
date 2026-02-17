@@ -79,6 +79,21 @@ class SqStringList(ctypes.Structure):
         ("count", ctypes.c_int),
     ]
 
+class SqMidiRoute(ctypes.Structure):
+    _fields_ = [
+        ("id", ctypes.c_int),
+        ("device", ctypes.c_char_p),
+        ("node_id", ctypes.c_int),
+        ("channel_filter", ctypes.c_int),
+        ("note_filter", ctypes.c_int),
+    ]
+
+class SqMidiRouteList(ctypes.Structure):
+    _fields_ = [
+        ("routes", ctypes.POINTER(SqMidiRoute)),
+        ("count", ctypes.c_int),
+    ]
+
 
 LogCallbackType = ctypes.CFUNCTYPE(None, ctypes.c_int, ctypes.c_char_p, ctypes.c_void_p)
 
@@ -279,6 +294,37 @@ def _load_lib():
 
     lib.sq_num_plugins.restype = ctypes.c_int
     lib.sq_num_plugins.argtypes = [ctypes.c_void_p]
+
+    # --- MIDI device management ---
+
+    lib.sq_midi_devices.restype = SqStringList
+    lib.sq_midi_devices.argtypes = [ctypes.c_void_p]
+
+    lib.sq_midi_open.restype = ctypes.c_bool
+    lib.sq_midi_open.argtypes = [ctypes.c_void_p, ctypes.c_char_p,
+                                  ctypes.POINTER(ctypes.c_char_p)]
+
+    lib.sq_midi_close.restype = None
+    lib.sq_midi_close.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
+
+    lib.sq_midi_open_devices.restype = SqStringList
+    lib.sq_midi_open_devices.argtypes = [ctypes.c_void_p]
+
+    # --- MIDI routing ---
+
+    lib.sq_midi_route.restype = ctypes.c_int
+    lib.sq_midi_route.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int,
+                                   ctypes.c_int, ctypes.c_int,
+                                   ctypes.POINTER(ctypes.c_char_p)]
+
+    lib.sq_midi_unroute.restype = ctypes.c_bool
+    lib.sq_midi_unroute.argtypes = [ctypes.c_void_p, ctypes.c_int]
+
+    lib.sq_midi_routes.restype = SqMidiRouteList
+    lib.sq_midi_routes.argtypes = [ctypes.c_void_p]
+
+    lib.sq_free_midi_route_list.restype = None
+    lib.sq_free_midi_route_list.argtypes = [SqMidiRouteList]
 
     # --- Testing ---
 

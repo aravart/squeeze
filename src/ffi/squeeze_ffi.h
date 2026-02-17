@@ -206,6 +206,51 @@ SqStringList sq_available_plugins(SqEngine engine);
 /// Return the number of plugins in the loaded cache.
 int sq_num_plugins(SqEngine engine);
 
+/* ── MIDI device C structs ────────────────────────────────────── */
+
+typedef struct {
+    int   id;
+    char* device;
+    int   node_id;
+    int   channel_filter;
+    int   note_filter;
+} SqMidiRoute;
+
+typedef struct {
+    SqMidiRoute* routes;
+    int          count;
+} SqMidiRouteList;
+
+/// Free a MIDI route list returned by sq_midi_routes().
+void sq_free_midi_route_list(SqMidiRouteList list);
+
+/* ── MIDI device management ──────────────────────────────────── */
+
+/// Return available MIDI input devices. Free with sq_free_string_list().
+SqStringList sq_midi_devices(SqEngine engine);
+
+/// Open a MIDI input device by name. Returns false on failure (sets *error).
+bool sq_midi_open(SqEngine engine, const char* name, char** error);
+
+/// Close a MIDI input device by name. No-op if not open.
+void sq_midi_close(SqEngine engine, const char* name);
+
+/// Return currently open MIDI devices. Free with sq_free_string_list().
+SqStringList sq_midi_open_devices(SqEngine engine);
+
+/* ── MIDI routing ─────────────────────────────────────────────── */
+
+/// Route a MIDI device to a node. Returns route id (>= 0), -1 on failure (sets *error).
+/// channel_filter: 0=all, 1-16=specific. note_filter: -1=all, 0-127=specific.
+int sq_midi_route(SqEngine engine, const char* device, int node_id,
+                  int channel_filter, int note_filter, char** error);
+
+/// Remove a MIDI route by id. Returns false if not found.
+bool sq_midi_unroute(SqEngine engine, int route_id);
+
+/// Get all MIDI routes. Free with sq_free_midi_route_list().
+SqMidiRouteList sq_midi_routes(SqEngine engine);
+
 /* ── Audio device ─────────────────────────────────────────────── */
 
 /// Start the audio device with the given sample rate and block size hints.

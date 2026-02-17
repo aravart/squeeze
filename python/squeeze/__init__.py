@@ -2,7 +2,7 @@
 
 import ctypes
 
-from squeeze._ffi import lib, check_error, LogCallbackType, SqStringList
+from squeeze._ffi import lib, check_error, LogCallbackType, SqStringList, SqMidiRouteList
 
 
 class SqueezeError(Exception):
@@ -247,6 +247,71 @@ class Squeeze:
     def block_size(self) -> int:
         """Actual device block size (0 if not running)."""
         return lib.sq_block_size(self._handle)
+
+    # --- MIDI device management ---
+
+    @property
+    def midi_devices(self) -> list:
+        """List of available MIDI input device names."""
+        string_list = lib.sq_midi_devices(self._handle)
+        result = [string_list.items[i].decode() for i in range(string_list.count)]
+        lib.sq_free_string_list(string_list)
+        return result
+
+    def midi_open(self, name: str) -> None:
+        """Open a MIDI input device by name. Raises SqueezeError on failure."""
+        error = ctypes.c_char_p(None)
+        ok = lib.sq_midi_open(self._handle, name.encode(), ctypes.byref(error))
+        if not ok:
+            check_error(error)
+            raise SqueezeError(f"Failed to open MIDI device '{name}'")
+
+    def midi_close(self, name: str) -> None:
+        """Close a MIDI input device by name. No-op if not open."""
+        lib.sq_midi_close(self._handle, name.encode())
+
+    @property
+    def midi_open_devices(self) -> list:
+        """List of currently open MIDI device names."""
+        string_list = lib.sq_midi_open_devices(self._handle)
+        result = [string_list.items[i].decode() for i in range(string_list.count)]
+        lib.sq_free_string_list(string_list)
+        return result
+
+    def midi_route(self, device: str, node_id: int,
+                   channel_filter: int = 0, note_filter: int = -1) -> int:
+        """Route a MIDI device to a node. Returns route id.
+        channel_filter: 0=all, 1-16=specific channel.
+        note_filter: -1=all, 0-127=specific note.
+        Raises SqueezeError on failure."""
+        error = ctypes.c_char_p(None)
+        route_id = lib.sq_midi_route(self._handle, device.encode(), node_id,
+                                     channel_filter, note_filter, ctypes.byref(error))
+        if route_id < 0:
+            check_error(error)
+            raise SqueezeError(f"Failed to route MIDI device '{device}'")
+        return route_id
+
+    def midi_unroute(self, route_id: int) -> bool:
+        """Remove a MIDI route by id. Returns False if not found."""
+        return lib.sq_midi_unroute(self._handle, route_id)
+
+    @property
+    def midi_routes(self) -> list:
+        """List of active MIDI route dicts."""
+        route_list = lib.sq_midi_routes(self._handle)
+        result = []
+        for i in range(route_list.count):
+            r = route_list.routes[i]
+            result.append({
+                "id": r.id,
+                "device": r.device.decode(),
+                "node_id": r.node_id,
+                "channel_filter": r.channel_filter,
+                "note_filter": r.note_filter,
+            })
+        lib.sq_free_midi_route_list(route_list)
+        return result
 
     # --- Testing ---
 

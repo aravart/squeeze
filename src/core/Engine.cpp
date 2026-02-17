@@ -584,6 +584,11 @@ int Engine::getBlockSize() const
     return blockSize_;
 }
 
+MidiRouter& Engine::getMidiRouter()
+{
+    return midiRouter_;
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // Testing
 // ═══════════════════════════════════════════════════════════════════

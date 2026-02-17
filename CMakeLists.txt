@@ -21,6 +21,7 @@ add_library(squeeze_core STATIC
     src/core/Engine.cpp
     src/core/Graph.cpp
     src/core/Logger.cpp
+    src/core/MidiDeviceManager.cpp
     src/core/MidiRouter.cpp
     src/core/PluginManager.cpp
     src/core/PluginNode.cpp
@@ -90,6 +91,7 @@ add_executable(squeeze_ffi_tests
     tests/ffi/GraphFFITests.cpp
     tests/ffi/PluginManagerFFITests.cpp
     tests/ffi/AudioDeviceFFITests.cpp
+    tests/ffi/MidiDeviceManagerFFITests.cpp
 )
 
 target_link_libraries(squeeze_ffi_tests PRIVATE

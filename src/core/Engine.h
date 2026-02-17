@@ -93,6 +93,7 @@ public:
     // --- Accessors ---
     double getSampleRate() const;
     int getBlockSize() const;
+    MidiRouter& getMidiRouter();
 
     // --- Testing ---
     void prepareForTesting(double sampleRate, int blockSize);
