@@ -194,6 +194,20 @@ class Node:
     def __rrshift__(self, other: "Node") -> Connection:
         """Support reverse: allows Node on right side of >>."""
 
+    # --- Plugin editor ---
+
+    def open_editor(self) -> None:
+        """Open the native plugin editor window.
+        Raises SqueezeError if not a plugin, no editor, or already open."""
+
+    def close_editor(self) -> None:
+        """Close the plugin editor window.
+        Raises SqueezeError if no editor is open."""
+
+    @property
+    def editor_open(self) -> bool:
+        """True if the editor window is currently open for this node."""
+
     # --- Event scheduling (delegates to Engine) ---
 
     def note_on(self, beat: float, channel: int, note: int,
@@ -657,6 +671,13 @@ class Engine:
         """Actual device block size (0 if not running)."""
         return self._sq.block_size
 
+    # --- Plugin editor ---
+
+    @staticmethod
+    def run_dispatch_loop(timeout_ms: int = 50) -> None:
+        """Pump the JUCE message/event loop for up to timeout_ms milliseconds.
+        Call from the main thread so GUI windows render and respond to input."""
+
     # --- Testing ---
 
     def prepare_for_testing(self, sample_rate: float = 44100.0,
@@ -769,7 +790,6 @@ from squeeze._low_level import SqueezeError, set_log_level, set_log_callback
 - **New C ABI surface** — this is purely a Python layer on top of the existing FFI
 - **Async or threaded Python access** — all calls are synchronous, matching the C ABI's control-thread model
 - **Audio buffer access from Python** — no direct access to audio data (same as current API)
-- **Plugin GUI** — out of scope
 - **Pattern sequencing or composition helpers** — the API exposes the scheduling primitives, not higher-level music abstractions
 - **Automatic MIDI device discovery/reconnection** — users poll `midi.devices` as needed
 

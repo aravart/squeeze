@@ -446,6 +446,37 @@ class TestTestingMode:
         eng.render(512)
 
 
+# --- Editor ---
+
+class TestEditor:
+    def test_open_editor_on_gain_raises(self, eng):
+        """Gain is not a plugin — open_editor should raise."""
+        gain = eng.add_gain()
+        with pytest.raises(SqueezeError):
+            gain.open_editor()
+
+    def test_editor_open_false_by_default(self, eng):
+        """editor_open returns False when no editor is open."""
+        gain = eng.add_gain()
+        assert gain.editor_open is False
+
+    def test_close_editor_on_gain_raises(self, eng):
+        """No editor open — close_editor should raise."""
+        gain = eng.add_gain()
+        with pytest.raises(SqueezeError):
+            gain.close_editor()
+
+    def test_run_dispatch_loop_does_not_crash(self, eng):
+        """Engine.run_dispatch_loop(0) should not crash."""
+        Engine.run_dispatch_loop(0)
+
+    def test_open_editor_on_test_synth_raises(self, eng):
+        """Test synth has no editor — open_editor should raise."""
+        synth = eng.add_test_synth()
+        with pytest.raises(SqueezeError):
+            synth.open_editor()
+
+
 # --- Imports ---
 
 class TestImports:

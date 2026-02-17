@@ -313,6 +313,36 @@ class Squeeze:
         lib.sq_free_midi_route_list(route_list)
         return result
 
+    # --- Plugin editor ---
+
+    def open_editor(self, node_id: int) -> None:
+        """Open the native editor window for a plugin node.
+        Raises SqueezeError on failure."""
+        error = ctypes.c_char_p(None)
+        ok = lib.sq_open_editor(self._handle, node_id, ctypes.byref(error))
+        if not ok:
+            check_error(error)
+            raise SqueezeError(f"Failed to open editor for node {node_id}")
+
+    def close_editor(self, node_id: int) -> None:
+        """Close the editor window for a plugin node.
+        Raises SqueezeError on failure."""
+        error = ctypes.c_char_p(None)
+        ok = lib.sq_close_editor(self._handle, node_id, ctypes.byref(error))
+        if not ok:
+            check_error(error)
+            raise SqueezeError(f"Failed to close editor for node {node_id}")
+
+    def has_editor(self, node_id: int) -> bool:
+        """Returns True if an editor window is currently open for this node."""
+        return lib.sq_has_editor(self._handle, node_id)
+
+    @staticmethod
+    def run_dispatch_loop(timeout_ms: int = 50) -> None:
+        """Pump the JUCE message/event loop for up to timeout_ms milliseconds.
+        Call from the main thread so GUI windows render and respond to input."""
+        lib.sq_run_dispatch_loop(timeout_ms)
+
     # --- Testing ---
 
     def prepare_for_testing(self, sample_rate: float = 44100.0, block_size: int = 512):

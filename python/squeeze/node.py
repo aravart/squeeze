@@ -172,6 +172,23 @@ class Node:
         """Schedule a parameter change at the given beat time."""
         return self._sq.schedule_param_change(self._id, beat, param_name, value)
 
+    # --- Editor ---
+
+    def open_editor(self) -> None:
+        """Open the native plugin editor window.
+        Raises SqueezeError if not a plugin, no editor, or already open."""
+        self._sq.open_editor(self._id)
+
+    def close_editor(self) -> None:
+        """Close the plugin editor window.
+        Raises SqueezeError if no editor is open."""
+        self._sq.close_editor(self._id)
+
+    @property
+    def editor_open(self) -> bool:
+        """True if the editor window is currently open for this node."""
+        return self._sq.has_editor(self._id)
+
     # --- Lifecycle ---
 
     def remove(self) -> bool:

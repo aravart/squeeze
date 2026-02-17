@@ -43,17 +43,20 @@ target_compile_definitions(squeeze_core PUBLIC
     JUCE_USE_CURL=0
     JUCE_DISPLAY_SPLASH_SCREEN=0
     JUCE_PLUGINHOST_VST3=1
+    JUCE_MODAL_LOOPS_PERMITTED=1
 )
 
 # --- Squeeze FFI (shared library, C ABI) ---
 add_library(squeeze_ffi SHARED
     src/ffi/squeeze_ffi.cpp
+    src/gui/EditorManager.cpp
 )
 
 target_include_directories(squeeze_ffi PUBLIC src)
 
 target_link_libraries(squeeze_ffi PRIVATE
     squeeze_core
+    juce::juce_gui_basics
 )
 
 # --- Catch2 ---
@@ -93,6 +96,7 @@ add_executable(squeeze_ffi_tests
     tests/ffi/PluginManagerFFITests.cpp
     tests/ffi/AudioDeviceFFITests.cpp
     tests/ffi/MidiDeviceManagerFFITests.cpp
+    tests/ffi/EditorFFITests.cpp
 )
 
 target_link_libraries(squeeze_ffi_tests PRIVATE

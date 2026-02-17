@@ -270,6 +270,25 @@ double sq_sample_rate(SqEngine engine);
 /// Returns the actual device block size (0 if not running).
 int sq_block_size(SqEngine engine);
 
+/* ── Plugin editor ────────────────────────────────────────────── */
+
+/// Open the native editor window for a plugin node.
+/// Returns false on failure (sets *error). Caller must sq_free_string the error.
+/// Fails if: node not found, not a plugin, no editor, already open, GUI timeout.
+bool sq_open_editor(SqEngine engine, int node_id, char** error);
+
+/// Close the editor window for a plugin node.
+/// Returns false on failure (sets *error). Caller must sq_free_string the error.
+bool sq_close_editor(SqEngine engine, int node_id, char** error);
+
+/// Returns true if an editor window is currently open for this node.
+bool sq_has_editor(SqEngine engine, int node_id);
+
+/// Pump the JUCE message/event loop for up to timeout_ms milliseconds.
+/// Call this from the main thread so GUI windows render and respond to input.
+/// Does not require an SqEngine handle.
+void sq_run_dispatch_loop(int timeout_ms);
+
 /* ── Testing ──────────────────────────────────────────────────── */
 
 /// Prepare engine for headless testing. Must be called before sq_render().

@@ -167,6 +167,14 @@ class Engine:
         """Actual device block size (0 if not running)."""
         return self._sq.block_size
 
+    # --- Plugin editor ---
+
+    @staticmethod
+    def run_dispatch_loop(timeout_ms: int = 50) -> None:
+        """Pump the JUCE message/event loop for up to timeout_ms milliseconds.
+        Call from the main thread so GUI windows render and respond to input."""
+        Squeeze.run_dispatch_loop(timeout_ms)
+
     # --- Testing ---
 
     def prepare_for_testing(self, sample_rate: float = 44100.0,

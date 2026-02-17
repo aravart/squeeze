@@ -7,6 +7,7 @@
 #include "core/PluginManager.h"
 #include "core/PluginNode.h"
 #include "core/TestProcessor.h"
+#include "gui/EditorManager.h"
 
 #include <juce_events/juce_events.h>
 #include <cstring>
@@ -20,6 +21,7 @@ struct EngineHandle {
     squeeze::PluginManager pluginManager;
     squeeze::AudioDevice audioDevice{engine};
     squeeze::MidiDeviceManager midiDeviceManager{engine.getMidiRouter()};
+    squeeze::EditorManager editorManager;
     std::mutex audioMutex;
 };
 
@@ -96,6 +98,7 @@ SqEngine sq_engine_create(char** error)
 void sq_engine_destroy(SqEngine engine)
 {
     if (!engine) return;
+    cast(engine)->editorManager.closeAll();
     delete cast(engine);
 }
 
@@ -543,6 +546,44 @@ double sq_sample_rate(SqEngine engine)
 int sq_block_size(SqEngine engine)
 {
     return cast(engine)->audioDevice.getBlockSize();
+}
+
+// --- Plugin editor ---
+
+bool sq_open_editor(SqEngine engine, int node_id, char** error)
+{
+    auto* h = cast(engine);
+    std::string err;
+    bool ok = h->editorManager.open(h->engine, node_id, err);
+    if (!ok)
+        set_error(error, err);
+    else if (error)
+        *error = nullptr;
+    return ok;
+}
+
+bool sq_close_editor(SqEngine engine, int node_id, char** error)
+{
+    auto* h = cast(engine);
+    std::string err;
+    bool ok = h->editorManager.close(node_id, err);
+    if (!ok)
+        set_error(error, err);
+    else if (error)
+        *error = nullptr;
+    return ok;
+}
+
+bool sq_has_editor(SqEngine engine, int node_id)
+{
+    return cast(engine)->editorManager.hasEditor(node_id);
+}
+
+void sq_run_dispatch_loop(int timeout_ms)
+{
+    auto* mm = juce::MessageManager::getInstance();
+    if (mm != nullptr)
+        mm->runDispatchLoopUntil(timeout_ms);
 }
 
 // --- Testing ---

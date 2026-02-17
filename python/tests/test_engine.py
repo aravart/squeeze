@@ -235,3 +235,45 @@ def test_add_plugin_unknown_name_raises(engine):
     engine.prepare_for_testing(44100.0, 512)
     with pytest.raises(SqueezeError):
         engine.add_plugin("NonexistentPlugin")
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Plugin editor
+# ═══════════════════════════════════════════════════════════════════
+
+def test_open_editor_on_gain_raises(engine):
+    """open_editor on a GainNode raises SqueezeError (not a plugin)."""
+    gain = engine.add_gain()
+    with pytest.raises(SqueezeError):
+        engine.open_editor(gain)
+
+
+def test_has_editor_false_by_default(engine):
+    """has_editor returns False when no editor is open."""
+    gain = engine.add_gain()
+    assert engine.has_editor(gain) is False
+
+
+def test_close_editor_when_none_open_raises(engine):
+    """close_editor when no editor open raises SqueezeError."""
+    gain = engine.add_gain()
+    with pytest.raises(SqueezeError):
+        engine.close_editor(gain)
+
+
+def test_run_dispatch_loop_does_not_crash():
+    """run_dispatch_loop(0) does not crash."""
+    Squeeze.run_dispatch_loop(0)
+
+
+def test_open_editor_nonexistent_node_raises(engine):
+    """open_editor on non-existent node raises SqueezeError."""
+    with pytest.raises(SqueezeError):
+        engine.open_editor(9999)
+
+
+def test_open_editor_test_synth_no_editor_raises(engine):
+    """open_editor on test synth raises (TestProcessor has no editor)."""
+    synth = engine.add_test_synth()
+    with pytest.raises(SqueezeError):
+        engine.open_editor(synth)

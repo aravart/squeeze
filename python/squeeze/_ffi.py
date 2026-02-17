@@ -326,6 +326,22 @@ def _load_lib():
     lib.sq_free_midi_route_list.restype = None
     lib.sq_free_midi_route_list.argtypes = [SqMidiRouteList]
 
+    # --- Plugin editor ---
+
+    lib.sq_open_editor.restype = ctypes.c_bool
+    lib.sq_open_editor.argtypes = [ctypes.c_void_p, ctypes.c_int,
+                                    ctypes.POINTER(ctypes.c_char_p)]
+
+    lib.sq_close_editor.restype = ctypes.c_bool
+    lib.sq_close_editor.argtypes = [ctypes.c_void_p, ctypes.c_int,
+                                     ctypes.POINTER(ctypes.c_char_p)]
+
+    lib.sq_has_editor.restype = ctypes.c_bool
+    lib.sq_has_editor.argtypes = [ctypes.c_void_p, ctypes.c_int]
+
+    lib.sq_run_dispatch_loop.restype = None
+    lib.sq_run_dispatch_loop.argtypes = [ctypes.c_int]
+
     # --- Testing ---
 
     lib.sq_prepare_for_testing.restype = None

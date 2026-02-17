@@ -86,6 +86,14 @@ def main():
         # --- Connect synth -> output ---
         conn = synth >> engine.output
         print(f"Graph: {synth.name}:{conn.src_port} -> output:{conn.dst_port}")
+
+        # --- Open plugin editor (if available) ---
+        if args.plugin:
+            try:
+                synth.open_editor()
+                print(f"Editor: {synth.name}")
+            except SqueezeError:
+                pass  # no editor or not a plugin — fine
         print()
 
         # --- MIDI devices ---
@@ -108,7 +116,7 @@ def main():
             print("Playing! Press Ctrl+C to stop.\n")
 
             while True:
-                time.sleep(1)
+                Engine.run_dispatch_loop(50)
 
         except SqueezeError:
             print("No audio device available — rendering offline instead.")
