@@ -116,7 +116,7 @@ def main():
             print("Playing! Press Ctrl+C to stop.\n")
 
             while True:
-                Engine.run_dispatch_loop(50)
+                Engine.process_events(timeout_ms=50)
 
         except SqueezeError:
             print("No audio device available — rendering offline instead.")

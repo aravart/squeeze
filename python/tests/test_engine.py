@@ -261,9 +261,10 @@ def test_close_editor_when_none_open_raises(engine):
         engine.close_editor(gain)
 
 
-def test_run_dispatch_loop_does_not_crash():
-    """run_dispatch_loop(0) does not crash."""
-    Squeeze.run_dispatch_loop(0)
+def test_process_events_does_not_crash():
+    """process_events() does not crash (non-blocking default)."""
+    Squeeze.process_events()
+    Squeeze.process_events(timeout_ms=0)
 
 
 def test_open_editor_nonexistent_node_raises(engine):

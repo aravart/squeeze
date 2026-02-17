@@ -674,9 +674,10 @@ class Engine:
     # --- Plugin editor ---
 
     @staticmethod
-    def run_dispatch_loop(timeout_ms: int = 50) -> None:
-        """Pump the JUCE message/event loop for up to timeout_ms milliseconds.
-        Call from the main thread so GUI windows render and respond to input."""
+    def process_events(timeout_ms: int = 0) -> None:
+        """Process pending JUCE GUI/message events.
+        With timeout_ms=0 (default), non-blocking. With timeout_ms>0, blocking.
+        Call from the main thread."""
 
     # --- Testing ---
 

@@ -49,7 +49,7 @@ private:
 bool sq_open_editor(SqEngine engine, int node_id, char** error);
 bool sq_close_editor(SqEngine engine, int node_id, char** error);
 bool sq_has_editor(SqEngine engine, int node_id);
-void sq_run_dispatch_loop(int timeout_ms);
+void sq_process_events(int timeout_ms);
 ```
 
 ### Low-level Python (`_low_level.py`)
@@ -61,7 +61,7 @@ class Squeeze:
     def has_editor(self, node_id: int) -> bool:
 
     @staticmethod
-    def run_dispatch_loop(timeout_ms: int = 50) -> None:
+    def process_events(timeout_ms: int = 0) -> None:
 ```
 
 ### High-level Python (`node.py`, `engine.py`)
@@ -75,7 +75,7 @@ class Node:
 
 class Engine:
     @staticmethod
-    def run_dispatch_loop(timeout_ms: int = 50) -> None:
+    def process_events(timeout_ms: int = 0) -> None:
 ```
 
 ## Invariants
@@ -134,7 +134,7 @@ with Engine() as engine:
 
     # Main loop — pump GUI events
     while synth.editor_open:
-        Engine.run_dispatch_loop(50)
+        Engine.process_events(timeout_ms=50)
 
     engine.stop()
 ```

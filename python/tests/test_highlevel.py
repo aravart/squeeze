@@ -466,9 +466,10 @@ class TestEditor:
         with pytest.raises(SqueezeError):
             gain.close_editor()
 
-    def test_run_dispatch_loop_does_not_crash(self, eng):
-        """Engine.run_dispatch_loop(0) should not crash."""
-        Engine.run_dispatch_loop(0)
+    def test_process_events_does_not_crash(self, eng):
+        """Engine.process_events() should not crash."""
+        Engine.process_events()
+        Engine.process_events(timeout_ms=0)
 
     def test_open_editor_on_test_synth_raises(self, eng):
         """Test synth has no editor — open_editor should raise."""

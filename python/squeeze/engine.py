@@ -170,10 +170,33 @@ class Engine:
     # --- Plugin editor ---
 
     @staticmethod
-    def run_dispatch_loop(timeout_ms: int = 50) -> None:
-        """Pump the JUCE message/event loop for up to timeout_ms milliseconds.
-        Call from the main thread so GUI windows render and respond to input."""
-        Squeeze.run_dispatch_loop(timeout_ms)
+    def process_events(timeout_ms: int = 0) -> None:
+        """Process pending JUCE GUI/message events.
+
+        With timeout_ms=0 (default), processes pending events and returns
+        immediately (non-blocking). Use this to integrate with other event
+        loops::
+
+            # tkinter
+            def pump():
+                Engine.process_events()
+                root.after(16, pump)
+
+            # asyncio
+            async def pump():
+                while True:
+                    Engine.process_events()
+                    await asyncio.sleep(0.016)
+
+        With timeout_ms>0, processes events for up to that many milliseconds
+        (blocking). Convenient for simple scripts with no other event loop::
+
+            while running:
+                Engine.process_events(timeout_ms=50)
+
+        Must be called from the main thread.
+        """
+        Squeeze.process_events(timeout_ms)
 
     # --- Testing ---
 

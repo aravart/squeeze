@@ -339,8 +339,8 @@ def _load_lib():
     lib.sq_has_editor.restype = ctypes.c_bool
     lib.sq_has_editor.argtypes = [ctypes.c_void_p, ctypes.c_int]
 
-    lib.sq_run_dispatch_loop.restype = None
-    lib.sq_run_dispatch_loop.argtypes = [ctypes.c_int]
+    lib.sq_process_events.restype = None
+    lib.sq_process_events.argtypes = [ctypes.c_int]
 
     # --- Testing ---
 

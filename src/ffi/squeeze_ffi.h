@@ -284,10 +284,11 @@ bool sq_close_editor(SqEngine engine, int node_id, char** error);
 /// Returns true if an editor window is currently open for this node.
 bool sq_has_editor(SqEngine engine, int node_id);
 
-/// Pump the JUCE message/event loop for up to timeout_ms milliseconds.
-/// Call this from the main thread so GUI windows render and respond to input.
-/// Does not require an SqEngine handle.
-void sq_run_dispatch_loop(int timeout_ms);
+/// Process pending JUCE GUI/message events.
+/// With timeout_ms=0, processes pending events and returns immediately (non-blocking).
+/// With timeout_ms>0, processes events for up to that many milliseconds (blocking).
+/// Call from the main thread. Does not require an SqEngine handle.
+void sq_process_events(int timeout_ms);
 
 /* ── Testing ──────────────────────────────────────────────────── */
 

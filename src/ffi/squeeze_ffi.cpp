@@ -579,7 +579,7 @@ bool sq_has_editor(SqEngine engine, int node_id)
     return cast(engine)->editorManager.hasEditor(node_id);
 }
 
-void sq_run_dispatch_loop(int timeout_ms)
+void sq_process_events(int timeout_ms)
 {
     auto* mm = juce::MessageManager::getInstance();
     if (mm != nullptr)

@@ -81,12 +81,12 @@ TEST_CASE("sq_close_editor when no editor open returns false with error")
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// sq_run_dispatch_loop
+// sq_process_events
 // ═══════════════════════════════════════════════════════════════════
 
-TEST_CASE("sq_run_dispatch_loop with zero timeout does not crash")
+TEST_CASE("sq_process_events with zero timeout does not crash")
 {
     SqEngine engine = sq_engine_create(nullptr);
-    sq_run_dispatch_loop(0);
+    sq_process_events(0);
     sq_engine_destroy(engine);
 }
