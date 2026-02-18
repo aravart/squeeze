@@ -5,9 +5,11 @@
 #include "core/MidiRouter.h"
 #include "core/Processor.h"
 #include "core/Source.h"
+#include "core/Transport.h"
 
 #include <juce_audio_basics/juce_audio_basics.h>
 
+#include <atomic>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -117,6 +119,7 @@ public:
     double getTransportPosition() const;
     double getTransportTempo() const;
     bool isTransportPlaying() const;
+    bool isTransportLooping() const;
 
     // --- Event scheduling stubs ---
     bool scheduleNoteOn(int sourceHandle, double beatTime, int channel, int note, float velocity);
@@ -147,9 +150,20 @@ private:
 
     CommandQueue commandQueue_;
     MidiRouter midiRouter_;
+    Transport transport_;
 
     double sampleRate_;
     int blockSize_;
+
+    // Transport shadow state (control thread, under controlMutex_)
+    double shadowTempo_ = 120.0;
+    bool shadowLooping_ = false;
+    double shadowLoopStartBeats_ = 0.0;
+    double shadowLoopEndBeats_ = 0.0;
+
+    // Transport published state (audio thread writes, control thread reads)
+    std::atomic<int64_t> publishedPositionSamples_{0};
+    std::atomic<int> publishedState_{0}; // TransportState cast to int
 
     bool batching_ = false;
     bool snapshotDirty_ = false;

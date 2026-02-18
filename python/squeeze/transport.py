@@ -74,7 +74,7 @@ class Transport:
     @property
     def looping(self) -> bool:
         """Whether looping is enabled."""
-        return False  # No FFI query function yet
+        return lib.sq_transport_is_looping(self._engine._ptr)
 
     @looping.setter
     def looping(self, enabled: bool) -> None:

@@ -182,6 +182,7 @@ def _load_lib():
     _sig("sq_transport_position", _D, [_V])
     _sig("sq_transport_tempo", _D, [_V])
     _sig("sq_transport_is_playing", _B, [_V])
+    _sig("sq_transport_is_looping", _B, [_V])
 
     # --- Event scheduling ---
     _sig("sq_schedule_note_on", _B, [_V, _I, _D, _I, _I, _F])

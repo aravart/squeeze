@@ -27,6 +27,7 @@ add_library(squeeze_core STATIC
     src/core/PluginManager.cpp
     src/core/PluginProcessor.cpp
     src/core/Source.cpp
+    src/core/Transport.cpp
 )
 
 target_include_directories(squeeze_core PUBLIC src)
@@ -81,6 +82,7 @@ add_executable(squeeze_unit_tests
     tests/core/ChainTests.cpp
     tests/core/SourceTests.cpp
     tests/core/BusTests.cpp
+    tests/core/TransportTests.cpp
 )
 
 target_link_libraries(squeeze_unit_tests PRIVATE
@@ -96,6 +98,7 @@ add_executable(squeeze_ffi_tests
     tests/ffi/AudioDeviceFFITests.cpp
     tests/ffi/MidiDeviceManagerFFITests.cpp
     tests/ffi/EditorFFITests.cpp
+    tests/ffi/TransportFFITests.cpp
 )
 
 target_link_libraries(squeeze_ffi_tests PRIVATE

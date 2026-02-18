@@ -44,6 +44,8 @@ Engine::Engine(double sampleRate, int blockSize)
     master_ = master.get();
     buses_.push_back(std::move(master));
 
+    transport_.prepare(sampleRate_, blockSize_);
+
     buildAndSwapSnapshot();
 
     SQ_INFO("Engine: created sr=%.0f bs=%d masterHandle=%d",
@@ -687,7 +689,7 @@ void Engine::maybeRebuildSnapshot()
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// Transport stubs
+// Transport (control thread → command queue → audio thread)
 // ═══════════════════════════════════════════════════════════════════
 
 void Engine::transportPlay()
@@ -724,6 +726,7 @@ void Engine::transportSetTempo(double bpm)
 {
     std::lock_guard<std::mutex> lock(controlMutex_);
     collectGarbage();
+    shadowTempo_ = std::clamp(bpm, 1.0, 999.0);
     Command cmd;
     cmd.type = Command::Type::setTempo;
     cmd.doubleValue1 = bpm;
@@ -769,6 +772,11 @@ void Engine::transportSetLoopPoints(double startBeats, double endBeats)
 {
     std::lock_guard<std::mutex> lock(controlMutex_);
     collectGarbage();
+    if (endBeats > startBeats)
+    {
+        shadowLoopStartBeats_ = startBeats;
+        shadowLoopEndBeats_ = endBeats;
+    }
     Command cmd;
     cmd.type = Command::Type::setLoopPoints;
     cmd.doubleValue1 = startBeats;
@@ -781,6 +789,10 @@ void Engine::transportSetLooping(bool enabled)
 {
     std::lock_guard<std::mutex> lock(controlMutex_);
     collectGarbage();
+    if (enabled && shadowLoopStartBeats_ == 0.0 && shadowLoopEndBeats_ == 0.0)
+        shadowLooping_ = false;
+    else
+        shadowLooping_ = enabled;
     Command cmd;
     cmd.type = Command::Type::setLooping;
     cmd.intValue1 = enabled ? 1 : 0;
@@ -788,9 +800,36 @@ void Engine::transportSetLooping(bool enabled)
     SQ_DEBUG("Engine::transportSetLooping: %s", enabled ? "true" : "false");
 }
 
-double Engine::getTransportPosition() const { return 0.0; }
-double Engine::getTransportTempo() const { return 120.0; }
-bool Engine::isTransportPlaying() const { return false; }
+// ═══════════════════════════════════════════════════════════════════
+// Transport queries (control thread)
+// ═══════════════════════════════════════════════════════════════════
+
+double Engine::getTransportPosition() const
+{
+    std::lock_guard<std::mutex> lock(controlMutex_);
+    int64_t samples = publishedPositionSamples_.load(std::memory_order_relaxed);
+    if (sampleRate_ <= 0.0) return 0.0;
+    double seconds = static_cast<double>(samples) / sampleRate_;
+    return seconds * (shadowTempo_ / 60.0);
+}
+
+double Engine::getTransportTempo() const
+{
+    std::lock_guard<std::mutex> lock(controlMutex_);
+    return shadowTempo_;
+}
+
+bool Engine::isTransportPlaying() const
+{
+    return publishedState_.load(std::memory_order_relaxed)
+           == static_cast<int>(TransportState::playing);
+}
+
+bool Engine::isTransportLooping() const
+{
+    std::lock_guard<std::mutex> lock(controlMutex_);
+    return shadowLooping_;
+}
 
 // ═══════════════════════════════════════════════════════════════════
 // Event scheduling stubs
@@ -950,16 +989,46 @@ void Engine::handleCommand(const Command& cmd)
             break;
         }
         case Command::Type::transportPlay:
+            transport_.play();
+            publishedState_.store(static_cast<int>(transport_.getState()),
+                                  std::memory_order_relaxed);
+            break;
         case Command::Type::transportStop:
+            transport_.stop();
+            publishedState_.store(static_cast<int>(transport_.getState()),
+                                  std::memory_order_relaxed);
+            publishedPositionSamples_.store(0, std::memory_order_relaxed);
+            break;
         case Command::Type::transportPause:
+            transport_.pause();
+            publishedState_.store(static_cast<int>(transport_.getState()),
+                                  std::memory_order_relaxed);
+            break;
         case Command::Type::setTempo:
+            transport_.setTempo(cmd.doubleValue1);
+            break;
         case Command::Type::setTimeSignature:
+            transport_.setTimeSignature(cmd.intValue1, cmd.intValue2);
+            break;
         case Command::Type::seekSamples:
+            transport_.setPositionInSamples(cmd.int64Value);
+            publishedPositionSamples_.store(transport_.getPositionInSamples(),
+                                            std::memory_order_relaxed);
+            break;
         case Command::Type::seekBeats:
+            transport_.setPositionInBeats(cmd.doubleValue1);
+            publishedPositionSamples_.store(transport_.getPositionInSamples(),
+                                            std::memory_order_relaxed);
+            break;
         case Command::Type::setLoopPoints:
+            transport_.setLoopPoints(cmd.doubleValue1, cmd.doubleValue2);
+            publishedPositionSamples_.store(transport_.getPositionInSamples(),
+                                            std::memory_order_relaxed);
+            break;
         case Command::Type::setLooping:
-            SQ_TRACE_RT("Engine: transport command %s (stub)",
-                         commandTypeName(cmd.type));
+            transport_.setLooping(cmd.intValue1 != 0);
+            publishedPositionSamples_.store(transport_.getPositionInSamples(),
+                                            std::memory_order_relaxed);
             break;
     }
 }
@@ -973,7 +1042,12 @@ void Engine::processBlock(float* const* outputChannels, int numChannels, int num
     // 1. Drain pending commands
     commandQueue_.processPending([this](const Command& cmd) { handleCommand(cmd); });
 
-    // 2. If no snapshot, output silence
+    // 2. Advance transport
+    transport_.advance(numSamples);
+    publishedPositionSamples_.store(transport_.getPositionInSamples(),
+                                    std::memory_order_relaxed);
+
+    // 3. If no snapshot, output silence
     if (!activeSnapshot_)
     {
         for (int ch = 0; ch < numChannels; ++ch)

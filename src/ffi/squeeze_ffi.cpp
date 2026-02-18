@@ -555,24 +555,83 @@ void sq_batch_commit(SqEngine engine)
 // Transport
 // ═══════════════════════════════════════════════════════════════════
 
-void sq_transport_play(SqEngine engine) { eng(engine).transportPlay(); }
-void sq_transport_stop(SqEngine engine) { eng(engine).transportStop(); }
-void sq_transport_pause(SqEngine engine) { eng(engine).transportPause(); }
-void sq_transport_set_tempo(SqEngine engine, double bpm) { eng(engine).transportSetTempo(bpm); }
+void sq_transport_play(SqEngine engine)
+{
+    if (!engine) return;
+    eng(engine).transportPlay();
+}
+
+void sq_transport_stop(SqEngine engine)
+{
+    if (!engine) return;
+    eng(engine).transportStop();
+}
+
+void sq_transport_pause(SqEngine engine)
+{
+    if (!engine) return;
+    eng(engine).transportPause();
+}
+
+void sq_transport_set_tempo(SqEngine engine, double bpm)
+{
+    if (!engine) return;
+    eng(engine).transportSetTempo(bpm);
+}
+
 void sq_transport_set_time_signature(SqEngine engine, int numerator, int denominator)
 {
+    if (!engine) return;
     eng(engine).transportSetTimeSignature(numerator, denominator);
 }
-void sq_transport_seek_samples(SqEngine engine, int64_t samples) { eng(engine).transportSeekSamples(samples); }
-void sq_transport_seek_beats(SqEngine engine, double beats) { eng(engine).transportSeekBeats(beats); }
+
+void sq_transport_seek_samples(SqEngine engine, int64_t samples)
+{
+    if (!engine) return;
+    eng(engine).transportSeekSamples(samples);
+}
+
+void sq_transport_seek_beats(SqEngine engine, double beats)
+{
+    if (!engine) return;
+    eng(engine).transportSeekBeats(beats);
+}
+
 void sq_transport_set_loop_points(SqEngine engine, double start_beats, double end_beats)
 {
+    if (!engine) return;
     eng(engine).transportSetLoopPoints(start_beats, end_beats);
 }
-void sq_transport_set_looping(SqEngine engine, bool enabled) { eng(engine).transportSetLooping(enabled); }
-double sq_transport_position(SqEngine engine) { return eng(engine).getTransportPosition(); }
-double sq_transport_tempo(SqEngine engine) { return eng(engine).getTransportTempo(); }
-bool sq_transport_is_playing(SqEngine engine) { return eng(engine).isTransportPlaying(); }
+
+void sq_transport_set_looping(SqEngine engine, bool enabled)
+{
+    if (!engine) return;
+    eng(engine).transportSetLooping(enabled);
+}
+
+double sq_transport_position(SqEngine engine)
+{
+    if (!engine) return 0.0;
+    return eng(engine).getTransportPosition();
+}
+
+double sq_transport_tempo(SqEngine engine)
+{
+    if (!engine) return 0.0;
+    return eng(engine).getTransportTempo();
+}
+
+bool sq_transport_is_playing(SqEngine engine)
+{
+    if (!engine) return false;
+    return eng(engine).isTransportPlaying();
+}
+
+bool sq_transport_is_looping(SqEngine engine)
+{
+    if (!engine) return false;
+    return eng(engine).isTransportLooping();
+}
 
 // ═══════════════════════════════════════════════════════════════════
 // Event scheduling

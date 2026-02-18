@@ -467,7 +467,7 @@ TEST_CASE("sq_render does not crash")
 // Transport stubs
 // ═══════════════════════════════════════════════════════════════════
 
-TEST_CASE("Transport stubs do not crash and return defaults")
+TEST_CASE("Transport commands do not crash and queries reflect state")
 {
     SqEngine engine = sq_engine_create(44100.0, 512, nullptr);
     sq_transport_play(engine);
@@ -481,7 +481,7 @@ TEST_CASE("Transport stubs do not crash and return defaults")
     sq_transport_set_looping(engine, true);
 
     CHECK(sq_transport_position(engine) == 0.0);
-    CHECK(sq_transport_tempo(engine) == 120.0);
+    CHECK(sq_transport_tempo(engine) == 140.0);
     CHECK_FALSE(sq_transport_is_playing(engine));
 
     sq_render(engine, 512);

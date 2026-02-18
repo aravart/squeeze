@@ -253,6 +253,7 @@ void   sq_transport_set_looping(SqEngine engine, bool enabled);
 double sq_transport_position(SqEngine engine);
 double sq_transport_tempo(SqEngine engine);
 bool   sq_transport_is_playing(SqEngine engine);
+bool   sq_transport_is_looping(SqEngine engine);
 
 /* ── Event scheduling ─────────────────────────────────────────── */
 
