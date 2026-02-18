@@ -70,13 +70,26 @@ This is stateless — each beat range is processed exactly once, and consecutive
 
 ### Loop-Aware Lookahead
 
-When looping is enabled and the shifted window extends past `loopEnd`:
+When looping is enabled and the shifted window extends past `loopEnd`, the entire window must be wrapped into the loop region. Two cases:
+
+**Partial wrap** — `windowStart < loopEnd` and `windowEnd > loopEnd`:
 
 1. Fire boundaries in `[windowStart, loopEnd]`
-2. Wrap the overflow: `overflow = windowEnd - loopEnd`
+2. Wrap the tail: `overflow = windowEnd - loopEnd`
 3. Fire boundaries in `[loopStart, loopStart + overflow)`
 
-This handles the case where a clock's lookahead sees past the loop point before the audio thread has actually looped.
+**Full wrap** — `windowStart >= loopEnd` (high latency shifts the entire window past the loop point):
+
+1. Wrap both endpoints into the loop region:
+   ```
+   loopLen       = loopEnd - loopStart
+   wrappedStart  = loopStart + fmod(windowStart - loopEnd, loopLen)
+   wrappedEnd    = loopStart + fmod(windowEnd   - loopEnd, loopLen)
+   ```
+2. If `wrappedStart < wrappedEnd`: fire boundaries in `[wrappedStart, wrappedEnd)` (window fits within one loop iteration)
+3. If `wrappedStart >= wrappedEnd`: the window spans a loop seam — fire boundaries in `[wrappedStart, loopEnd]`, then in `[loopStart, wrappedEnd)`
+
+This handles the case where a clock's lookahead sees past the loop point before the audio thread has actually looped, including when high latency pushes the entire shifted window beyond `loopEnd`.
 
 ### Priming on Transport Start
 
@@ -217,7 +230,7 @@ with Squeeze() as s:
 - `sq_clock_create` with `NULL` callback: returns `NULL`
 - `sq_clock_destroy(NULL)`: no-op
 - Beat range queue overflow (audio thread pushes faster than dispatch thread drains): drop the oldest update and log `SQ_WARN_RT`. In practice this should not happen — the dispatch thread's work per update is trivial compared to a block period
-- Callback throws/crashes: undefined behavior (documented). Callbacks must not throw
+- Callback throws/crashes: the dispatch thread catches all exceptions (`catch(...)`) around each callback invocation, logs `SQ_WARN("clock %d callback threw — skipping", clockId)`, and continues to the next subscription. The faulting callback is not retried for this beat range update. This prevents a single misbehaving callback (especially plausible from Python/ctypes) from permanently locking `subscriptionMutex_` and bricking the dispatch thread. Callbacks should still not throw — but if they do, the system survives
 
 ## Does NOT Handle
 
@@ -296,9 +309,9 @@ releases subscriptionMutex_            acquires subscriptionMutex_ ✓
 
 `addClock` and `removeClock` are called from the control thread. The dispatch thread iterates subscriptions. Both use `subscriptionMutex_` — a mutex internal to `ClockDispatch`, independent of Engine's `controlMutex_`:
 
-- The dispatch thread holds `subscriptionMutex_` while iterating and firing callbacks.
+- The dispatch thread holds `subscriptionMutex_` while iterating **all** subscriptions and firing **all** callbacks in a single pass.
 - `addClock` acquires `subscriptionMutex_`, adds the subscription, releases.
-- `removeClock` acquires `subscriptionMutex_`, marks the subscription for removal, and waits for the dispatch thread to confirm no in-flight callback before returning. Since `subscriptionMutex_` is not held by the dispatch thread between iterations, `removeClock` will acquire it once the current iteration completes — guaranteeing no in-flight callback on return.
+- `removeClock` acquires `subscriptionMutex_`, marks the subscription for removal, and waits for the dispatch thread to finish its current iteration before returning — guaranteeing no in-flight callback on return. **Known constraint:** because `subscriptionMutex_` is held for the entire iteration pass, `removeClock` for clock A is blocked by callbacks on *all* clocks in the current pass, not just clock A's. A slow callback on an unrelated clock delays removal. This is acceptable — per-clock locking would add complexity for minimal practical gain, since callbacks should be fast (just scheduling work, not doing it).
 
 ### Semaphore Choice
 
