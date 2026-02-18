@@ -32,11 +32,11 @@ Transport();  // stopped, position 0, 120 BPM, 4/4, sampleRate 0, blockSize 0
 void advance(int numSamples);
 ```
 
-Called once per `processBlock`. Advances `positionInSamples_` by `numSamples` when state is `playing`. No-op when stopped or paused. No-op when `numSamples <= 0`.
+Called once per `processBlock`. Advances `positionInSamples_` by `numSamples` when state is `playing`. When `numSamples <= 0`, no-op (no fields changed).
 
-When looping is enabled and the advance crosses the loop end point, position wraps to the loop start and `didLoopWrap_` is set to true. `didLoopWrap_` is reset to false at the start of each `advance()`.
+When not playing (stopped or paused), `advance()` still resets block range state: `didLoopWrap_ = false`, `blockStartBeats_ = blockEndBeats_ = getPositionInBeats()`. This prevents stale values from a previous playing run from being visible after stop-then-play.
 
-Stores pre-advance and post-advance beat positions for block range queries (`getBlockStartBeats()`, `getBlockEndBeats()`).
+When playing, stores pre-advance and post-advance beat positions for block range queries (`getBlockStartBeats()`, `getBlockEndBeats()`). If looping is enabled and the advance crosses the loop end point, position wraps to the loop start and `didLoopWrap_` is set to true.
 
 Loop wrapping uses cached integer sample boundaries — no floating-point conversion on the audio thread (see Loop Behavior).
 
@@ -61,6 +61,8 @@ void prepare(double sampleRate, int blockSize);  // called during Engine constru
 ```
 
 `setTempo()`, `prepare()`, and `setLoopPoints()` all recompute the cached loop sample boundaries (see Loop Behavior).
+
+`setLooping(true)` and `setLoopPoints()` snap position into the loop region if it is currently outside `[loopStart, loopEnd)` (see Position Snapping). This is a correction, not a loop wrap — `didLoopWrap_` is not set.
 
 ### Queries
 
@@ -176,17 +178,45 @@ void recomputeLoopSamples() {
         SQ_WARN("Transport: loop too short (%lld samples, block size %d), disabling",
                 (long long)(loopEndSamples_ - loopStartSamples_), blockSize_);
     }
+    snapPositionToLoop();
 }
 ```
 
 Called from `setLoopPoints()`, `setTempo()`, and `prepare()`.
 
+### Position snapping
+
+```cpp
+void snapPositionToLoop() {
+    if (!looping_) return;
+    int64_t loopLen = loopEndSamples_ - loopStartSamples_;
+    if (loopLen <= 0) return;
+    if (positionInSamples_ >= loopEndSamples_) {
+        positionInSamples_ = loopStartSamples_
+            + ((positionInSamples_ - loopStartSamples_) % loopLen);
+    } else if (positionInSamples_ < loopStartSamples_) {
+        positionInSamples_ = loopStartSamples_;
+    }
+}
+```
+
+Called from `recomputeLoopSamples()` and `setLooping(true)`. Snaps position into `[loopStartSamples_, loopEndSamples_)` if it is currently outside. This is a seek-like correction — `didLoopWrap_` is **not** set.
+
+This prevents a false-positive `didLoopWrap_` on the next `advance()`. Without snapping, a sequence like "seek past loop end, enable looping, advance" would trigger the modulo in `advance()` and set `didLoopWrap_ = true` even though no loop boundary was crossed during the advance.
+
 ### advance()
 
 ```cpp
 advance(int numSamples):
+    if (numSamples <= 0) return;
+
     didLoopWrap_ = false;
-    if (state_ != playing || numSamples <= 0) return;
+
+    if (state_ != playing) {
+        blockStartBeats_ = getPositionInBeats();
+        blockEndBeats_   = blockStartBeats_;
+        return;
+    }
 
     blockStartBeats_ = getPositionInBeats();
     positionInSamples_ += numSamples;
@@ -229,7 +259,7 @@ Engine calls `pluginProcessor->getJuceProcessor()->setPlayHead(&transport_)` whe
 ## Invariants
 
 - `advance()` increases `positionInSamples_` by exactly `numSamples` when playing (before loop wrap)
-- When looping, position after `advance()` is always within [loopStartSamples, loopEndSamples)
+- When looping, position is always within [loopStartSamples, loopEndSamples) — maintained by `advance()` (loop wrap), `setLooping()` (snap), `setLoopPoints()` (snap), and `recomputeLoopSamples()` (snap on tempo/prepare change)
 - `advance()` does not change position when stopped or paused
 - Beat and bar positions are always derived from `positionInSamples_`, never stored or set independently
 - Loop boundaries in samples are always consistent with the beat-domain values, tempo, and sample rate — recomputed on every change to those inputs
@@ -242,7 +272,8 @@ Engine calls `pluginProcessor->getJuceProcessor()->setPlayHead(&transport_)` whe
 - Loop end must be greater than loop start; `setLoopPoints()` enforces this (in both beat and sample domains)
 - Loop length in samples must be >= `blockSize_`. Enforced at `setLoopPoints()`, and re-checked when tempo, sample rate, or block size changes
 - `setLooping(true)` with no valid loop points (both 0) has no effect — looping stays disabled
-- `didLoopWrap_` is reset to false at the start of each `advance()`
+- `didLoopWrap_` is reset to false at the start of each `advance()` and is never set by position snapping
+- `blockStartBeats_` and `blockEndBeats_` are initialized to 0.0 and reset to the current beat position on every `advance()` call, including when not playing — no stale values survive a stop/pause
 - Before `prepare()` is called, derived positions that depend on sample rate return 0
 
 ## Error Conditions
