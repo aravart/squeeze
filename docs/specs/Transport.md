@@ -23,7 +23,7 @@ Time signature uses `juce::AudioPlayHead::TimeSignature` directly (numerator, de
 ### Construction
 
 ```cpp
-Transport();  // stopped, position 0, 120 BPM, 4/4, sampleRate 0
+Transport();  // stopped, position 0, 120 BPM, 4/4, sampleRate 0, blockSize 0
 ```
 
 ### Audio-thread method
@@ -45,9 +45,9 @@ Loop wrapping uses cached integer sample boundaries — no floating-point conver
 Called on the audio thread via Engine's `handleCommand`, which processes commands at the top of `processBlock` before `advance()`.
 
 ```cpp
-void play();    // → playing (from stopped or paused)
-void stop();    // → stopped, resets positionInSamples_ to 0
-void pause();   // → paused, position preserved
+void play();    // → playing (from stopped or paused). No-op if already playing.
+void stop();    // → stopped, resets positionInSamples_ to 0. No-op if already stopped.
+void pause();   // → paused, position preserved. No-op if already paused or stopped.
 
 void setTempo(double bpm);
 void setTimeSignature(int numerator, int denominator);
@@ -57,10 +57,10 @@ void setPositionInBeats(double beats);  // converts to samples via tempo + sampl
 void setLoopPoints(double startBeats, double endBeats);  // in PPQ (quarter notes)
 void setLooping(bool enabled);
 
-void setSampleRate(double sr);  // called during Engine construction / prepare
+void prepare(double sampleRate, int blockSize);  // called during Engine construction / prepare
 ```
 
-`setTempo()`, `setSampleRate()`, and `setLoopPoints()` all recompute the cached loop sample boundaries (see Loop Behavior).
+`setTempo()`, `prepare()`, and `setLoopPoints()` all recompute the cached loop sample boundaries (see Loop Behavior).
 
 ### Queries
 
@@ -73,6 +73,7 @@ bool isPlaying() const;           // state == playing
 double getTempo() const;          // BPM
 juce::AudioPlayHead::TimeSignature getTimeSignature() const;
 double getSampleRate() const;
+int getBlockSize() const;
 
 int64_t getPositionInSamples() const;
 double getPositionInSeconds() const;   // positionInSamples / sampleRate
@@ -140,11 +141,19 @@ ppqOfLastBarStart  = barCount * quarterNotesPerBar
 beatsToSamples(beats) = round(beats * 60.0 / tempo * sampleRate)
 ```
 
-Called only from control-thread mutations (`setPositionInBeats`, `setLoopPoints`) and when inputs change (`setTempo`, `setSampleRate`). Never called on the audio thread's hot path.
+Called only from control-thread mutations (`setPositionInBeats`, `setLoopPoints`) and when inputs change (`setTempo`, `prepare`). Never called on the audio thread's hot path.
 
 ## Loop Behavior
 
 Loop boundaries are stored in both beats (for queries and `AudioPlayHead`) and cached as integer samples (for `advance()`). The cached sample values are recomputed whenever the inputs change — `setLoopPoints()`, `setTempo()`, or `setSampleRate()` — so `advance()` does pure integer arithmetic with no per-block FP conversion.
+
+### Minimum loop length
+
+The minimum loop length is `blockSize_` samples — one audio block. A loop at least one block long wraps at most once per `advance()`, which is the normal case. Anything shorter fires the modulo every block, producing a buzz rather than a loop.
+
+The minimum is enforced in the sample domain after caching, so it accounts for the current tempo, sample rate, and block size. `prepare(sampleRate, blockSize)` sets `blockSize_`; before `prepare()` is called, `blockSize_` is 0 and no minimum is enforced (loop points can be set freely during setup).
+
+If `setTempo()` or `prepare()` causes a previously valid loop to fall below the minimum, looping is automatically disabled (`looping_ = false`) and a warning is logged. The beat-domain loop points are preserved so that a subsequent tempo/sample-rate/block-size change can re-enable the loop if the length becomes valid again.
 
 ### Members
 
@@ -161,10 +170,16 @@ int64_t loopEndSamples_   = 0;       // cached: beatsToSamples(loopEndBeats_)
 void recomputeLoopSamples() {
     loopStartSamples_ = beatsToSamples(loopStartBeats_);
     loopEndSamples_   = beatsToSamples(loopEndBeats_);
+    if (looping_ && blockSize_ > 0
+        && loopEndSamples_ - loopStartSamples_ < blockSize_) {
+        looping_ = false;
+        SQ_WARN("Transport: loop too short (%lld samples, block size %d), disabling",
+                (long long)(loopEndSamples_ - loopStartSamples_), blockSize_);
+    }
 }
 ```
 
-Called from `setLoopPoints()`, `setTempo()`, and `setSampleRate()`.
+Called from `setLoopPoints()`, `setTempo()`, and `prepare()`.
 
 ### advance()
 
@@ -200,7 +215,12 @@ The spec says "sample position is the ground truth." If loop boundaries lived on
 - `blockEndBeats_`: beat position after advance (after loop wrap if any)
 - `didLoopWrap_`: true if position wrapped this block
 
-Engine reads these to build `BeatRangeUpdate` for ClockDispatch and to provide the beat window to EventScheduler. When a loop wrap occurs, `blockEndBeats_ < blockStartBeats_` (position jumped backward), which signals the discontinuity.
+These are raw ingredients. Transport does not split the block into sub-ranges or feed consumers directly. When a loop wrap occurs, `blockEndBeats_ < blockStartBeats_` (position jumped backward) — this signals that the block spans a loop boundary, but **Engine is responsible for reconstructing the two sub-ranges** (pre-wrap and post-wrap) and feeding them independently to EventScheduler and ClockDispatch:
+
+- **EventScheduler**: Engine calls `retrieve()` twice — once for `[blockStartBeats_, loopEndBeats_)` and once for `[loopStartBeats_, blockEndBeats_)`.
+- **ClockDispatch**: Engine pushes two `BeatRangeUpdate`s to the SPSC queue — one per sub-range.
+
+Transport provides `blockStartBeats_`, `blockEndBeats_`, `didLoopWrap()`, `getLoopStartBeats()`, and `getLoopEndBeats()`. Engine does the splitting.
 
 ## Plugin Wiring
 
@@ -216,12 +236,14 @@ Engine calls `pluginProcessor->getJuceProcessor()->setPlayHead(&transport_)` whe
 - `advance()` performs no floating-point-to-integer conversion for loop logic
 - `stop()` always resets `positionInSamples_` to 0
 - `pause()` never changes `positionInSamples_`
+- Redundant transitions are no-ops: `play()` when playing, `stop()` when stopped, `pause()` when paused or stopped
 - Tempo is clamped to [1.0, 999.0]
 - Time signature numerator clamped to [1, 32]; denominator must be a power of 2 in {1, 2, 4, 8, 16, 32} — invalid values are ignored (no change)
 - Loop end must be greater than loop start; `setLoopPoints()` enforces this (in both beat and sample domains)
+- Loop length in samples must be >= `blockSize_`. Enforced at `setLoopPoints()`, and re-checked when tempo, sample rate, or block size changes
 - `setLooping(true)` with no valid loop points (both 0) has no effect — looping stays disabled
 - `didLoopWrap_` is reset to false at the start of each `advance()`
-- Before `setSampleRate()` is called, derived positions that depend on sample rate return 0
+- Before `prepare()` is called, derived positions that depend on sample rate return 0
 
 ## Error Conditions
 
@@ -230,9 +252,10 @@ Engine calls `pluginProcessor->getJuceProcessor()->setPlayHead(&transport_)` whe
 - `setPositionInSamples(n)` with negative value: clamped to 0
 - `advance(n)` with n <= 0: no-op
 - `setLoopPoints(start, end)` with end <= start: no change, no error
-- `setLoopPoints(start, end)` where `beatsToSamples(end) - beatsToSamples(start) < 1`: no change (loop would be 0 samples after rounding — degenerate)
+- `setLoopPoints(start, end)` where cached sample length < `blockSize_`: no change, no error
+- `setTempo()` or `prepare()` shrinks an active loop below minimum: looping auto-disabled, beat-domain points preserved, warning logged
 - `setLooping(true)` when loop points are both 0: silently stays disabled
-- `getPositionInSeconds()` / `getPositionInBeats()` before `setSampleRate()`: return 0.0
+- `getPositionInSeconds()` / `getPositionInBeats()` before `prepare()`: return 0.0
 
 ## C ABI
 
@@ -275,6 +298,7 @@ Already exists in `python/squeeze/transport.py`. The `looping` getter needs upda
 
 - Tempo automation / tempo maps (future)
 - MIDI clock output (separate component)
+- Sub-block splitting on loop wrap — Engine's responsibility, not Transport's
 - Beat/bar crossing detection or callbacks (ClockDispatch handles this)
 - Recording state
 - Event emission — Transport is pure state
@@ -294,7 +318,7 @@ Transport has **no internal synchronization**. All methods are called from the a
 
 ```cpp
 Transport transport;
-transport.setSampleRate(44100.0);
+transport.prepare(44100.0, 512);
 transport.setTempo(120.0);
 transport.setTimeSignature(4, 4);
 
