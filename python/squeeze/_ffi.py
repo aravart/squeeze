@@ -133,15 +133,15 @@ def _load_lib():
 
     # --- Routing ---
     _sig("sq_route", None, [_V, _I, _I])
-    _sig("sq_send", _I, [_V, _I, _I, _F])
+    _sig("sq_send", _I, [_V, _I, _I, _F, _I])
     _sig("sq_remove_send", None, [_V, _I, _I])
     _sig("sq_set_send_level", None, [_V, _I, _I, _F])
-    _sig("sq_set_send_tap", None, [_V, _I, _I, _S])
+    _sig("sq_set_send_tap", None, [_V, _I, _I, _I])
     _sig("sq_bus_route", _B, [_V, _I, _I])
-    _sig("sq_bus_send", _I, [_V, _I, _I, _F])
+    _sig("sq_bus_send", _I, [_V, _I, _I, _F, _I])
     _sig("sq_bus_remove_send", None, [_V, _I, _I])
     _sig("sq_bus_set_send_level", None, [_V, _I, _I, _F])
-    _sig("sq_bus_set_send_tap", None, [_V, _I, _I, _S])
+    _sig("sq_bus_set_send_tap", None, [_V, _I, _I, _I])
 
     # --- Source chain ---
     _sig("sq_source_append_proc", _I, [_V, _I])

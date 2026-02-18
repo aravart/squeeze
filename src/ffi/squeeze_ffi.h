@@ -133,7 +133,8 @@ void sq_bus_set_bypassed(SqEngine engine, int bus_handle, bool bypassed);
 void sq_route(SqEngine engine, int source_handle, int bus_handle);
 
 /// Add a send from a source to a bus. Returns send ID, or -1 on failure.
-int sq_send(SqEngine engine, int source_handle, int bus_handle, float level_db);
+/// pre_fader: 1 = pre-fader, 0 = post-fader.
+int sq_send(SqEngine engine, int source_handle, int bus_handle, float level_db, int pre_fader);
 
 /// Remove a send from a source.
 void sq_remove_send(SqEngine engine, int source_handle, int send_id);
@@ -141,14 +142,15 @@ void sq_remove_send(SqEngine engine, int source_handle, int send_id);
 /// Set send level.
 void sq_set_send_level(SqEngine engine, int source_handle, int send_id, float level_db);
 
-/// Set send tap point. tap: "pre" or "post".
-void sq_set_send_tap(SqEngine engine, int source_handle, int send_id, const char* tap);
+/// Set send tap point. pre_fader: 1 = pre-fader, 0 = post-fader.
+void sq_set_send_tap(SqEngine engine, int source_handle, int send_id, int pre_fader);
 
 /// Route a bus to another bus. Returns false if would create cycle.
 bool sq_bus_route(SqEngine engine, int from_handle, int to_handle);
 
 /// Add a send from one bus to another. Returns send ID, or -1 on failure/cycle.
-int sq_bus_send(SqEngine engine, int from_handle, int to_handle, float level_db);
+/// pre_fader: 1 = pre-fader, 0 = post-fader.
+int sq_bus_send(SqEngine engine, int from_handle, int to_handle, float level_db, int pre_fader);
 
 /// Remove a send from a bus.
 void sq_bus_remove_send(SqEngine engine, int bus_handle, int send_id);
@@ -156,8 +158,8 @@ void sq_bus_remove_send(SqEngine engine, int bus_handle, int send_id);
 /// Set bus send level.
 void sq_bus_set_send_level(SqEngine engine, int bus_handle, int send_id, float level_db);
 
-/// Set bus send tap point. tap: "pre" or "post".
-void sq_bus_set_send_tap(SqEngine engine, int bus_handle, int send_id, const char* tap);
+/// Set bus send tap point. pre_fader: 1 = pre-fader, 0 = post-fader.
+void sq_bus_set_send_tap(SqEngine engine, int bus_handle, int send_id, int pre_fader);
 
 /* ── Source chain ──────────────────────────────────────────────── */
 

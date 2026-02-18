@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from squeeze._ffi import lib
-from squeeze._helpers import decode_string, encode
+from squeeze._helpers import decode_string
 from squeeze.chain import Chain
 
 if TYPE_CHECKING:
@@ -75,9 +75,8 @@ class Bus:
         """Add a send to a bus. Returns send ID.
         tap: "pre" (pre-fader) or "post" (post-fader, default).
         """
-        send_id = lib.sq_bus_send(self._engine._ptr, self._handle, bus.handle, level)
-        if tap == "pre":
-            lib.sq_bus_set_send_tap(self._engine._ptr, self._handle, send_id, b"pre")
+        pre_fader = 1 if tap == "pre" else 0
+        send_id = lib.sq_bus_send(self._engine._ptr, self._handle, bus.handle, level, pre_fader)
         return send_id
 
     def remove_send(self, send_id: int) -> None:
@@ -90,7 +89,8 @@ class Bus:
 
     def set_send_tap(self, send_id: int, tap: str) -> None:
         """Change a send's tap point: "pre" or "post"."""
-        lib.sq_bus_set_send_tap(self._engine._ptr, self._handle, send_id, encode(tap))
+        pre_fader = 1 if tap == "pre" else 0
+        lib.sq_bus_set_send_tap(self._engine._ptr, self._handle, send_id, pre_fader)
 
     # --- Metering ---
 

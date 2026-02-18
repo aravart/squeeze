@@ -63,11 +63,9 @@ static void set_error(char** error, const std::string& msg)
     if (error) *error = to_c_string(msg);
 }
 
-static squeeze::SendTap parseTap(const char* tap)
+static squeeze::SendTap toTap(int pre_fader)
 {
-    if (tap && std::strcmp(tap, "pre") == 0)
-        return squeeze::SendTap::preFader;
-    return squeeze::SendTap::postFader;
+    return pre_fader ? squeeze::SendTap::preFader : squeeze::SendTap::postFader;
 }
 
 // --- Logger API ---
@@ -335,12 +333,12 @@ void sq_route(SqEngine engine, int source_handle, int bus_handle)
         eng(engine).route(src, bus);
 }
 
-int sq_send(SqEngine engine, int source_handle, int bus_handle, float level_db)
+int sq_send(SqEngine engine, int source_handle, int bus_handle, float level_db, int pre_fader)
 {
     auto* src = eng(engine).getSource(source_handle);
     auto* bus = eng(engine).getBus(bus_handle);
     if (!src || !bus) return -1;
-    return eng(engine).sendFrom(src, bus, level_db);
+    return eng(engine).sendFrom(src, bus, level_db, toTap(pre_fader));
 }
 
 void sq_remove_send(SqEngine engine, int source_handle, int send_id)
@@ -357,11 +355,11 @@ void sq_set_send_level(SqEngine engine, int source_handle, int send_id, float le
         eng(engine).setSendLevel(src, send_id, level_db);
 }
 
-void sq_set_send_tap(SqEngine engine, int source_handle, int send_id, const char* tap)
+void sq_set_send_tap(SqEngine engine, int source_handle, int send_id, int pre_fader)
 {
     auto* src = eng(engine).getSource(source_handle);
     if (src)
-        src->setSendTap(send_id, parseTap(tap));
+        eng(engine).setSendTap(src, send_id, toTap(pre_fader));
 }
 
 bool sq_bus_route(SqEngine engine, int from_handle, int to_handle)
@@ -372,12 +370,12 @@ bool sq_bus_route(SqEngine engine, int from_handle, int to_handle)
     return eng(engine).busRoute(from, to);
 }
 
-int sq_bus_send(SqEngine engine, int from_handle, int to_handle, float level_db)
+int sq_bus_send(SqEngine engine, int from_handle, int to_handle, float level_db, int pre_fader)
 {
     auto* from = eng(engine).getBus(from_handle);
     auto* to = eng(engine).getBus(to_handle);
     if (!from || !to) return -1;
-    return eng(engine).busSend(from, to, level_db);
+    return eng(engine).busSend(from, to, level_db, toTap(pre_fader));
 }
 
 void sq_bus_remove_send(SqEngine engine, int bus_handle, int send_id)
@@ -394,11 +392,11 @@ void sq_bus_set_send_level(SqEngine engine, int bus_handle, int send_id, float l
         eng(engine).busSendLevel(bus, send_id, level_db);
 }
 
-void sq_bus_set_send_tap(SqEngine engine, int bus_handle, int send_id, const char* tap)
+void sq_bus_set_send_tap(SqEngine engine, int bus_handle, int send_id, int pre_fader)
 {
     auto* bus = eng(engine).getBus(bus_handle);
     if (bus)
-        bus->setSendTap(send_id, parseTap(tap));
+        eng(engine).busSendTap(bus, send_id, toTap(pre_fader));
 }
 
 // ═══════════════════════════════════════════════════════════════════

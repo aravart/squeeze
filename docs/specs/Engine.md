@@ -60,14 +60,16 @@ public:
 
     // --- Routing (control thread) ---
     void route(Source* src, Bus* bus);
-    int  sendFrom(Source* src, Bus* bus, float levelDb);
+    int  sendFrom(Source* src, Bus* bus, float levelDb, SendTap tap = SendTap::postFader);
     void removeSend(Source* src, int sendId);
     void setSendLevel(Source* src, int sendId, float levelDb);
+    void setSendTap(Source* src, int sendId, SendTap tap);
 
-    void busRoute(Bus* from, Bus* to);
-    int  busSend(Bus* from, Bus* to, float levelDb);
+    bool busRoute(Bus* from, Bus* to);
+    int  busSend(Bus* from, Bus* to, float levelDb, SendTap tap = SendTap::postFader);
     void busRemoveSend(Bus* bus, int sendId);
     void busSendLevel(Bus* bus, int sendId, float levelDb);
+    void busSendTap(Bus* bus, int sendId, SendTap tap);
 
     // --- Insert chains (control thread) ---
     // Source chain operations
@@ -207,12 +209,12 @@ SqBus    sq_master(SqEngine engine);
 int      sq_bus_count(SqEngine engine);
 
 // Routing
-void     sq_route(SqEngine engine, SqSource src, SqBus bus);
+bool     sq_route(SqEngine engine, SqSource src, SqBus bus, char** error);
 int      sq_send(SqEngine engine, SqSource src, SqBus bus, float level_db, int pre_fader);
 void     sq_remove_send(SqEngine engine, SqSource src, int send_id);
 void     sq_set_send_level(SqEngine engine, SqSource src, int send_id, float level_db);
 void     sq_set_send_tap(SqEngine engine, SqSource src, int send_id, int pre_fader);
-void     sq_bus_route(SqEngine engine, SqBus from, SqBus to);
+bool     sq_bus_route(SqEngine engine, SqBus from, SqBus to, char** error);
 int      sq_bus_send(SqEngine engine, SqBus from, SqBus to, float level_db, int pre_fader);
 void     sq_bus_remove_send(SqEngine engine, SqBus bus, int send_id);
 void     sq_bus_set_send_level(SqEngine engine, SqBus bus, int send_id, float level_db);
@@ -349,6 +351,9 @@ processBlock(outputChannels, numChannels, numSamples):
   2. commandQueue_.processPending([this](cmd) { handleCommand(cmd); })
      — swapSnapshot: install new, push old to garbage
      — transport commands: forward to transport_
+     — transportStop / seek: clear EventScheduler, send all-notes-off
+       to every source MidiBuffer (prevents stuck notes from
+       scheduled noteOns whose matching noteOffs were discarded)
 
   3. if no active snapshot → write silence, return
 
@@ -510,6 +515,8 @@ When routing is changed (`route()`, `busRoute()`, `sendFrom()`, `busSend()`), th
 
 With ~4-8 buses, this check is trivially cheap.
 
+**Error reporting:** All four routing methods must report a rejected cycle. `route()` and `busRoute()` return `bool` (`false` on cycle). `sendFrom()` and `busSend()` return `-1` on cycle. All four log at warn level with the source and destination handles/names so the caller can diagnose which routing change was rejected. The FFI functions `sq_route()` and `sq_bus_route()` additionally set `*error` to a caller-freeable string describing the cycle (e.g. `"routing bus 'Drums' -> bus 'Reverb' would create a cycle"`).
+
 ## Invariants
 
 - `sq_create` returns a non-NULL handle on success
@@ -532,6 +539,7 @@ With ~4-8 buses, this check is trivially cheap.
 - The engine is always prepared from birth — no separate preparation step needed
 - `render()` allocates the output buffer internally — it is a testing convenience, not RT-safe
 - Processor handles are globally unique, monotonically increasing, never reused
+- Transport stop and seek send all-notes-off (CC 123, value 0, all channels) to every source MidiBuffer before the next processSubBlock, preventing stuck notes from orphaned EventScheduler noteOns
 
 ## Error Conditions
 
@@ -541,8 +549,8 @@ With ~4-8 buses, this check is trivially cheap.
 - `removeSource()` with unknown source: returns false
 - `removeBus()` with Master: returns false (cannot remove Master)
 - `removeBus()` with unknown bus: returns false
-- `route()` / `busRoute()` that would create a cycle: rejected, returns error
-- `sendFrom()` / `busSend()` that would create a cycle: returns -1
+- `route()` / `busRoute()` that would create a cycle: returns `false`, does not modify routing. C++ logs at warn level with source and destination identifiers: `SQ_WARN("route: rejected, would create cycle: source %d -> bus %d", srcHandle, busHandle)`. FFI sets `*error` to a descriptive message (caller frees with `sq_free_string`). NULL `error` pointer is safe — message is discarded.
+- `sendFrom()` / `busSend()` that would create a cycle: returns -1, logs at warn level with source and destination identifiers
 - `getParameter()` with unknown handle: returns 0.0f
 - `setParameter()` with unknown handle: returns false
 - `scheduleNoteOn()` with full EventScheduler queue: returns false
@@ -610,7 +618,10 @@ int main() {
 
     // Create a bus and route
     SqBus drum_bus = sq_add_bus(engine, "Drums");
-    sq_bus_route(engine, drum_bus, sq_master(engine));
+    if (!sq_bus_route(engine, drum_bus, sq_master(engine), &error)) {
+        fprintf(stderr, "Route failed: %s\n", error);
+        sq_free_string(error);
+    }
 
     // Insert effects
     SqProc eq = sq_bus_append(engine, drum_bus, "EQ.vst3");

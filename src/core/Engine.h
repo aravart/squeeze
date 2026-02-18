@@ -63,14 +63,16 @@ public:
 
     // --- Routing (control thread) ---
     void route(Source* src, Bus* bus);
-    int sendFrom(Source* src, Bus* bus, float levelDb);
+    int sendFrom(Source* src, Bus* bus, float levelDb, SendTap tap = SendTap::postFader);
     void removeSend(Source* src, int sendId);
     void setSendLevel(Source* src, int sendId, float levelDb);
+    void setSendTap(Source* src, int sendId, SendTap tap);
 
     bool busRoute(Bus* from, Bus* to);
-    int busSend(Bus* from, Bus* to, float levelDb);
+    int busSend(Bus* from, Bus* to, float levelDb, SendTap tap = SendTap::postFader);
     void busRemoveSend(Bus* bus, int sendId);
     void busSendLevel(Bus* bus, int sendId, float levelDb);
+    void busSendTap(Bus* bus, int sendId, SendTap tap);
 
     // --- Insert chains (control thread) ---
     Processor* sourceAppend(Source* src, std::unique_ptr<Processor> p);

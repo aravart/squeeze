@@ -86,9 +86,8 @@ class Source:
         Level is in dB (0.0 = unity).
         tap: "pre" (pre-fader) or "post" (post-fader, default).
         """
-        send_id = lib.sq_send(self._engine._ptr, self._handle, bus.handle, level)
-        if tap == "pre":
-            lib.sq_set_send_tap(self._engine._ptr, self._handle, send_id, b"pre")
+        pre_fader = 1 if tap == "pre" else 0
+        send_id = lib.sq_send(self._engine._ptr, self._handle, bus.handle, level, pre_fader)
         return send_id
 
     def remove_send(self, send_id: int) -> None:
@@ -101,7 +100,8 @@ class Source:
 
     def set_send_tap(self, send_id: int, tap: str) -> None:
         """Change a send's tap point: "pre" or "post"."""
-        lib.sq_set_send_tap(self._engine._ptr, self._handle, send_id, encode(tap))
+        pre_fader = 1 if tap == "pre" else 0
+        lib.sq_set_send_tap(self._engine._ptr, self._handle, send_id, pre_fader)
 
     # --- MIDI ---
 

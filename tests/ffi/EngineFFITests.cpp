@@ -181,7 +181,7 @@ TEST_CASE("sq_send adds send from source to bus")
     SqEngine engine = sq_engine_create(44100.0, 512, nullptr);
     int src = sq_add_source(engine, "synth");
     int bus = sq_add_bus(engine, "FX");
-    int sendId = sq_send(engine, src, bus, -6.0f);
+    int sendId = sq_send(engine, src, bus, -6.0f, 0);
     REQUIRE(sendId > 0);
     sq_engine_destroy(engine);
 }
@@ -191,7 +191,7 @@ TEST_CASE("sq_remove_send removes a send")
     SqEngine engine = sq_engine_create(44100.0, 512, nullptr);
     int src = sq_add_source(engine, "synth");
     int bus = sq_add_bus(engine, "FX");
-    int sendId = sq_send(engine, src, bus, -6.0f);
+    int sendId = sq_send(engine, src, bus, -6.0f, 0);
     sq_remove_send(engine, src, sendId);
     sq_render(engine, 512);
     sq_engine_destroy(engine);
@@ -203,7 +203,7 @@ TEST_CASE("sq_bus_send rejects cycle via send")
     int busA = sq_add_bus(engine, "A");
     int busB = sq_add_bus(engine, "B");
     REQUIRE(sq_bus_route(engine, busA, busB));
-    CHECK(sq_bus_send(engine, busB, busA, -6.0f) == -1);
+    CHECK(sq_bus_send(engine, busB, busA, -6.0f, 0) == -1);
     sq_engine_destroy(engine);
 }
 
@@ -372,9 +372,9 @@ TEST_CASE("sq_set_send_tap does not crash")
     SqEngine engine = sq_engine_create(44100.0, 512, nullptr);
     int src = sq_add_source(engine, "synth");
     int bus = sq_add_bus(engine, "FX");
-    int sendId = sq_send(engine, src, bus, -6.0f);
-    sq_set_send_tap(engine, src, sendId, "pre");
-    sq_set_send_tap(engine, src, sendId, "post");
+    int sendId = sq_send(engine, src, bus, -6.0f, 0);
+    sq_set_send_tap(engine, src, sendId, 1);
+    sq_set_send_tap(engine, src, sendId, 0);
     sq_render(engine, 512);
     sq_engine_destroy(engine);
 }
@@ -384,10 +384,10 @@ TEST_CASE("sq_bus_set_send_tap does not crash")
     SqEngine engine = sq_engine_create(44100.0, 512, nullptr);
     int busA = sq_add_bus(engine, "A");
     int busB = sq_add_bus(engine, "B");
-    int sendId = sq_bus_send(engine, busA, busB, -6.0f);
+    int sendId = sq_bus_send(engine, busA, busB, -6.0f, 0);
     REQUIRE(sendId > 0);
-    sq_bus_set_send_tap(engine, busA, sendId, "pre");
-    sq_bus_set_send_tap(engine, busA, sendId, "post");
+    sq_bus_set_send_tap(engine, busA, sendId, 1);
+    sq_bus_set_send_tap(engine, busA, sendId, 0);
     sq_render(engine, 512);
     sq_engine_destroy(engine);
 }

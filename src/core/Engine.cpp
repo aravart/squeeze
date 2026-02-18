@@ -308,15 +308,16 @@ void Engine::route(Source* src, Bus* bus)
     maybeRebuildSnapshot();
 }
 
-int Engine::sendFrom(Source* src, Bus* bus, float levelDb)
+int Engine::sendFrom(Source* src, Bus* bus, float levelDb, SendTap tap)
 {
     std::lock_guard<std::mutex> lock(controlMutex_);
     collectGarbage();
 
     if (!src || !bus) return -1;
-    SQ_DEBUG("Engine::sendFrom: source=%d -> bus=%d level=%.1f",
-             src->getHandle(), bus->getHandle(), levelDb);
-    int sendId = src->addSend(bus, levelDb);
+    SQ_DEBUG("Engine::sendFrom: source=%d -> bus=%d level=%.1f tap=%s",
+             src->getHandle(), bus->getHandle(), levelDb,
+             tap == SendTap::preFader ? "pre" : "post");
+    int sendId = src->addSend(bus, levelDb, tap);
     maybeRebuildSnapshot();
     return sendId;
 }
@@ -338,6 +339,19 @@ void Engine::setSendLevel(Source* src, int sendId, float levelDb)
 
     if (!src) return;
     src->setSendLevel(sendId, levelDb);
+    maybeRebuildSnapshot();
+}
+
+void Engine::setSendTap(Source* src, int sendId, SendTap tap)
+{
+    std::lock_guard<std::mutex> lock(controlMutex_);
+    collectGarbage();
+
+    if (!src) return;
+    SQ_DEBUG("Engine::setSendTap: source=%d sendId=%d tap=%s",
+             src->getHandle(), sendId,
+             tap == SendTap::preFader ? "pre" : "post");
+    src->setSendTap(sendId, tap);
     maybeRebuildSnapshot();
 }
 
@@ -367,7 +381,7 @@ bool Engine::busRoute(Bus* from, Bus* to)
     return true;
 }
 
-int Engine::busSend(Bus* from, Bus* to, float levelDb)
+int Engine::busSend(Bus* from, Bus* to, float levelDb, SendTap tap)
 {
     std::lock_guard<std::mutex> lock(controlMutex_);
     collectGarbage();
@@ -381,9 +395,10 @@ int Engine::busSend(Bus* from, Bus* to, float levelDb)
         return -1;
     }
 
-    SQ_DEBUG("Engine::busSend: bus=%d -> bus=%d level=%.1f",
-             from->getHandle(), to->getHandle(), levelDb);
-    int sendId = from->addSend(to, levelDb);
+    SQ_DEBUG("Engine::busSend: bus=%d -> bus=%d level=%.1f tap=%s",
+             from->getHandle(), to->getHandle(), levelDb,
+             tap == SendTap::preFader ? "pre" : "post");
+    int sendId = from->addSend(to, levelDb, tap);
     maybeRebuildSnapshot();
     return sendId;
 }
@@ -405,6 +420,19 @@ void Engine::busSendLevel(Bus* bus, int sendId, float levelDb)
 
     if (!bus) return;
     bus->setSendLevel(sendId, levelDb);
+    maybeRebuildSnapshot();
+}
+
+void Engine::busSendTap(Bus* bus, int sendId, SendTap tap)
+{
+    std::lock_guard<std::mutex> lock(controlMutex_);
+    collectGarbage();
+
+    if (!bus) return;
+    SQ_DEBUG("Engine::busSendTap: bus=%d sendId=%d tap=%s",
+             bus->getHandle(), sendId,
+             tap == SendTap::preFader ? "pre" : "post");
+    bus->setSendTap(sendId, tap);
     maybeRebuildSnapshot();
 }
 
