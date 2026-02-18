@@ -46,6 +46,7 @@ private:
     struct OpenDevice {
         std::unique_ptr<juce::MidiInput> device;
         std::string name;
+        MidiDeviceQueue* queue;  // cached from MidiRouter::createDeviceQueue()
     };
     std::vector<OpenDevice> openDevices_;
 };
@@ -80,12 +81,12 @@ open_devs = s.midi.open_devices # list of MidiDevice
 
 - `getAvailableDevices()` returns the current system MIDI devices (may change between calls due to hot-plug)
 - `openDevice()` for an already-open device is a no-op (returns true)
-- `openDevice()` creates a SPSC queue in MidiRouter for the device before starting the `juce::MidiInput`
-- `closeDevice()` stops the `juce::MidiInput` and tells MidiRouter to remove the device's queue and all associated routes
+- `openDevice()` creates a SPSC queue in MidiRouter (`createDeviceQueue()`), caches the returned `MidiDeviceQueue*`, then starts the `juce::MidiInput`
+- `closeDevice()` stops the `juce::MidiInput` first (so no more callbacks can fire), discards the cached `MidiDeviceQueue*`, then tells MidiRouter to remove the device's queue and all associated routes. Order matters: stop input before invalidating the queue.
 - `closeDevice()` for a device that is not open is a no-op
 - `closeAllDevices()` stops all open devices (called from destructor)
 - SysEx messages are silently dropped (messages > 3 bytes)
-- `handleIncomingMidiMessage` pushes to MidiRouter's device queue — never blocks, never allocates
+- `handleIncomingMidiMessage` pushes to the cached `MidiDeviceQueue*` via `router_.pushMidiEvent(queue, event)` — no map lookup, no string allocation, never blocks
 - Device names are case-sensitive exact match (JUCE device identifiers)
 
 ## Error Conditions
@@ -118,9 +119,9 @@ open_devs = s.midi.open_devices # list of MidiDevice
 | `openDevice()` | Control | Creates queue in MidiRouter, starts JUCE MidiInput |
 | `closeDevice()` / `closeAllDevices()` | Control | Stops MidiInput, removes queue from MidiRouter |
 | `isDeviceOpen()` / `getOpenDevices()` | Control | Read-only |
-| `handleIncomingMidiMessage()` | MIDI callback | Lock-free push to SPSC queue — never blocks |
+| `handleIncomingMidiMessage()` | MIDI callback | Uses cached `MidiDeviceQueue*` for lock-free SPSC push. No map lookup, no string ops, never blocks. |
 
-All control-thread methods are called from the FFI layer under `controlMutex_`. The MIDI callback thread is a system thread managed by JUCE — `handleIncomingMidiMessage` must be lock-free and non-allocating.
+All control-thread methods are called from the FFI layer under `controlMutex_`. The MIDI callback thread is a separate system thread managed by JUCE — `handleIncomingMidiMessage` must be lock-free and non-allocating. The `MidiDeviceQueue*` is resolved at `openDevice()` time and cached in `OpenDevice`, so the hot path is a single SPSC push.
 
 ## Example Usage
 
