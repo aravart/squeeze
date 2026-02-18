@@ -18,6 +18,7 @@ FetchContent_MakeAvailable(juce)
 # --- Squeeze Core (static library) ---
 add_library(squeeze_core STATIC
     src/core/AudioDevice.cpp
+    src/core/Chain.cpp
     src/core/Engine.cpp
     src/core/Graph.cpp
     src/core/Logger.cpp
@@ -81,6 +82,7 @@ add_executable(squeeze_unit_tests
     tests/core/PluginNodeTests.cpp
     tests/core/PluginManagerTests.cpp
     tests/core/ProcessorTests.cpp
+    tests/core/ChainTests.cpp
 )
 
 target_link_libraries(squeeze_unit_tests PRIVATE
