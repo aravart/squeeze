@@ -465,16 +465,16 @@
 
   for each source (in any order — they're independent):
       source.generate(buffer)
-      source.chain.process(buffer)      // in-place inserts
-      copy scaled taps to send buses    // sends
+      for each proc in snapshot: proc.process(buffer)  // in-place inserts
+      copy scaled taps to send buses                   // sends
 
   for each bus (in dependency order — bus DAG topo sort):
-      bus.sum(input_buffers)            // mix inputs
-      bus.chain.process(buffer)         // in-place inserts
-      copy scaled taps to send buses    // bus sends
+      bus.sum(input_buffers)                           // mix inputs
+      for each proc in snapshot: proc.process(buffer)  // in-place inserts
+      copy scaled taps to send buses                   // bus sends
 
   master.sum(input_buffers)
-  master.chain.process(buffer)
+  for each proc in snapshot: proc.process(buffer)
   output(master.buffer)
 
 

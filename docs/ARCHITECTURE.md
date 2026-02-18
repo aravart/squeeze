@@ -258,18 +258,23 @@ Peripheral components (AudioDevice, PluginManager, BufferLibrary, MidiDeviceMana
 ```
 1. For each source (independent — parallelizable):
       source.generator.process(buffer, midi)
-      source.chain.process(buffer, midi)
+      for each proc in snapshot.chainProcessors:  // Engine iterates snapshot array
+          proc.process(buffer, midi)
+      tap pre-fader sends
+      apply gain + pan
+      tap post-fader sends
+      add buffer to output_bus
 
-2. Accumulate bus inputs:
-      For each source:  add buffer to source.output_bus
-      For each source:  for each send, add buffer * level to send.bus
-      For each bus:     for each send, add buffer * level to send.bus
+2. For each bus (in dependency order — DAG sort over buses):
+      for each proc in snapshot.chainProcessors:  // Engine iterates snapshot array
+          proc.process(buffer)
+      tap pre-fader sends
+      apply gain + pan
+      metering
+      tap post-fader sends
+      add buffer to downstream bus
 
-3. For each bus (in dependency order — DAG sort over buses):
-      bus.chain.process(buffer)
-
-4. master.chain.process(buffer)
-   output(master.buffer)
+3. master: same as bus, output to device
 ```
 
 The dependency sort is over **buses** (typically 2–8), not individual processors. Trivially cheap.

@@ -90,12 +90,13 @@ Source
 └── midi_input: MidiAssignment               (device + channel filter)
 ```
 
-Processing (Engine orchestrates the full pipeline):
+Processing (Engine orchestrates the full pipeline, iterating snapshot arrays):
 ```
-generator.process(buffer, midi)   // generate audio
-chain.process(buffer, midi)       // insert effects, in-place
+generator.process(buffer, midi)               // generate audio
+for each proc in snapshot.chainProcessors:    // insert effects, in-place
+    proc.process(buffer, midi)
 ── pre-fader send taps ──
-apply gain + pan                  // channel strip
+apply gain + pan                              // channel strip
 ── post-fader send taps ──
 → bus summing
 ```
@@ -115,12 +116,13 @@ Bus
 └── sends: [(Bus*, float level, SendTap)]    (pre or post fader taps)
 ```
 
-Processing (Engine orchestrates the full pipeline):
+Processing (Engine orchestrates the full pipeline, iterating snapshot arrays):
 ```
-sum(input_buffers)                // mix all inputs into bus buffer
-chain.process(buffer)             // insert effects, in-place
+sum(input_buffers)                            // mix all inputs into bus buffer
+for each proc in snapshot.chainProcessors:    // insert effects, in-place
+    proc.process(buffer)
 ── pre-fader send taps ──
-apply gain + pan                  // bus strip
+apply gain + pan                              // bus strip
 ── post-fader send taps ──
 → metering → downstream summing
 ```
@@ -141,7 +143,8 @@ Not a separate object — just a routing entry on a Source or Bus: `(destination
 1. For each source (independent — parallelizable):
       if bypassed: clear buffer, skip
       source.generator.process(buffer, midi)
-      source.chain.process(buffer, midi)
+      for each proc in snapshot.chainProcessors:
+          proc.process(buffer, midi)              // Engine iterates snapshot array
       tap pre-fader sends (copy buffer * level to send buses)
       apply source.gain + source.pan
       tap post-fader sends (copy buffer * level to send buses)
@@ -150,7 +153,8 @@ Not a separate object — just a routing entry on a Source or Bus: `(destination
 2. For each bus (in dependency order — DAG sort over buses only):
       if bypassed: clear buffer, skip
       bus.sum(input_buffers)
-      bus.chain.process(buffer)
+      for each proc in snapshot.chainProcessors:
+          proc.process(buffer)                    // Engine iterates snapshot array
       tap pre-fader sends
       apply bus.gain + bus.pan
       metering

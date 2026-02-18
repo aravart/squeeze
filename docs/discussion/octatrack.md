@@ -174,7 +174,7 @@
   Processing becomes:
 
   generator.process(buffer, midi)
-  chain.process(buffer, midi)
+  for each proc in snapshot.chainProcessors: proc.process(buffer, midi)
   ── pre-fader send tap ──
   ── PFL tap ──
   apply gain + pan

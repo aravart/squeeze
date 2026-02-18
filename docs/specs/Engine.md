@@ -155,7 +155,10 @@ private:
     // Processor handle registry (all processors across all sources and buses)
     std::unordered_map<int, Processor*> processorRegistry_;
 
-    // Snapshot
+    // Snapshot — raw pointer, not atomic. Only the audio thread reads/writes
+    // activeSnapshot_ (set during commandQueue drain, read during processBlock).
+    // The control thread never accesses it — it sends new snapshots via
+    // CommandQueue, which provides the memory ordering guarantees.
     struct MixerSnapshot;
     MixerSnapshot* activeSnapshot_ = nullptr;
 
@@ -488,19 +491,16 @@ struct MixerSnapshot {
     std::vector<SourceEntry> sources;
 
     // Bus processing arrays (in dependency order)
+    struct DelayLine { /* circular buffer, pre-allocated */ };
     struct BusEntry {
         Bus* bus;
         std::vector<Processor*> chainProcessors;   // snapshot of chain state
         juce::AudioBuffer<float> buffer;            // pre-allocated
         std::vector<Send> sends;
         int compensationDelay;                      // PDC: max input path delay
+        std::vector<DelayLine> delayLines;          // PDC: per-input compensation
     };
     std::vector<BusEntry> buses;  // sorted in dependency order, master last
-
-    // PDC compensation delay lines (per bus input)
-    // Only allocated where compensationDelay > 0
-    struct DelayLine { /* same as before */ };
-    std::unordered_map<Bus*, std::vector<DelayLine>> compensationDelays;
 
     int totalLatency;
 };
