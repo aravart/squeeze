@@ -1,4 +1,4 @@
-"""Low-level ctypes bindings to libsqueeze_ffi. Internal module."""
+"""Internal ctypes declarations for libsqueeze_ffi. Not a public API."""
 
 import ctypes
 import os
@@ -14,7 +14,6 @@ def _find_lib():
         "Windows": "squeeze_ffi.dll",
     }.get(platform.system(), "libsqueeze_ffi.so")
 
-    # Check common build locations (relative to python/squeeze/)
     for subdir in ["../../build", "../../build/Release", "../../build/Debug"]:
         path = os.path.join(base, subdir, name)
         if os.path.exists(path):
@@ -27,24 +26,12 @@ def _find_lib():
 
 # --- C struct mirrors ---
 
-class SqPortDescriptor(ctypes.Structure):
-    _fields_ = [
-        ("name", ctypes.c_char_p),
-        ("direction", ctypes.c_int),
-        ("signal_type", ctypes.c_int),
-        ("channels", ctypes.c_int),
-    ]
-
-class SqPortList(ctypes.Structure):
-    _fields_ = [
-        ("ports", ctypes.POINTER(SqPortDescriptor)),
-        ("count", ctypes.c_int),
-    ]
-
 class SqParamDescriptor(ctypes.Structure):
     _fields_ = [
         ("name", ctypes.c_char_p),
         ("default_value", ctypes.c_float),
+        ("min_value", ctypes.c_float),
+        ("max_value", ctypes.c_float),
         ("num_steps", ctypes.c_int),
         ("automatable", ctypes.c_bool),
         ("boolean_param", ctypes.c_bool),
@@ -58,21 +45,6 @@ class SqParamDescriptorList(ctypes.Structure):
         ("count", ctypes.c_int),
     ]
 
-class SqConnection(ctypes.Structure):
-    _fields_ = [
-        ("id", ctypes.c_int),
-        ("src_node", ctypes.c_int),
-        ("src_port", ctypes.c_char_p),
-        ("dst_node", ctypes.c_int),
-        ("dst_port", ctypes.c_char_p),
-    ]
-
-class SqConnectionList(ctypes.Structure):
-    _fields_ = [
-        ("connections", ctypes.POINTER(SqConnection)),
-        ("count", ctypes.c_int),
-    ]
-
 class SqStringList(ctypes.Structure):
     _fields_ = [
         ("items", ctypes.POINTER(ctypes.c_char_p)),
@@ -83,7 +55,7 @@ class SqMidiRoute(ctypes.Structure):
     _fields_ = [
         ("id", ctypes.c_int),
         ("device", ctypes.c_char_p),
-        ("node_id", ctypes.c_int),
+        ("target_handle", ctypes.c_int),
         ("channel_filter", ctypes.c_int),
         ("note_filter", ctypes.c_int),
     ]
@@ -97,267 +69,160 @@ class SqMidiRouteList(ctypes.Structure):
 
 LogCallbackType = ctypes.CFUNCTYPE(None, ctypes.c_int, ctypes.c_char_p, ctypes.c_void_p)
 
+_V = ctypes.c_void_p   # SqEngine
+_I = ctypes.c_int
+_F = ctypes.c_float
+_D = ctypes.c_double
+_B = ctypes.c_bool
+_S = ctypes.c_char_p
+_EP = ctypes.POINTER(ctypes.c_char_p)
+
 
 def _load_lib():
     """Load the shared library and declare all function signatures."""
     lib = ctypes.cdll.LoadLibrary(_find_lib())
 
-    # sq_free_string
-    lib.sq_free_string.restype = None
-    lib.sq_free_string.argtypes = [ctypes.c_char_p]
+    def _sig(name, restype, argtypes):
+        fn = getattr(lib, name)
+        fn.restype = restype
+        fn.argtypes = argtypes
 
-    # sq_engine_create
-    lib.sq_engine_create.restype = ctypes.c_void_p
-    lib.sq_engine_create.argtypes = [ctypes.c_double, ctypes.c_int, ctypes.POINTER(ctypes.c_char_p)]
+    # --- String/list free ---
+    _sig("sq_free_string", None, [_V])
+    _sig("sq_free_string_list", None, [SqStringList])
+    _sig("sq_free_param_descriptor_list", None, [SqParamDescriptorList])
+    _sig("sq_free_midi_route_list", None, [SqMidiRouteList])
 
-    # sq_engine_destroy
-    lib.sq_engine_destroy.restype = None
-    lib.sq_engine_destroy.argtypes = [ctypes.c_void_p]
+    # --- Logging ---
+    _sig("sq_set_log_level", None, [_I])
+    _sig("sq_set_log_callback", None, [LogCallbackType, ctypes.c_void_p])
 
-    # sq_version
-    lib.sq_version.restype = ctypes.c_char_p
-    lib.sq_version.argtypes = [ctypes.c_void_p]
+    # --- Engine lifecycle ---
+    _sig("sq_engine_create", _V, [_D, _I, _EP])
+    _sig("sq_engine_destroy", None, [_V])
+    _sig("sq_version", _V, [_V])  # returns char* (must free)
+    _sig("sq_engine_sample_rate", _D, [_V])
+    _sig("sq_engine_block_size", _I, [_V])
 
-    # sq_set_log_level
-    lib.sq_set_log_level.restype = None
-    lib.sq_set_log_level.argtypes = [ctypes.c_int]
+    # --- Source management ---
+    _sig("sq_add_source", _I, [_V, _S])
+    _sig("sq_remove_source", _B, [_V, _I])
+    _sig("sq_source_count", _I, [_V])
+    _sig("sq_source_generator", _I, [_V, _I])
+    _sig("sq_source_name", _V, [_V, _I])  # returns char* (must free)
+    _sig("sq_source_gain", _F, [_V, _I])
+    _sig("sq_source_set_gain", None, [_V, _I, _F])
+    _sig("sq_source_pan", _F, [_V, _I])
+    _sig("sq_source_set_pan", None, [_V, _I, _F])
+    _sig("sq_source_bypassed", _B, [_V, _I])
+    _sig("sq_source_set_bypassed", None, [_V, _I, _B])
+    _sig("sq_source_midi_assign", None, [_V, _I, _S, _I, _I, _I])
 
-    # sq_set_log_callback
-    lib.sq_set_log_callback.restype = None
-    lib.sq_set_log_callback.argtypes = [LogCallbackType, ctypes.c_void_p]
+    # --- Bus management ---
+    _sig("sq_add_bus", _I, [_V, _S])
+    _sig("sq_remove_bus", _B, [_V, _I])
+    _sig("sq_bus_count", _I, [_V])
+    _sig("sq_master", _I, [_V])
+    _sig("sq_bus_name", _V, [_V, _I])  # returns char* (must free)
+    _sig("sq_bus_gain", _F, [_V, _I])
+    _sig("sq_bus_set_gain", None, [_V, _I, _F])
+    _sig("sq_bus_pan", _F, [_V, _I])
+    _sig("sq_bus_set_pan", None, [_V, _I, _F])
+    _sig("sq_bus_bypassed", _B, [_V, _I])
+    _sig("sq_bus_set_bypassed", None, [_V, _I, _B])
 
-    # --- Node management ---
+    # --- Routing ---
+    _sig("sq_route", None, [_V, _I, _I])
+    _sig("sq_send", _I, [_V, _I, _I, _F])
+    _sig("sq_remove_send", None, [_V, _I, _I])
+    _sig("sq_set_send_level", None, [_V, _I, _I, _F])
+    _sig("sq_set_send_tap", None, [_V, _I, _I, _S])
+    _sig("sq_bus_route", _B, [_V, _I, _I])
+    _sig("sq_bus_send", _I, [_V, _I, _I, _F])
+    _sig("sq_bus_remove_send", None, [_V, _I, _I])
+    _sig("sq_bus_set_send_level", None, [_V, _I, _I, _F])
+    _sig("sq_bus_set_send_tap", None, [_V, _I, _I, _S])
 
-    # sq_add_gain
-    lib.sq_add_gain.restype = ctypes.c_int
-    lib.sq_add_gain.argtypes = [ctypes.c_void_p]
+    # --- Source chain ---
+    _sig("sq_source_append_proc", _I, [_V, _I])
+    _sig("sq_source_insert_proc", _I, [_V, _I, _I])
+    _sig("sq_source_remove_proc", None, [_V, _I, _I])
+    _sig("sq_source_chain_size", _I, [_V, _I])
 
-    # sq_add_test_synth
-    lib.sq_add_test_synth.restype = ctypes.c_int
-    lib.sq_add_test_synth.argtypes = [ctypes.c_void_p]
+    # --- Bus chain ---
+    _sig("sq_bus_append_proc", _I, [_V, _I])
+    _sig("sq_bus_insert_proc", _I, [_V, _I, _I])
+    _sig("sq_bus_remove_proc", None, [_V, _I, _I])
+    _sig("sq_bus_chain_size", _I, [_V, _I])
 
-    # sq_remove_node
-    lib.sq_remove_node.restype = ctypes.c_bool
-    lib.sq_remove_node.argtypes = [ctypes.c_void_p, ctypes.c_int]
+    # --- Parameters ---
+    _sig("sq_get_param", _F, [_V, _I, _S])
+    _sig("sq_set_param", _B, [_V, _I, _S, _F])
+    _sig("sq_param_text", _V, [_V, _I, _S])  # returns char* (must free)
+    _sig("sq_param_descriptors", SqParamDescriptorList, [_V, _I])
 
-    # sq_node_name
-    lib.sq_node_name.restype = ctypes.c_char_p
-    lib.sq_node_name.argtypes = [ctypes.c_void_p, ctypes.c_int]
+    # --- Metering ---
+    _sig("sq_bus_peak", _F, [_V, _I])
+    _sig("sq_bus_rms", _F, [_V, _I])
 
-    # sq_get_ports
-    lib.sq_get_ports.restype = SqPortList
-    lib.sq_get_ports.argtypes = [ctypes.c_void_p, ctypes.c_int]
-
-    # sq_free_port_list
-    lib.sq_free_port_list.restype = None
-    lib.sq_free_port_list.argtypes = [SqPortList]
-
-    # sq_param_descriptors
-    lib.sq_param_descriptors.restype = SqParamDescriptorList
-    lib.sq_param_descriptors.argtypes = [ctypes.c_void_p, ctypes.c_int]
-
-    # sq_free_param_descriptor_list
-    lib.sq_free_param_descriptor_list.restype = None
-    lib.sq_free_param_descriptor_list.argtypes = [SqParamDescriptorList]
-
-    # sq_get_param
-    lib.sq_get_param.restype = ctypes.c_float
-    lib.sq_get_param.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_char_p]
-
-    # sq_set_param
-    lib.sq_set_param.restype = ctypes.c_bool
-    lib.sq_set_param.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_float]
-
-    # sq_param_text
-    lib.sq_param_text.restype = ctypes.c_char_p
-    lib.sq_param_text.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_char_p]
-
-    # --- Connection management ---
-
-    # sq_connect
-    lib.sq_connect.restype = ctypes.c_int
-    lib.sq_connect.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_char_p,
-                               ctypes.c_int, ctypes.c_char_p,
-                               ctypes.POINTER(ctypes.c_char_p)]
-
-    # sq_disconnect
-    lib.sq_disconnect.restype = ctypes.c_bool
-    lib.sq_disconnect.argtypes = [ctypes.c_void_p, ctypes.c_int]
-
-    # sq_connections
-    lib.sq_connections.restype = SqConnectionList
-    lib.sq_connections.argtypes = [ctypes.c_void_p]
-
-    # sq_free_connection_list
-    lib.sq_free_connection_list.restype = None
-    lib.sq_free_connection_list.argtypes = [SqConnectionList]
-
-    # --- Output node and node count ---
-
-    # sq_output_node
-    lib.sq_output_node.restype = ctypes.c_int
-    lib.sq_output_node.argtypes = [ctypes.c_void_p]
-
-    # sq_node_count
-    lib.sq_node_count.restype = ctypes.c_int
-    lib.sq_node_count.argtypes = [ctypes.c_void_p]
+    # --- Batching ---
+    _sig("sq_batch_begin", None, [_V])
+    _sig("sq_batch_commit", None, [_V])
 
     # --- Transport ---
-
-    lib.sq_transport_play.restype = None
-    lib.sq_transport_play.argtypes = [ctypes.c_void_p]
-
-    lib.sq_transport_stop.restype = None
-    lib.sq_transport_stop.argtypes = [ctypes.c_void_p]
-
-    lib.sq_transport_pause.restype = None
-    lib.sq_transport_pause.argtypes = [ctypes.c_void_p]
-
-    lib.sq_transport_set_tempo.restype = None
-    lib.sq_transport_set_tempo.argtypes = [ctypes.c_void_p, ctypes.c_double]
-
-    lib.sq_transport_set_time_signature.restype = None
-    lib.sq_transport_set_time_signature.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int]
-
-    lib.sq_transport_seek_samples.restype = None
-    lib.sq_transport_seek_samples.argtypes = [ctypes.c_void_p, ctypes.c_int64]
-
-    lib.sq_transport_seek_beats.restype = None
-    lib.sq_transport_seek_beats.argtypes = [ctypes.c_void_p, ctypes.c_double]
-
-    lib.sq_transport_set_loop_points.restype = None
-    lib.sq_transport_set_loop_points.argtypes = [ctypes.c_void_p, ctypes.c_double, ctypes.c_double]
-
-    lib.sq_transport_set_looping.restype = None
-    lib.sq_transport_set_looping.argtypes = [ctypes.c_void_p, ctypes.c_bool]
-
-    lib.sq_transport_position.restype = ctypes.c_double
-    lib.sq_transport_position.argtypes = [ctypes.c_void_p]
-
-    lib.sq_transport_tempo.restype = ctypes.c_double
-    lib.sq_transport_tempo.argtypes = [ctypes.c_void_p]
-
-    lib.sq_transport_is_playing.restype = ctypes.c_bool
-    lib.sq_transport_is_playing.argtypes = [ctypes.c_void_p]
+    _sig("sq_transport_play", None, [_V])
+    _sig("sq_transport_stop", None, [_V])
+    _sig("sq_transport_pause", None, [_V])
+    _sig("sq_transport_set_tempo", None, [_V, _D])
+    _sig("sq_transport_set_time_signature", None, [_V, _I, _I])
+    _sig("sq_transport_seek_samples", None, [_V, ctypes.c_int64])
+    _sig("sq_transport_seek_beats", None, [_V, _D])
+    _sig("sq_transport_set_loop_points", None, [_V, _D, _D])
+    _sig("sq_transport_set_looping", None, [_V, _B])
+    _sig("sq_transport_position", _D, [_V])
+    _sig("sq_transport_tempo", _D, [_V])
+    _sig("sq_transport_is_playing", _B, [_V])
 
     # --- Event scheduling ---
-
-    lib.sq_schedule_note_on.restype = ctypes.c_bool
-    lib.sq_schedule_note_on.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_double,
-                                        ctypes.c_int, ctypes.c_int, ctypes.c_float]
-
-    lib.sq_schedule_note_off.restype = ctypes.c_bool
-    lib.sq_schedule_note_off.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_double,
-                                         ctypes.c_int, ctypes.c_int]
-
-    lib.sq_schedule_cc.restype = ctypes.c_bool
-    lib.sq_schedule_cc.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_double,
-                                   ctypes.c_int, ctypes.c_int, ctypes.c_int]
-
-    lib.sq_schedule_param_change.restype = ctypes.c_bool
-    lib.sq_schedule_param_change.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_double,
-                                             ctypes.c_char_p, ctypes.c_float]
-
-    # --- Audio device ---
-
-    lib.sq_start.restype = ctypes.c_bool
-    lib.sq_start.argtypes = [ctypes.c_void_p, ctypes.c_double, ctypes.c_int,
-                              ctypes.POINTER(ctypes.c_char_p)]
-
-    lib.sq_stop.restype = None
-    lib.sq_stop.argtypes = [ctypes.c_void_p]
-
-    lib.sq_is_running.restype = ctypes.c_bool
-    lib.sq_is_running.argtypes = [ctypes.c_void_p]
-
-    lib.sq_sample_rate.restype = ctypes.c_double
-    lib.sq_sample_rate.argtypes = [ctypes.c_void_p]
-
-    lib.sq_block_size.restype = ctypes.c_int
-    lib.sq_block_size.argtypes = [ctypes.c_void_p]
+    _sig("sq_schedule_note_on", _B, [_V, _I, _D, _I, _I, _F])
+    _sig("sq_schedule_note_off", _B, [_V, _I, _D, _I, _I])
+    _sig("sq_schedule_cc", _B, [_V, _I, _D, _I, _I, _I])
+    _sig("sq_schedule_param_change", _B, [_V, _I, _D, _S, _F])
 
     # --- Plugin manager ---
-
-    lib.sq_load_plugin_cache.restype = ctypes.c_bool
-    lib.sq_load_plugin_cache.argtypes = [ctypes.c_void_p, ctypes.c_char_p,
-                                          ctypes.POINTER(ctypes.c_char_p)]
-
-    lib.sq_add_plugin.restype = ctypes.c_int
-    lib.sq_add_plugin.argtypes = [ctypes.c_void_p, ctypes.c_char_p,
-                                   ctypes.POINTER(ctypes.c_char_p)]
-
-    lib.sq_available_plugins.restype = SqStringList
-    lib.sq_available_plugins.argtypes = [ctypes.c_void_p]
-
-    lib.sq_free_string_list.restype = None
-    lib.sq_free_string_list.argtypes = [SqStringList]
-
-    lib.sq_num_plugins.restype = ctypes.c_int
-    lib.sq_num_plugins.argtypes = [ctypes.c_void_p]
+    _sig("sq_load_plugin_cache", _B, [_V, _S, _EP])
+    _sig("sq_add_plugin", _I, [_V, _S, _EP])
+    _sig("sq_available_plugins", SqStringList, [_V])
+    _sig("sq_num_plugins", _I, [_V])
 
     # --- MIDI device management ---
-
-    lib.sq_midi_devices.restype = SqStringList
-    lib.sq_midi_devices.argtypes = [ctypes.c_void_p]
-
-    lib.sq_midi_open.restype = ctypes.c_bool
-    lib.sq_midi_open.argtypes = [ctypes.c_void_p, ctypes.c_char_p,
-                                  ctypes.POINTER(ctypes.c_char_p)]
-
-    lib.sq_midi_close.restype = None
-    lib.sq_midi_close.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
-
-    lib.sq_midi_open_devices.restype = SqStringList
-    lib.sq_midi_open_devices.argtypes = [ctypes.c_void_p]
+    _sig("sq_midi_devices", SqStringList, [_V])
+    _sig("sq_midi_open", _B, [_V, _S, _EP])
+    _sig("sq_midi_close", None, [_V, _S])
+    _sig("sq_midi_open_devices", SqStringList, [_V])
 
     # --- MIDI routing ---
+    _sig("sq_midi_route", _I, [_V, _S, _I, _I, _I, _EP])
+    _sig("sq_midi_unroute", _B, [_V, _I])
+    _sig("sq_midi_routes", SqMidiRouteList, [_V])
 
-    lib.sq_midi_route.restype = ctypes.c_int
-    lib.sq_midi_route.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int,
-                                   ctypes.c_int, ctypes.c_int,
-                                   ctypes.POINTER(ctypes.c_char_p)]
-
-    lib.sq_midi_unroute.restype = ctypes.c_bool
-    lib.sq_midi_unroute.argtypes = [ctypes.c_void_p, ctypes.c_int]
-
-    lib.sq_midi_routes.restype = SqMidiRouteList
-    lib.sq_midi_routes.argtypes = [ctypes.c_void_p]
-
-    lib.sq_free_midi_route_list.restype = None
-    lib.sq_free_midi_route_list.argtypes = [SqMidiRouteList]
+    # --- Audio device ---
+    _sig("sq_start", _B, [_V, _D, _I, _EP])
+    _sig("sq_stop", None, [_V])
+    _sig("sq_is_running", _B, [_V])
+    _sig("sq_sample_rate", _D, [_V])
+    _sig("sq_block_size", _I, [_V])
 
     # --- Plugin editor ---
-
-    lib.sq_open_editor.restype = ctypes.c_bool
-    lib.sq_open_editor.argtypes = [ctypes.c_void_p, ctypes.c_int,
-                                    ctypes.POINTER(ctypes.c_char_p)]
-
-    lib.sq_close_editor.restype = ctypes.c_bool
-    lib.sq_close_editor.argtypes = [ctypes.c_void_p, ctypes.c_int,
-                                     ctypes.POINTER(ctypes.c_char_p)]
-
-    lib.sq_has_editor.restype = ctypes.c_bool
-    lib.sq_has_editor.argtypes = [ctypes.c_void_p, ctypes.c_int]
-
-    lib.sq_process_events.restype = None
-    lib.sq_process_events.argtypes = [ctypes.c_int]
+    _sig("sq_open_editor", _B, [_V, _I, _EP])
+    _sig("sq_close_editor", _B, [_V, _I, _EP])
+    _sig("sq_has_editor", _B, [_V, _I])
+    _sig("sq_process_events", None, [_I])
 
     # --- Testing ---
-
-    lib.sq_render.restype = None
-    lib.sq_render.argtypes = [ctypes.c_void_p, ctypes.c_int]
+    _sig("sq_render", None, [_V, _I])
 
     return lib
 
 
 lib = _load_lib()
-
-
-def check_error(error_ptr):
-    """Raise SqueezeError if the error pointer was set."""
-    from squeeze import SqueezeError
-
-    if error_ptr.value is not None:
-        msg = error_ptr.value.decode()
-        lib.sq_free_string(error_ptr)
-        raise SqueezeError(msg)

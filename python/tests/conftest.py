@@ -5,8 +5,8 @@ from squeeze import Squeeze
 
 
 @pytest.fixture
-def engine():
+def s():
     """Create a Squeeze engine, destroy it after the test."""
-    eng = Squeeze(44100.0, 512)
-    yield eng
-    eng.close()
+    engine = Squeeze(44100.0, 512)
+    yield engine
+    engine.close()

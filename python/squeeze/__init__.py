@@ -1,11 +1,12 @@
 """Squeeze — Python client for the Squeeze audio engine."""
 
-# High-level API (primary)
-from squeeze.engine import Engine
-from squeeze.node import Node, PortRef, Param, ParamMap
+from squeeze.squeeze import Squeeze
+from squeeze.source import Source
+from squeeze.bus import Bus
+from squeeze.chain import Chain
+from squeeze.processor import Processor
 from squeeze.transport import Transport
 from squeeze.midi import Midi, MidiDevice
-from squeeze.types import Direction, SignalType, Port, ParamDescriptor, Connection
+from squeeze.types import ParamDescriptor
 
-# Low-level API (still available)
-from squeeze._low_level import Squeeze, SqueezeError, set_log_level, set_log_callback
+from squeeze._helpers import SqueezeError, set_log_level, set_log_callback

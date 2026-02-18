@@ -1,75 +1,81 @@
-"""Transport sub-object for the Squeeze high-level API."""
+"""Transport sub-object for the Squeeze Python API."""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from squeeze._ffi import lib
+
 if TYPE_CHECKING:
-    from squeeze._low_level import Squeeze
+    from squeeze.squeeze import Squeeze
 
 
 class Transport:
-    """Sub-object for transport control. Accessed via engine.transport."""
+    """Sub-object for transport control. Accessed via squeeze.transport."""
 
-    def __init__(self, sq: Squeeze):
-        self._sq = sq
+    def __init__(self, engine: Squeeze):
+        self._engine = engine
 
     def play(self) -> None:
         """Start playback."""
-        self._sq.transport_play()
+        lib.sq_transport_play(self._engine._ptr)
 
     def stop(self) -> None:
         """Stop playback and reset position."""
-        self._sq.transport_stop()
+        lib.sq_transport_stop(self._engine._ptr)
 
     def pause(self) -> None:
         """Pause playback (position preserved)."""
-        self._sq.transport_pause()
+        lib.sq_transport_pause(self._engine._ptr)
 
     @property
     def tempo(self) -> float:
         """Current tempo in BPM."""
-        return self._sq.transport_tempo
+        return lib.sq_transport_tempo(self._engine._ptr)
 
     @tempo.setter
     def tempo(self, bpm: float) -> None:
-        self._sq.transport_set_tempo(bpm)
+        lib.sq_transport_set_tempo(self._engine._ptr, bpm)
 
     @property
     def position(self) -> float:
         """Current playback position in beats."""
-        return self._sq.transport_position
+        return lib.sq_transport_position(self._engine._ptr)
 
     @property
     def playing(self) -> bool:
         """True if transport is currently playing."""
-        return self._sq.transport_is_playing
+        return lib.sq_transport_is_playing(self._engine._ptr)
+
+    @playing.setter
+    def playing(self, value: bool) -> None:
+        if value:
+            lib.sq_transport_play(self._engine._ptr)
+        else:
+            lib.sq_transport_stop(self._engine._ptr)
 
     def seek(self, *, beats: float = None, samples: int = None) -> None:
-        """Seek to a position. Specify exactly one of beats or samples.
-
-        Raises ValueError if neither or both are specified.
-        """
+        """Seek to a position. Specify exactly one of beats or samples."""
         if (beats is None) == (samples is None):
             raise ValueError("specify exactly one of beats= or samples=")
         if beats is not None:
-            self._sq.transport_seek_beats(beats)
+            lib.sq_transport_seek_beats(self._engine._ptr, beats)
         else:
-            self._sq.transport_seek_samples(samples)
+            lib.sq_transport_seek_samples(self._engine._ptr, samples)
 
     def set_time_signature(self, numerator: int, denominator: int) -> None:
         """Set the time signature (e.g. 4, 4 for 4/4)."""
-        self._sq.transport_set_time_signature(numerator, denominator)
+        lib.sq_transport_set_time_signature(self._engine._ptr, numerator, denominator)
 
     def set_loop(self, start: float, end: float) -> None:
         """Set loop points in beats."""
-        self._sq.transport_set_loop_points(start, end)
+        lib.sq_transport_set_loop_points(self._engine._ptr, start, end)
 
     @property
     def looping(self) -> bool:
         """Whether looping is enabled."""
-        raise NotImplementedError("read-only looping query not yet in C ABI")
+        return False  # No FFI query function yet
 
     @looping.setter
     def looping(self, enabled: bool) -> None:
-        self._sq.transport_set_looping(enabled)
+        lib.sq_transport_set_looping(self._engine._ptr, enabled)

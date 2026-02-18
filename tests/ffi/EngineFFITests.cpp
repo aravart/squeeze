@@ -263,6 +263,136 @@ TEST_CASE("sq_bus_remove_proc removes from bus chain")
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// Source properties
+// ═══════════════════════════════════════════════════════════════════
+
+TEST_CASE("sq_source_name returns source name")
+{
+    SqEngine engine = sq_engine_create(44100.0, 512, nullptr);
+    int src = sq_add_source(engine, "Lead");
+    char* name = sq_source_name(engine, src);
+    REQUIRE(name != nullptr);
+    CHECK(std::string(name) == "Lead");
+    sq_free_string(name);
+    sq_engine_destroy(engine);
+}
+
+TEST_CASE("sq_source_gain/sq_source_set_gain roundtrip")
+{
+    SqEngine engine = sq_engine_create(44100.0, 512, nullptr);
+    int src = sq_add_source(engine, "synth");
+    CHECK(sq_source_gain(engine, src) == 1.0f);
+    sq_source_set_gain(engine, src, 0.5f);
+    CHECK(sq_source_gain(engine, src) == 0.5f);
+    sq_engine_destroy(engine);
+}
+
+TEST_CASE("sq_source_pan/sq_source_set_pan roundtrip")
+{
+    SqEngine engine = sq_engine_create(44100.0, 512, nullptr);
+    int src = sq_add_source(engine, "synth");
+    CHECK(sq_source_pan(engine, src) == 0.0f);
+    sq_source_set_pan(engine, src, -0.5f);
+    CHECK(sq_source_pan(engine, src) == -0.5f);
+    sq_engine_destroy(engine);
+}
+
+TEST_CASE("sq_source_bypassed/sq_source_set_bypassed roundtrip")
+{
+    SqEngine engine = sq_engine_create(44100.0, 512, nullptr);
+    int src = sq_add_source(engine, "synth");
+    CHECK_FALSE(sq_source_bypassed(engine, src));
+    sq_source_set_bypassed(engine, src, true);
+    CHECK(sq_source_bypassed(engine, src));
+    sq_source_set_bypassed(engine, src, false);
+    CHECK_FALSE(sq_source_bypassed(engine, src));
+    sq_engine_destroy(engine);
+}
+
+TEST_CASE("sq_source_midi_assign does not crash")
+{
+    SqEngine engine = sq_engine_create(44100.0, 512, nullptr);
+    int src = sq_add_source(engine, "synth");
+    sq_source_midi_assign(engine, src, "Keylab", 1, 36, 72);
+    sq_render(engine, 512);
+    sq_engine_destroy(engine);
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Bus properties
+// ═══════════════════════════════════════════════════════════════════
+
+TEST_CASE("sq_bus_name returns bus name")
+{
+    SqEngine engine = sq_engine_create(44100.0, 512, nullptr);
+    int bus = sq_add_bus(engine, "Reverb");
+    char* name = sq_bus_name(engine, bus);
+    REQUIRE(name != nullptr);
+    CHECK(std::string(name) == "Reverb");
+    sq_free_string(name);
+    sq_engine_destroy(engine);
+}
+
+TEST_CASE("sq_bus_gain/sq_bus_set_gain roundtrip")
+{
+    SqEngine engine = sq_engine_create(44100.0, 512, nullptr);
+    int master = sq_master(engine);
+    CHECK(sq_bus_gain(engine, master) == 1.0f);
+    sq_bus_set_gain(engine, master, 0.75f);
+    CHECK(sq_bus_gain(engine, master) == 0.75f);
+    sq_engine_destroy(engine);
+}
+
+TEST_CASE("sq_bus_pan/sq_bus_set_pan roundtrip")
+{
+    SqEngine engine = sq_engine_create(44100.0, 512, nullptr);
+    int master = sq_master(engine);
+    CHECK(sq_bus_pan(engine, master) == 0.0f);
+    sq_bus_set_pan(engine, master, 1.0f);
+    CHECK(sq_bus_pan(engine, master) == 1.0f);
+    sq_engine_destroy(engine);
+}
+
+TEST_CASE("sq_bus_bypassed/sq_bus_set_bypassed roundtrip")
+{
+    SqEngine engine = sq_engine_create(44100.0, 512, nullptr);
+    int master = sq_master(engine);
+    CHECK_FALSE(sq_bus_bypassed(engine, master));
+    sq_bus_set_bypassed(engine, master, true);
+    CHECK(sq_bus_bypassed(engine, master));
+    sq_engine_destroy(engine);
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Send tap
+// ═══════════════════════════════════════════════════════════════════
+
+TEST_CASE("sq_set_send_tap does not crash")
+{
+    SqEngine engine = sq_engine_create(44100.0, 512, nullptr);
+    int src = sq_add_source(engine, "synth");
+    int bus = sq_add_bus(engine, "FX");
+    int sendId = sq_send(engine, src, bus, -6.0f);
+    sq_set_send_tap(engine, src, sendId, "pre");
+    sq_set_send_tap(engine, src, sendId, "post");
+    sq_render(engine, 512);
+    sq_engine_destroy(engine);
+}
+
+TEST_CASE("sq_bus_set_send_tap does not crash")
+{
+    SqEngine engine = sq_engine_create(44100.0, 512, nullptr);
+    int busA = sq_add_bus(engine, "A");
+    int busB = sq_add_bus(engine, "B");
+    int sendId = sq_bus_send(engine, busA, busB, -6.0f);
+    REQUIRE(sendId > 0);
+    sq_bus_set_send_tap(engine, busA, sendId, "pre");
+    sq_bus_set_send_tap(engine, busA, sendId, "post");
+    sq_render(engine, 512);
+    sq_engine_destroy(engine);
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // Parameters
 // ═══════════════════════════════════════════════════════════════════
 

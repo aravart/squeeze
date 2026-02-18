@@ -66,6 +66,32 @@ int sq_source_count(SqEngine engine);
 /// Returns the generator processor handle for a source, or -1 if not found.
 int sq_source_generator(SqEngine engine, int source_handle);
 
+/// Returns the source name. Caller must sq_free_string().
+char* sq_source_name(SqEngine engine, int source_handle);
+
+/// Returns the source gain (linear).
+float sq_source_gain(SqEngine engine, int source_handle);
+
+/// Set the source gain (linear).
+void sq_source_set_gain(SqEngine engine, int source_handle, float gain);
+
+/// Returns the source pan (-1.0 to 1.0).
+float sq_source_pan(SqEngine engine, int source_handle);
+
+/// Set the source pan (-1.0 to 1.0).
+void sq_source_set_pan(SqEngine engine, int source_handle, float pan);
+
+/// Returns true if the source is bypassed.
+bool sq_source_bypassed(SqEngine engine, int source_handle);
+
+/// Set the source bypass state.
+void sq_source_set_bypassed(SqEngine engine, int source_handle, bool bypassed);
+
+/// Assign MIDI input to a source.
+void sq_source_midi_assign(SqEngine engine, int source_handle,
+                           const char* device, int channel,
+                           int note_low, int note_high);
+
 /* ── Bus management ────────────────────────────────────────────── */
 
 /// Add a bus. Returns the bus handle (>0).
@@ -79,6 +105,27 @@ int sq_bus_count(SqEngine engine);
 
 /// Returns the Master bus handle.
 int sq_master(SqEngine engine);
+
+/// Returns the bus name. Caller must sq_free_string().
+char* sq_bus_name(SqEngine engine, int bus_handle);
+
+/// Returns the bus gain (linear).
+float sq_bus_gain(SqEngine engine, int bus_handle);
+
+/// Set the bus gain (linear).
+void sq_bus_set_gain(SqEngine engine, int bus_handle, float gain);
+
+/// Returns the bus pan (-1.0 to 1.0).
+float sq_bus_pan(SqEngine engine, int bus_handle);
+
+/// Set the bus pan (-1.0 to 1.0).
+void sq_bus_set_pan(SqEngine engine, int bus_handle, float pan);
+
+/// Returns true if the bus is bypassed.
+bool sq_bus_bypassed(SqEngine engine, int bus_handle);
+
+/// Set the bus bypass state.
+void sq_bus_set_bypassed(SqEngine engine, int bus_handle, bool bypassed);
 
 /* ── Routing ───────────────────────────────────────────────────── */
 
@@ -94,6 +141,9 @@ void sq_remove_send(SqEngine engine, int source_handle, int send_id);
 /// Set send level.
 void sq_set_send_level(SqEngine engine, int source_handle, int send_id, float level_db);
 
+/// Set send tap point. tap: "pre" or "post".
+void sq_set_send_tap(SqEngine engine, int source_handle, int send_id, const char* tap);
+
 /// Route a bus to another bus. Returns false if would create cycle.
 bool sq_bus_route(SqEngine engine, int from_handle, int to_handle);
 
@@ -105,6 +155,9 @@ void sq_bus_remove_send(SqEngine engine, int bus_handle, int send_id);
 
 /// Set bus send level.
 void sq_bus_set_send_level(SqEngine engine, int bus_handle, int send_id, float level_db);
+
+/// Set bus send tap point. tap: "pre" or "post".
+void sq_bus_set_send_tap(SqEngine engine, int bus_handle, int send_id, const char* tap);
 
 /* ── Source chain ──────────────────────────────────────────────── */
 
