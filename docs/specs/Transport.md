@@ -32,9 +32,9 @@ Transport();  // stopped, position 0, 120 BPM, 4/4, sampleRate 0, blockSize 0
 void advance(int numSamples);
 ```
 
-Called once per `processBlock`. Advances `positionInSamples_` by `numSamples` when state is `playing`. When `numSamples <= 0`, no-op (no fields changed).
+Called once per `processBlock`. Advances `positionInSamples_` by `numSamples` when state is `playing`.
 
-When not playing (stopped or paused), `advance()` still resets block range state: `didLoopWrap_ = false`, `blockStartBeats_ = blockEndBeats_ = getPositionInBeats()`. This prevents stale values from a previous playing run from being visible after stop-then-play.
+Every call to `advance()` — regardless of state or `numSamples` — resets per-block outputs: `didLoopWrap_ = false`, `blockStartBeats_ = blockEndBeats_ = getPositionInBeats()`. Position is not advanced when stopped, paused, or `numSamples <= 0`, but stale per-block state never persists.
 
 When playing, stores pre-advance and post-advance beat positions for block range queries (`getBlockStartBeats()`, `getBlockEndBeats()`). If looping is enabled and the advance crosses the loop end point, position wraps to the loop start and `didLoopWrap_` is set to true.
 
@@ -120,7 +120,7 @@ class Transport : public juce::AudioPlayHead {
 
 ## Position Model
 
-Sample position is the ground truth. All musical positions are derived.
+Sample position is the ground truth. All musical positions are derived. Tempo changes are live: sample position is preserved, musical position shifts accordingly. There is no "preserve musical position" mode.
 
 ```
 positionInSeconds  = positionInSamples / sampleRate
@@ -208,15 +208,11 @@ This prevents a false-positive `didLoopWrap_` on the next `advance()`. Without s
 
 ```cpp
 advance(int numSamples):
-    if (numSamples <= 0) return;
-
     didLoopWrap_ = false;
+    blockStartBeats_ = getPositionInBeats();
+    blockEndBeats_   = blockStartBeats_;
 
-    if (state_ != playing) {
-        blockStartBeats_ = getPositionInBeats();
-        blockEndBeats_   = blockStartBeats_;
-        return;
-    }
+    if (state_ != playing || numSamples <= 0) return;
 
     blockStartBeats_ = getPositionInBeats();
     positionInSamples_ += numSamples;
@@ -320,6 +316,8 @@ Transport lives on the audio thread. FFI query functions are called from the con
 - **Playing state**: Changes on the audio thread in response to commands. Engine maintains `std::atomic<int> publishedState_`, updated by the audio thread in `handleCommand`.
 
 This keeps Transport simple (no atomics, no synchronization) and puts the cross-thread concern in Engine where it belongs.
+
+**Known transient inconsistency:** `sq_transport_position` derives beats from the atomic sample position using the shadow tempo. If tempo was just changed on the control thread but the audio thread hasn't processed the command yet, the derivation uses new-tempo with old-tempo-position, giving a briefly incorrect beat value. This resolves within one audio block (when the audio thread applies the tempo command). Acceptable for best-effort UI queries — not suitable for sample-accurate scheduling (which uses Transport directly on the audio thread).
 
 ## Python API
 
