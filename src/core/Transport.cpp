@@ -32,15 +32,15 @@ void Transport::prepare(double sampleRate, int blockSize)
 void Transport::play()
 {
     if (state_ == TransportState::playing) return;
-    SQ_DEBUG("Transport: play (from %s)",
-             state_ == TransportState::stopped ? "stopped" : "paused");
+    SQ_DEBUG_RT("Transport: play (from %s)",
+                state_ == TransportState::stopped ? "stopped" : "paused");
     state_ = TransportState::playing;
 }
 
 void Transport::stop()
 {
     if (state_ == TransportState::stopped) return;
-    SQ_DEBUG("Transport: stop");
+    SQ_DEBUG_RT("Transport: stop");
     state_ = TransportState::stopped;
     positionInSamples_ = 0;
 }
@@ -48,7 +48,7 @@ void Transport::stop()
 void Transport::pause()
 {
     if (state_ != TransportState::playing) return;
-    SQ_DEBUG("Transport: pause at sample %lld", (long long)positionInSamples_);
+    SQ_DEBUG_RT("Transport: pause at sample %lld", (long long)positionInSamples_);
     state_ = TransportState::paused;
 }
 
@@ -60,7 +60,7 @@ void Transport::setTempo(double bpm)
 {
     tempo_ = std::clamp(bpm, 1.0, 999.0);
     recomputeLoopSamples();
-    SQ_DEBUG("Transport: setTempo %.2f", tempo_);
+    SQ_DEBUG_RT("Transport: setTempo %.2f", tempo_);
 }
 
 void Transport::setTimeSignature(int numerator, int denominator)
@@ -80,7 +80,7 @@ void Transport::setTimeSignature(int numerator, int denominator)
     if (!validDenom) return;
 
     timeSignature_ = {numerator, denominator};
-    SQ_DEBUG("Transport: setTimeSignature %d/%d", numerator, denominator);
+    SQ_DEBUG_RT("Transport: setTimeSignature %d/%d", numerator, denominator);
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -90,14 +90,14 @@ void Transport::setTimeSignature(int numerator, int denominator)
 void Transport::setPositionInSamples(int64_t samples)
 {
     positionInSamples_ = std::max(samples, int64_t(0));
-    SQ_DEBUG("Transport: setPositionInSamples %lld", (long long)positionInSamples_);
+    SQ_DEBUG_RT("Transport: setPositionInSamples %lld", (long long)positionInSamples_);
 }
 
 void Transport::setPositionInBeats(double beats)
 {
     positionInSamples_ = beatsToSamples(beats);
-    SQ_DEBUG("Transport: setPositionInBeats %.4f -> %lld samples",
-             beats, (long long)positionInSamples_);
+    SQ_DEBUG_RT("Transport: setPositionInBeats %.4f -> %lld samples",
+                beats, (long long)positionInSamples_);
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -108,17 +108,17 @@ void Transport::setLoopPoints(double startBeats, double endBeats)
 {
     if (endBeats <= startBeats)
     {
-        SQ_DEBUG("Transport: setLoopPoints rejected (end %.4f <= start %.4f)",
-                 endBeats, startBeats);
+        SQ_DEBUG_RT("Transport: setLoopPoints rejected (end %.4f <= start %.4f)",
+                    endBeats, startBeats);
         return;
     }
 
     loopStartBeats_ = startBeats;
     loopEndBeats_ = endBeats;
     recomputeLoopSamples();
-    SQ_DEBUG("Transport: setLoopPoints %.4f - %.4f (samples %lld - %lld)",
-             loopStartBeats_, loopEndBeats_,
-             (long long)loopStartSamples_, (long long)loopEndSamples_);
+    SQ_DEBUG_RT("Transport: setLoopPoints %.4f - %.4f (samples %lld - %lld)",
+                loopStartBeats_, loopEndBeats_,
+                (long long)loopStartSamples_, (long long)loopEndSamples_);
 }
 
 void Transport::setLooping(bool enabled)
@@ -127,26 +127,26 @@ void Transport::setLooping(bool enabled)
     {
         if (loopStartBeats_ == 0.0 && loopEndBeats_ == 0.0)
         {
-            SQ_DEBUG("Transport: setLooping(true) ignored — no valid loop points");
+            SQ_DEBUG_RT("Transport: setLooping(true) ignored — no valid loop points");
             return;
         }
 
         // Check minimum loop length
         if (blockSize_ > 0 && loopEndSamples_ - loopStartSamples_ < blockSize_)
         {
-            SQ_WARN("Transport: loop too short (%lld samples, block size %d), not enabling",
-                    (long long)(loopEndSamples_ - loopStartSamples_), blockSize_);
+            SQ_WARN_RT("Transport: loop too short (%lld samples, block size %d), not enabling",
+                       (long long)(loopEndSamples_ - loopStartSamples_), blockSize_);
             return;
         }
 
         looping_ = true;
         snapPositionToLoop();
-        SQ_DEBUG("Transport: looping enabled");
+        SQ_DEBUG_RT("Transport: looping enabled");
     }
     else
     {
         looping_ = false;
-        SQ_DEBUG("Transport: looping disabled");
+        SQ_DEBUG_RT("Transport: looping disabled");
     }
 }
 
@@ -283,8 +283,8 @@ void Transport::recomputeLoopSamples()
         && loopEndSamples_ - loopStartSamples_ < blockSize_)
     {
         looping_ = false;
-        SQ_WARN("Transport: loop too short (%lld samples, block size %d), disabling",
-                (long long)(loopEndSamples_ - loopStartSamples_), blockSize_);
+        SQ_WARN_RT("Transport: loop too short (%lld samples, block size %d), disabling",
+                   (long long)(loopEndSamples_ - loopStartSamples_), blockSize_);
     }
 
     snapPositionToLoop();

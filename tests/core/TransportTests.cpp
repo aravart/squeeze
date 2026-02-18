@@ -11,8 +11,6 @@ using Catch::Matchers::WithinAbs;
 // Helpers
 static constexpr double kSampleRate = 44100.0;
 static constexpr int kBlockSize = 512;
-static constexpr double kDefaultTempo = 120.0;
-
 // beats = seconds * (tempo / 60)
 // seconds = samples / sampleRate
 // so beats = samples / sampleRate * tempo / 60
