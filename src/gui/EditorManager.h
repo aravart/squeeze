@@ -13,10 +13,10 @@ class Engine;
 
 class EditorManager {
 public:
-    bool open(Engine& engine, int nodeId, std::string& error);
-    bool close(int nodeId, std::string& error);
+    bool open(Engine& engine, int procHandle, std::string& error);
+    bool close(int procHandle, std::string& error);
     void closeAll();
-    bool hasEditor(int nodeId) const;
+    bool hasEditor(int procHandle) const;
 
 private:
     static bool runOnMessageThread(std::function<void()> fn);

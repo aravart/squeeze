@@ -1,6 +1,6 @@
 #include "core/PluginManager.h"
 #include "core/Logger.h"
-#include "core/PluginNode.h"
+#include "core/PluginProcessor.h"
 
 #include <algorithm>
 
@@ -125,24 +125,24 @@ int PluginManager::getNumPlugins() const
 // Instantiation
 // ═══════════════════════════════════════════════════════════════════
 
-std::unique_ptr<Node> PluginManager::createNode(const std::string& name,
-                                                 double sampleRate, int blockSize,
-                                                 std::string& error)
+std::unique_ptr<Processor> PluginManager::createProcessor(const std::string& name,
+                                                           double sampleRate, int blockSize,
+                                                           std::string& error)
 {
-    SQ_DEBUG("PluginManager::createNode: name=%s sr=%f bs=%d",
+    SQ_DEBUG("PluginManager::createProcessor: name=%s sr=%f bs=%d",
              name.c_str(), sampleRate, blockSize);
 
     if (sampleRate <= 0.0)
     {
         error = "Invalid sample rate: " + std::to_string(sampleRate);
-        SQ_WARN("PluginManager::createNode: %s", error.c_str());
+        SQ_WARN("PluginManager::createProcessor: %s", error.c_str());
         return nullptr;
     }
 
     if (blockSize <= 0)
     {
         error = "Invalid block size: " + std::to_string(blockSize);
-        SQ_WARN("PluginManager::createNode: %s", error.c_str());
+        SQ_WARN("PluginManager::createProcessor: %s", error.c_str());
         return nullptr;
     }
 
@@ -150,7 +150,7 @@ std::unique_ptr<Node> PluginManager::createNode(const std::string& name,
     if (!desc)
     {
         error = "Plugin not found: " + name;
-        SQ_WARN("PluginManager::createNode: %s", error.c_str());
+        SQ_WARN("PluginManager::createProcessor: %s", error.c_str());
         return nullptr;
     }
 
@@ -161,15 +161,15 @@ std::unique_ptr<Node> PluginManager::createNode(const std::string& name,
     if (!processor)
     {
         error = "Failed to create plugin '" + name + "': " + errorMsg.toStdString();
-        SQ_WARN("PluginManager::createNode: %s", error.c_str());
+        SQ_WARN("PluginManager::createProcessor: %s", error.c_str());
         return nullptr;
     }
 
-    SQ_INFO("PluginManager::createNode: created '%s' (in=%d out=%d midi=%s)",
+    SQ_INFO("PluginManager::createProcessor: created '%s' (in=%d out=%d midi=%s)",
             name.c_str(), desc->numInputChannels, desc->numOutputChannels,
             desc->isInstrument ? "yes" : "no");
 
-    return std::make_unique<PluginNode>(
+    return std::make_unique<PluginProcessor>(
         std::move(processor),
         desc->numInputChannels,
         desc->numOutputChannels,

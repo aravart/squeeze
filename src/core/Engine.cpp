@@ -1,11 +1,34 @@
 #include "core/Engine.h"
 #include "core/Logger.h"
-#include "core/OutputNode.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
+#include <queue>
+#include <set>
 
 namespace squeeze {
+
+// Helper: convert dB to linear gain
+static float dbToLinear(float db)
+{
+    return std::pow(10.0f, db / 20.0f);
+}
+
+// Helper: apply equal-power pan to stereo buffer
+static void applyPan(juce::AudioBuffer<float>& buffer, float pan, int numSamples)
+{
+    if (buffer.getNumChannels() < 2 || pan == 0.0f) return;
+
+    // Equal-power pan: left = cos(angle), right = sin(angle)
+    // pan in [-1, 1], center = 0
+    float angle = (pan + 1.0f) * 0.5f * juce::MathConstants<float>::halfPi;
+    float leftGain = std::cos(angle);
+    float rightGain = std::sin(angle);
+
+    buffer.applyGain(0, 0, numSamples, leftGain);
+    buffer.applyGain(1, 0, numSamples, rightGain);
+}
 
 // ═══════════════════════════════════════════════════════════════════
 // Construction / Destruction
@@ -14,16 +37,17 @@ namespace squeeze {
 Engine::Engine(double sampleRate, int blockSize)
     : sampleRate_(sampleRate), blockSize_(blockSize)
 {
-    auto outputNode = std::make_unique<OutputNode>();
-    outputNodeId_ = nextNodeId_++;
-    SQ_INFO("Engine: created output node id=%d sr=%.0f bs=%d", outputNodeId_, sampleRate, blockSize);
-
-    Node* raw = outputNode.get();
-    nodes_[outputNodeId_] = {"output", std::move(outputNode)};
-    graph_.addNode(outputNodeId_, raw);
-    raw->prepare(sampleRate_, blockSize_);
+    // Create Master bus
+    auto master = std::make_unique<Bus>("Master", true);
+    master->setHandle(assignHandle());
+    master->prepare(sampleRate_, blockSize_);
+    master_ = master.get();
+    buses_.push_back(std::move(master));
 
     buildAndSwapSnapshot();
+
+    SQ_INFO("Engine: created sr=%.0f bs=%d masterHandle=%d",
+            sampleRate_, blockSize_, master_->getHandle());
 }
 
 Engine::~Engine()
@@ -36,7 +60,7 @@ Engine::~Engine()
 
 std::string Engine::getVersion() const
 {
-    return "0.2.0";
+    return "0.3.0";
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -52,180 +76,590 @@ void Engine::collectGarbage()
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// Node management
+// Handle allocation + processor registry
 // ═══════════════════════════════════════════════════════════════════
 
-int Engine::addNode(const std::string& name, std::unique_ptr<Node> node)
+int Engine::assignHandle()
 {
-    std::lock_guard<std::mutex> lock(controlMutex_);
-    collectGarbage();
-
-    if (!node)
-    {
-        SQ_WARN("Engine::addNode: null node pointer");
-        return -1;
-    }
-
-    int id = nextNodeId_++;
-    SQ_DEBUG("Engine::addNode: id=%d name=%s", id, name.c_str());
-
-    Node* raw = node.get();
-    nodes_[id] = {name, std::move(node)};
-    graph_.addNode(id, raw);
-
-    raw->prepare(sampleRate_, blockSize_);
-
-    buildAndSwapSnapshot();
-    return id;
+    return nextHandle_++;
 }
 
-bool Engine::removeNode(int nodeId)
+void Engine::registerProcessor(Processor* p)
+{
+    if (!p) return;
+    processorRegistry_[p->getHandle()] = p;
+    SQ_TRACE("Engine: registered proc handle=%d name=%s",
+             p->getHandle(), p->getName().c_str());
+}
+
+void Engine::unregisterProcessor(Processor* p)
+{
+    if (!p) return;
+    processorRegistry_.erase(p->getHandle());
+    SQ_TRACE("Engine: unregistered proc handle=%d name=%s",
+             p->getHandle(), p->getName().c_str());
+}
+
+Processor* Engine::getProcessor(int procHandle) const
+{
+    std::lock_guard<std::mutex> lock(controlMutex_);
+    auto it = processorRegistry_.find(procHandle);
+    if (it == processorRegistry_.end()) return nullptr;
+    return it->second;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Source management
+// ═══════════════════════════════════════════════════════════════════
+
+Source* Engine::addSource(const std::string& name, std::unique_ptr<Processor> generator)
 {
     std::lock_guard<std::mutex> lock(controlMutex_);
     collectGarbage();
 
-    if (nodeId == outputNodeId_)
+    if (!generator)
     {
-        SQ_WARN("Engine::removeNode: cannot remove output node id=%d", nodeId);
+        SQ_WARN("Engine::addSource: null generator");
+        return nullptr;
+    }
+
+    auto src = std::make_unique<Source>(name, std::move(generator));
+    src->setHandle(assignHandle());
+
+    // Assign handle to generator and register it
+    src->getGenerator()->setHandle(assignHandle());
+    registerProcessor(src->getGenerator());
+
+    src->prepare(sampleRate_, blockSize_);
+    src->routeTo(master_);
+
+    Source* raw = src.get();
+    sources_.push_back(std::move(src));
+
+    SQ_DEBUG("Engine::addSource: name=%s handle=%d genHandle=%d",
+             name.c_str(), raw->getHandle(), raw->getGenerator()->getHandle());
+
+    maybeRebuildSnapshot();
+    return raw;
+}
+
+bool Engine::removeSource(Source* src)
+{
+    std::lock_guard<std::mutex> lock(controlMutex_);
+    collectGarbage();
+
+    if (!src) return false;
+
+    auto it = std::find_if(sources_.begin(), sources_.end(),
+                           [src](const auto& p) { return p.get() == src; });
+    if (it == sources_.end())
+    {
+        SQ_DEBUG("Engine::removeSource: not found handle=%d", src->getHandle());
         return false;
     }
 
-    auto it = nodes_.find(nodeId);
-    if (it == nodes_.end())
-    {
-        SQ_DEBUG("Engine::removeNode: id=%d not found", nodeId);
-        return false;
-    }
+    // Unregister generator
+    unregisterProcessor(src->getGenerator());
 
-    SQ_DEBUG("Engine::removeNode: id=%d name=%s", nodeId, it->second.name.c_str());
-    graph_.removeNode(nodeId);
-    nodes_.erase(it);
+    // Unregister chain processors
+    auto& chain = src->getChain();
+    for (int i = 0; i < chain.size(); ++i)
+        unregisterProcessor(chain.at(i));
 
-    buildAndSwapSnapshot();
+    SQ_DEBUG("Engine::removeSource: handle=%d name=%s", src->getHandle(), src->getName().c_str());
+    sources_.erase(it);
+    maybeRebuildSnapshot();
     return true;
 }
 
-Node* Engine::getNode(int nodeId) const
+Source* Engine::getSource(int handle) const
 {
     std::lock_guard<std::mutex> lock(controlMutex_);
-    auto it = nodes_.find(nodeId);
-    if (it == nodes_.end()) return nullptr;
-    return it->second.node.get();
+    for (const auto& s : sources_)
+        if (s->getHandle() == handle) return s.get();
+    return nullptr;
 }
 
-std::string Engine::getNodeName(int nodeId) const
+std::vector<Source*> Engine::getSources() const
 {
     std::lock_guard<std::mutex> lock(controlMutex_);
-    auto it = nodes_.find(nodeId);
-    if (it == nodes_.end()) return "";
-    return it->second.name;
-}
-
-int Engine::getOutputNodeId() const
-{
-    return outputNodeId_;
-}
-
-int Engine::getNodeCount() const
-{
-    std::lock_guard<std::mutex> lock(controlMutex_);
-    return static_cast<int>(nodes_.size());
-}
-
-std::vector<std::pair<int, std::string>> Engine::getNodes() const
-{
-    std::lock_guard<std::mutex> lock(controlMutex_);
-    std::vector<std::pair<int, std::string>> result;
-    result.reserve(nodes_.size());
-    for (const auto& pair : nodes_)
-        result.emplace_back(pair.first, pair.second.name);
+    std::vector<Source*> result;
+    result.reserve(sources_.size());
+    for (const auto& s : sources_)
+        result.push_back(s.get());
     return result;
 }
 
-std::vector<int> Engine::getExecutionOrder() const
+int Engine::getSourceCount() const
 {
     std::lock_guard<std::mutex> lock(controlMutex_);
-    return graph_.getExecutionOrder();
+    return static_cast<int>(sources_.size());
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// Connection management
+// Bus management
 // ═══════════════════════════════════════════════════════════════════
 
-int Engine::connect(int srcNode, const std::string& srcPort,
-                    int dstNode, const std::string& dstPort,
-                    std::string& error)
+Bus* Engine::addBus(const std::string& name)
 {
     std::lock_guard<std::mutex> lock(controlMutex_);
     collectGarbage();
 
-    PortAddress src{srcNode, PortDirection::output, srcPort};
-    PortAddress dst{dstNode, PortDirection::input, dstPort};
-    int connId = graph_.connect(src, dst, error);
+    auto bus = std::make_unique<Bus>(name);
+    bus->setHandle(assignHandle());
+    bus->prepare(sampleRate_, blockSize_);
+    bus->routeTo(master_);
 
-    if (connId >= 0)
-        buildAndSwapSnapshot();
+    Bus* raw = bus.get();
+    buses_.push_back(std::move(bus));
 
-    return connId;
+    SQ_DEBUG("Engine::addBus: name=%s handle=%d", name.c_str(), raw->getHandle());
+    maybeRebuildSnapshot();
+    return raw;
 }
 
-bool Engine::disconnect(int connectionId)
+bool Engine::removeBus(Bus* bus)
 {
     std::lock_guard<std::mutex> lock(controlMutex_);
     collectGarbage();
 
-    bool result = graph_.disconnect(connectionId);
-    if (result)
-        buildAndSwapSnapshot();
+    if (!bus) return false;
+
+    if (bus->isMaster())
+    {
+        SQ_WARN("Engine::removeBus: cannot remove Master");
+        return false;
+    }
+
+    auto it = std::find_if(buses_.begin(), buses_.end(),
+                           [bus](const auto& p) { return p.get() == bus; });
+    if (it == buses_.end())
+    {
+        SQ_DEBUG("Engine::removeBus: not found handle=%d", bus->getHandle());
+        return false;
+    }
+
+    // Unregister chain processors
+    auto& chain = bus->getChain();
+    for (int i = 0; i < chain.size(); ++i)
+        unregisterProcessor(chain.at(i));
+
+    // Re-route any sources that were targeting this bus to Master
+    for (auto& src : sources_)
+    {
+        if (src->getOutputBus() == bus)
+            src->routeTo(master_);
+    }
+
+    // Re-route any buses that were targeting this bus to Master
+    for (auto& b : buses_)
+    {
+        if (b.get() != bus && b->getOutputBus() == bus)
+            b->routeTo(master_);
+    }
+
+    SQ_DEBUG("Engine::removeBus: handle=%d name=%s", bus->getHandle(), bus->getName().c_str());
+    buses_.erase(it);
+    maybeRebuildSnapshot();
+    return true;
+}
+
+Bus* Engine::getBus(int handle) const
+{
+    std::lock_guard<std::mutex> lock(controlMutex_);
+    for (const auto& b : buses_)
+        if (b->getHandle() == handle) return b.get();
+    return nullptr;
+}
+
+std::vector<Bus*> Engine::getBuses() const
+{
+    std::lock_guard<std::mutex> lock(controlMutex_);
+    std::vector<Bus*> result;
+    result.reserve(buses_.size());
+    for (const auto& b : buses_)
+        result.push_back(b.get());
     return result;
 }
 
-std::vector<Connection> Engine::getConnections() const
+int Engine::getBusCount() const
 {
     std::lock_guard<std::mutex> lock(controlMutex_);
-    return graph_.getConnections();
+    return static_cast<int>(buses_.size());
+}
+
+Bus* Engine::getMaster() const
+{
+    return master_;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Routing
+// ═══════════════════════════════════════════════════════════════════
+
+void Engine::route(Source* src, Bus* bus)
+{
+    std::lock_guard<std::mutex> lock(controlMutex_);
+    collectGarbage();
+
+    if (!src || !bus) return;
+    SQ_DEBUG("Engine::route: source=%d -> bus=%d", src->getHandle(), bus->getHandle());
+    src->routeTo(bus);
+    maybeRebuildSnapshot();
+}
+
+int Engine::sendFrom(Source* src, Bus* bus, float levelDb)
+{
+    std::lock_guard<std::mutex> lock(controlMutex_);
+    collectGarbage();
+
+    if (!src || !bus) return -1;
+    SQ_DEBUG("Engine::sendFrom: source=%d -> bus=%d level=%.1f",
+             src->getHandle(), bus->getHandle(), levelDb);
+    int sendId = src->addSend(bus, levelDb);
+    maybeRebuildSnapshot();
+    return sendId;
+}
+
+void Engine::removeSend(Source* src, int sendId)
+{
+    std::lock_guard<std::mutex> lock(controlMutex_);
+    collectGarbage();
+
+    if (!src) return;
+    src->removeSend(sendId);
+    maybeRebuildSnapshot();
+}
+
+void Engine::setSendLevel(Source* src, int sendId, float levelDb)
+{
+    std::lock_guard<std::mutex> lock(controlMutex_);
+    collectGarbage();
+
+    if (!src) return;
+    src->setSendLevel(sendId, levelDb);
+    maybeRebuildSnapshot();
+}
+
+bool Engine::busRoute(Bus* from, Bus* to)
+{
+    std::lock_guard<std::mutex> lock(controlMutex_);
+    collectGarbage();
+
+    if (!from || !to) return false;
+
+    if (from->isMaster())
+    {
+        SQ_WARN("Engine::busRoute: Master cannot route to another bus");
+        return false;
+    }
+
+    if (wouldCreateCycle(from, to))
+    {
+        SQ_WARN("Engine::busRoute: would create cycle %d -> %d",
+                from->getHandle(), to->getHandle());
+        return false;
+    }
+
+    SQ_DEBUG("Engine::busRoute: bus=%d -> bus=%d", from->getHandle(), to->getHandle());
+    from->routeTo(to);
+    maybeRebuildSnapshot();
+    return true;
+}
+
+int Engine::busSend(Bus* from, Bus* to, float levelDb)
+{
+    std::lock_guard<std::mutex> lock(controlMutex_);
+    collectGarbage();
+
+    if (!from || !to) return -1;
+
+    if (wouldCreateCycle(from, to))
+    {
+        SQ_WARN("Engine::busSend: would create cycle %d -> %d",
+                from->getHandle(), to->getHandle());
+        return -1;
+    }
+
+    SQ_DEBUG("Engine::busSend: bus=%d -> bus=%d level=%.1f",
+             from->getHandle(), to->getHandle(), levelDb);
+    int sendId = from->addSend(to, levelDb);
+    maybeRebuildSnapshot();
+    return sendId;
+}
+
+void Engine::busRemoveSend(Bus* bus, int sendId)
+{
+    std::lock_guard<std::mutex> lock(controlMutex_);
+    collectGarbage();
+
+    if (!bus) return;
+    bus->removeSend(sendId);
+    maybeRebuildSnapshot();
+}
+
+void Engine::busSendLevel(Bus* bus, int sendId, float levelDb)
+{
+    std::lock_guard<std::mutex> lock(controlMutex_);
+    collectGarbage();
+
+    if (!bus) return;
+    bus->setSendLevel(sendId, levelDb);
+    maybeRebuildSnapshot();
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Cycle detection
+// ═══════════════════════════════════════════════════════════════════
+
+bool Engine::wouldCreateCycle(Bus* from, Bus* to) const
+{
+    // BFS from 'to' following downstream routing and sends.
+    // If we reach 'from', a cycle would be created.
+    if (from == to) return true;
+
+    std::queue<Bus*> frontier;
+    std::set<Bus*> visited;
+
+    frontier.push(to);
+    visited.insert(to);
+
+    while (!frontier.empty())
+    {
+        Bus* current = frontier.front();
+        frontier.pop();
+
+        // Follow output bus routing
+        Bus* downstream = current->getOutputBus();
+        if (downstream)
+        {
+            if (downstream == from) return true;
+            if (visited.find(downstream) == visited.end())
+            {
+                visited.insert(downstream);
+                frontier.push(downstream);
+            }
+        }
+
+        // Follow sends
+        for (const auto& send : current->getSends())
+        {
+            if (send.bus == from) return true;
+            if (visited.find(send.bus) == visited.end())
+            {
+                visited.insert(send.bus);
+                frontier.push(send.bus);
+            }
+        }
+    }
+
+    return false;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Insert chains
+// ═══════════════════════════════════════════════════════════════════
+
+Processor* Engine::sourceAppend(Source* src, std::unique_ptr<Processor> p)
+{
+    std::lock_guard<std::mutex> lock(controlMutex_);
+    collectGarbage();
+
+    if (!src || !p) return nullptr;
+    p->setHandle(assignHandle());
+    p->prepare(sampleRate_, blockSize_);
+    Processor* raw = p.get();
+    registerProcessor(raw);
+    src->getChain().append(std::move(p));
+    SQ_DEBUG("Engine::sourceAppend: source=%d proc=%d", src->getHandle(), raw->getHandle());
+    maybeRebuildSnapshot();
+    return raw;
+}
+
+Processor* Engine::sourceInsert(Source* src, int index, std::unique_ptr<Processor> p)
+{
+    std::lock_guard<std::mutex> lock(controlMutex_);
+    collectGarbage();
+
+    if (!src || !p) return nullptr;
+    p->setHandle(assignHandle());
+    p->prepare(sampleRate_, blockSize_);
+    Processor* raw = p.get();
+    registerProcessor(raw);
+    src->getChain().insert(index, std::move(p));
+    SQ_DEBUG("Engine::sourceInsert: source=%d index=%d proc=%d",
+             src->getHandle(), index, raw->getHandle());
+    maybeRebuildSnapshot();
+    return raw;
+}
+
+void Engine::sourceRemove(Source* src, int index)
+{
+    std::lock_guard<std::mutex> lock(controlMutex_);
+    collectGarbage();
+
+    if (!src) return;
+    auto& chain = src->getChain();
+    if (index < 0 || index >= chain.size()) return;
+    Processor* p = chain.at(index);
+    unregisterProcessor(p);
+    chain.remove(index);
+    SQ_DEBUG("Engine::sourceRemove: source=%d index=%d", src->getHandle(), index);
+    maybeRebuildSnapshot();
+}
+
+int Engine::sourceChainSize(Source* src) const
+{
+    std::lock_guard<std::mutex> lock(controlMutex_);
+    if (!src) return 0;
+    return src->getChain().size();
+}
+
+Processor* Engine::busAppend(Bus* bus, std::unique_ptr<Processor> p)
+{
+    std::lock_guard<std::mutex> lock(controlMutex_);
+    collectGarbage();
+
+    if (!bus || !p) return nullptr;
+    p->setHandle(assignHandle());
+    p->prepare(sampleRate_, blockSize_);
+    Processor* raw = p.get();
+    registerProcessor(raw);
+    bus->getChain().append(std::move(p));
+    SQ_DEBUG("Engine::busAppend: bus=%d proc=%d", bus->getHandle(), raw->getHandle());
+    maybeRebuildSnapshot();
+    return raw;
+}
+
+Processor* Engine::busInsert(Bus* bus, int index, std::unique_ptr<Processor> p)
+{
+    std::lock_guard<std::mutex> lock(controlMutex_);
+    collectGarbage();
+
+    if (!bus || !p) return nullptr;
+    p->setHandle(assignHandle());
+    p->prepare(sampleRate_, blockSize_);
+    Processor* raw = p.get();
+    registerProcessor(raw);
+    bus->getChain().insert(index, std::move(p));
+    SQ_DEBUG("Engine::busInsert: bus=%d index=%d proc=%d",
+             bus->getHandle(), index, raw->getHandle());
+    maybeRebuildSnapshot();
+    return raw;
+}
+
+void Engine::busRemove(Bus* bus, int index)
+{
+    std::lock_guard<std::mutex> lock(controlMutex_);
+    collectGarbage();
+
+    if (!bus) return;
+    auto& chain = bus->getChain();
+    if (index < 0 || index >= chain.size()) return;
+    Processor* p = chain.at(index);
+    unregisterProcessor(p);
+    chain.remove(index);
+    SQ_DEBUG("Engine::busRemove: bus=%d index=%d", bus->getHandle(), index);
+    maybeRebuildSnapshot();
+}
+
+int Engine::busChainSize(Bus* bus) const
+{
+    std::lock_guard<std::mutex> lock(controlMutex_);
+    if (!bus) return 0;
+    return bus->getChain().size();
 }
 
 // ═══════════════════════════════════════════════════════════════════
 // Parameters
 // ═══════════════════════════════════════════════════════════════════
 
-float Engine::getParameter(int nodeId, const std::string& name) const
+float Engine::getParameter(int procHandle, const std::string& name) const
 {
     std::lock_guard<std::mutex> lock(controlMutex_);
-    auto it = nodes_.find(nodeId);
-    if (it == nodes_.end()) return 0.0f;
-    return it->second.node->getParameter(name);
+    auto it = processorRegistry_.find(procHandle);
+    if (it == processorRegistry_.end()) return 0.0f;
+    return it->second->getParameter(name);
 }
 
-bool Engine::setParameter(int nodeId, const std::string& name, float value)
+bool Engine::setParameter(int procHandle, const std::string& name, float value)
 {
     std::lock_guard<std::mutex> lock(controlMutex_);
-    auto it = nodes_.find(nodeId);
-    if (it == nodes_.end()) return false;
-    SQ_DEBUG("Engine::setParameter: node=%d param=%s value=%f", nodeId, name.c_str(), value);
-    it->second.node->setParameter(name, value);
+    auto it = processorRegistry_.find(procHandle);
+    if (it == processorRegistry_.end()) return false;
+    SQ_DEBUG("Engine::setParameter: proc=%d param=%s value=%f", procHandle, name.c_str(), value);
+    it->second->setParameter(name, value);
     return true;
 }
 
-std::string Engine::getParameterText(int nodeId, const std::string& name) const
+std::string Engine::getParameterText(int procHandle, const std::string& name) const
 {
     std::lock_guard<std::mutex> lock(controlMutex_);
-    auto it = nodes_.find(nodeId);
-    if (it == nodes_.end()) return "";
-    return it->second.node->getParameterText(name);
+    auto it = processorRegistry_.find(procHandle);
+    if (it == processorRegistry_.end()) return "";
+    return it->second->getParameterText(name);
 }
 
-std::vector<ParameterDescriptor> Engine::getParameterDescriptors(int nodeId) const
+std::vector<ParamDescriptor> Engine::getParameterDescriptors(int procHandle) const
 {
     std::lock_guard<std::mutex> lock(controlMutex_);
-    auto it = nodes_.find(nodeId);
-    if (it == nodes_.end()) return {};
-    return it->second.node->getParameterDescriptors();
+    auto it = processorRegistry_.find(procHandle);
+    if (it == processorRegistry_.end()) return {};
+    return it->second->getParameterDescriptors();
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// Transport stubs (tier 7 — commands sent but no handler on audio thread)
+// Metering
+// ═══════════════════════════════════════════════════════════════════
+
+float Engine::busPeak(Bus* bus) const
+{
+    if (!bus) return 0.0f;
+    return bus->getPeak();
+}
+
+float Engine::busRMS(Bus* bus) const
+{
+    if (!bus) return 0.0f;
+    return bus->getRMS();
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Batching
+// ═══════════════════════════════════════════════════════════════════
+
+void Engine::batchBegin()
+{
+    std::lock_guard<std::mutex> lock(controlMutex_);
+    batching_ = true;
+    snapshotDirty_ = false;
+    SQ_DEBUG("Engine::batchBegin");
+}
+
+void Engine::batchCommit()
+{
+    std::lock_guard<std::mutex> lock(controlMutex_);
+    SQ_DEBUG("Engine::batchCommit: dirty=%d", snapshotDirty_);
+    batching_ = false;
+    if (snapshotDirty_)
+    {
+        snapshotDirty_ = false;
+        buildAndSwapSnapshot();
+    }
+}
+
+void Engine::maybeRebuildSnapshot()
+{
+    if (batching_)
+    {
+        snapshotDirty_ = true;
+        return;
+    }
+    buildAndSwapSnapshot();
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Transport stubs
 // ═══════════════════════════════════════════════════════════════════
 
 void Engine::transportPlay()
@@ -326,111 +760,138 @@ void Engine::transportSetLooping(bool enabled)
     SQ_DEBUG("Engine::transportSetLooping: %s", enabled ? "true" : "false");
 }
 
-// --- Transport queries (stubs return defaults) ---
-
 double Engine::getTransportPosition() const { return 0.0; }
 double Engine::getTransportTempo() const { return 120.0; }
 bool Engine::isTransportPlaying() const { return false; }
 
 // ═══════════════════════════════════════════════════════════════════
-// Event scheduling stubs (tier 7 — always return false)
+// Event scheduling stubs
 // ═══════════════════════════════════════════════════════════════════
 
-bool Engine::scheduleNoteOn(int /*nodeId*/, double /*beatTime*/,
+bool Engine::scheduleNoteOn(int /*sourceHandle*/, double /*beatTime*/,
                             int /*channel*/, int /*note*/, float /*velocity*/)
 {
-    SQ_DEBUG("Engine::scheduleNoteOn: stub (no EventScheduler yet)");
+    SQ_DEBUG("Engine::scheduleNoteOn: stub");
     return false;
 }
 
-bool Engine::scheduleNoteOff(int /*nodeId*/, double /*beatTime*/,
+bool Engine::scheduleNoteOff(int /*sourceHandle*/, double /*beatTime*/,
                              int /*channel*/, int /*note*/)
 {
-    SQ_DEBUG("Engine::scheduleNoteOff: stub (no EventScheduler yet)");
+    SQ_DEBUG("Engine::scheduleNoteOff: stub");
     return false;
 }
 
-bool Engine::scheduleCC(int /*nodeId*/, double /*beatTime*/,
+bool Engine::scheduleCC(int /*sourceHandle*/, double /*beatTime*/,
                         int /*channel*/, int /*ccNum*/, int /*ccVal*/)
 {
-    SQ_DEBUG("Engine::scheduleCC: stub (no EventScheduler yet)");
+    SQ_DEBUG("Engine::scheduleCC: stub");
     return false;
 }
 
-bool Engine::scheduleParamChange(int /*nodeId*/, double /*beatTime*/,
+bool Engine::scheduleParamChange(int /*procHandle*/, double /*beatTime*/,
                                  const std::string& /*paramName*/, float /*value*/)
 {
-    SQ_DEBUG("Engine::scheduleParamChange: stub (no EventScheduler yet)");
+    SQ_DEBUG("Engine::scheduleParamChange: stub");
     return false;
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// GraphSnapshot — build and swap
+// MixerSnapshot — build and swap
 // ═══════════════════════════════════════════════════════════════════
 
 void Engine::buildAndSwapSnapshot()
 {
-    auto* snapshot = new GraphSnapshot();
+    auto* snapshot = new MixerSnapshot();
 
-    snapshot->executionOrder = graph_.getExecutionOrder();
-    auto connections = graph_.getConnections();
-
-    // Build fan-in lists from connections
-    for (const auto& conn : connections)
+    // --- Sources ---
+    for (const auto& src : sources_)
     {
-        // Look up source port to determine signal type
-        auto srcIt = nodes_.find(conn.source.nodeId);
-        if (srcIt == nodes_.end()) continue;
+        MixerSnapshot::SourceEntry entry;
+        entry.source = src.get();
+        entry.generator = src->getGenerator();
+        entry.chainProcessors = src->getChain().getProcessorArray();
+        entry.buffer.setSize(2, blockSize_);
+        entry.buffer.clear();
+        entry.outputBus = src->getOutputBus();
+        entry.sends = src->getSends();
+        snapshot->sources.push_back(std::move(entry));
+    }
 
-        auto srcPorts = srcIt->second.node->getOutputPorts();
-        SignalType sigType = SignalType::audio;
-        for (const auto& p : srcPorts)
+    // --- Buses: topological sort for dependency order ---
+    // Build adjacency: edges from bus -> downstream (routing + sends)
+    // We need reverse: in-degree based topo sort where master is last
+    std::unordered_map<Bus*, std::vector<Bus*>> dependsOn; // bus -> buses that must be processed first
+    std::unordered_map<Bus*, int> inDegree;
+
+    for (const auto& b : buses_)
+    {
+        inDegree[b.get()] = 0;
+        dependsOn[b.get()] = {};
+    }
+
+    // If bus X routes to bus Y, then Y depends on X (X must process first)
+    // We track this as: Y's entry in 'dependsOn' includes X
+    // But for topo sort, we need: for each bus, which buses depend on it (outgoing edges)
+    std::unordered_map<Bus*, std::vector<Bus*>> feedsInto;
+
+    for (const auto& b : buses_)
+    {
+        Bus* downstream = b->getOutputBus();
+        if (downstream)
         {
-            if (p.name == conn.source.portName)
+            feedsInto[b.get()].push_back(downstream);
+            inDegree[downstream]++;
+        }
+        for (const auto& send : b->getSends())
+        {
+            feedsInto[b.get()].push_back(send.bus);
+            inDegree[send.bus]++;
+        }
+    }
+
+    // Kahn's algorithm
+    std::queue<Bus*> ready;
+    for (const auto& b : buses_)
+    {
+        if (inDegree[b.get()] == 0)
+            ready.push(b.get());
+    }
+
+    std::vector<Bus*> busOrder;
+    while (!ready.empty())
+    {
+        Bus* current = ready.front();
+        ready.pop();
+        busOrder.push_back(current);
+
+        if (feedsInto.count(current))
+        {
+            for (Bus* dep : feedsInto[current])
             {
-                sigType = p.signalType;
-                break;
+                inDegree[dep]--;
+                if (inDegree[dep] == 0)
+                    ready.push(dep);
             }
         }
-
-        GraphSnapshot::FanIn fanIn{conn.source.nodeId};
-        if (sigType == SignalType::audio)
-            snapshot->audioFanIn[conn.dest.nodeId].push_back(fanIn);
-        else
-            snapshot->midiFanIn[conn.dest.nodeId].push_back(fanIn);
     }
 
-    // Allocate per-node buffers
-    int bs = blockSize_;
-    for (int nodeId : snapshot->executionOrder)
+    // Build bus entries in dependency order
+    for (Bus* bus : busOrder)
     {
-        auto it = nodes_.find(nodeId);
-        if (it == nodes_.end()) continue;
-
-        Node* node = it->second.node.get();
-        auto inPorts = node->getInputPorts();
-        auto outPorts = node->getOutputPorts();
-
-        int inChannels = 0;
-        int outChannels = 0;
-        for (const auto& p : inPorts)
-            if (p.signalType == SignalType::audio)
-                inChannels = std::max(inChannels, p.channels);
-        for (const auto& p : outPorts)
-            if (p.signalType == SignalType::audio)
-                outChannels = std::max(outChannels, p.channels);
-
-        auto& bufs = snapshot->nodeBuffers[nodeId];
-        bufs.inputAudio.setSize(std::max(inChannels, 1), bs);
-        bufs.inputAudio.clear();
-        bufs.outputAudio.setSize(std::max(outChannels, 1), bs);
-        bufs.outputAudio.clear();
-
-        snapshot->midiBufferMap[nodeId] = &bufs.inputMidi;
+        MixerSnapshot::BusEntry entry;
+        entry.bus = bus;
+        entry.chainProcessors = bus->getChain().getProcessorArray();
+        entry.buffer.setSize(2, blockSize_);
+        entry.buffer.clear();
+        entry.sends = bus->getSends();
+        entry.outputBus = bus->getOutputBus();
+        snapshot->buses.push_back(std::move(entry));
     }
 
-    SQ_DEBUG("Engine::buildAndSwapSnapshot: %d nodes in execution order",
-             static_cast<int>(snapshot->executionOrder.size()));
+    SQ_DEBUG("Engine::buildAndSwapSnapshot: %d sources, %d buses",
+             static_cast<int>(snapshot->sources.size()),
+             static_cast<int>(snapshot->buses.size()));
 
     Command cmd;
     cmd.type = Command::Type::swapSnapshot;
@@ -452,7 +913,7 @@ void Engine::handleCommand(const Command& cmd)
     {
         case Command::Type::swapSnapshot:
         {
-            auto* newSnapshot = static_cast<GraphSnapshot*>(cmd.ptr);
+            auto* newSnapshot = static_cast<MixerSnapshot*>(cmd.ptr);
             auto* old = activeSnapshot_;
             activeSnapshot_ = newSnapshot;
             if (old)
@@ -460,7 +921,6 @@ void Engine::handleCommand(const Command& cmd)
             SQ_TRACE_RT("Engine: swapped snapshot");
             break;
         }
-        // Transport commands are no-ops until Transport lands
         case Command::Type::transportPlay:
         case Command::Type::transportStop:
         case Command::Type::transportPause:
@@ -493,86 +953,197 @@ void Engine::processBlock(float* const* outputChannels, int numChannels, int num
         return;
     }
 
-    // 3. Clear all node MIDI input buffers
-    for (auto& pair : activeSnapshot_->nodeBuffers)
-        pair.second.inputMidi.clear();
+    // 3. Clear all bus buffers
+    for (auto& busEntry : activeSnapshot_->buses)
+        busEntry.buffer.clear();
 
-    // 4. Dispatch MIDI via MidiRouter
-    midiRouter_.dispatch(activeSnapshot_->midiBufferMap, numSamples);
-
-    // 5. Process nodes in execution order
-    for (int nodeId : activeSnapshot_->executionOrder)
+    // 4. Clear MIDI buffers and dispatch MIDI via MidiRouter
+    std::unordered_map<int, juce::MidiBuffer*> midiBufferMap;
+    for (auto& srcEntry : activeSnapshot_->sources)
     {
-        auto bufIt = activeSnapshot_->nodeBuffers.find(nodeId);
-        if (bufIt == activeSnapshot_->nodeBuffers.end()) continue;
+        srcEntry.midiBuffer.clear();
+        midiBufferMap[srcEntry.source->getHandle()] = &srcEntry.midiBuffer;
+    }
+    midiRouter_.dispatch(midiBufferMap, numSamples);
 
-        auto& bufs = bufIt->second;
+    // 5. Process sources
+    for (auto& srcEntry : activeSnapshot_->sources)
+    {
+        auto& buffer = srcEntry.buffer;
+        buffer.clear();
 
-        // Clear input audio
-        bufs.inputAudio.clear();
+        // Generator
+        if (srcEntry.generator)
+            srcEntry.generator->process(buffer, srcEntry.midiBuffer);
 
-        // Sum audio fan-in
-        auto fanInIt = activeSnapshot_->audioFanIn.find(nodeId);
-        if (fanInIt != activeSnapshot_->audioFanIn.end())
+        // Chain processors
+        for (auto* proc : srcEntry.chainProcessors)
         {
-            for (const auto& fanIn : fanInIt->second)
-            {
-                auto srcBufIt = activeSnapshot_->nodeBuffers.find(fanIn.sourceNodeId);
-                if (srcBufIt == activeSnapshot_->nodeBuffers.end()) continue;
+            if (!proc->isBypassed())
+                proc->process(buffer);
+        }
 
-                auto& srcOutput = srcBufIt->second.outputAudio;
-                int channels = std::min(bufs.inputAudio.getNumChannels(),
-                                        srcOutput.getNumChannels());
-                int samples = std::min(numSamples, srcOutput.getNumSamples());
-                for (int ch = 0; ch < channels; ++ch)
-                    bufs.inputAudio.addFrom(ch, 0, srcOutput, ch, 0, samples);
+        // Pre-fader sends
+        for (const auto& send : srcEntry.sends)
+        {
+            if (send.tap == SendTap::preFader && send.bus)
+            {
+                float gain = dbToLinear(send.levelDb);
+                // Find the bus entry buffer and accumulate
+                for (auto& busEntry : activeSnapshot_->buses)
+                {
+                    if (busEntry.bus == send.bus)
+                    {
+                        int channels = std::min(buffer.getNumChannels(),
+                                                busEntry.buffer.getNumChannels());
+                        for (int ch = 0; ch < channels; ++ch)
+                            busEntry.buffer.addFrom(ch, 0, buffer, ch, 0, numSamples, gain);
+                        break;
+                    }
+                }
             }
         }
 
-        // Merge MIDI fan-in
-        auto midiFanInIt = activeSnapshot_->midiFanIn.find(nodeId);
-        if (midiFanInIt != activeSnapshot_->midiFanIn.end())
+        // Apply gain and pan
+        float srcGain = srcEntry.source->getGain();
+        buffer.applyGain(0, numSamples, srcGain);
+        applyPan(buffer, srcEntry.source->getPan(), numSamples);
+
+        // Post-fader sends
+        for (const auto& send : srcEntry.sends)
         {
-            for (const auto& fanIn : midiFanInIt->second)
+            if (send.tap == SendTap::postFader && send.bus)
             {
-                auto srcBufIt = activeSnapshot_->nodeBuffers.find(fanIn.sourceNodeId);
-                if (srcBufIt == activeSnapshot_->nodeBuffers.end()) continue;
-                bufs.inputMidi.addEvents(srcBufIt->second.outputMidi, 0, numSamples, 0);
+                float gain = dbToLinear(send.levelDb);
+                for (auto& busEntry : activeSnapshot_->buses)
+                {
+                    if (busEntry.bus == send.bus)
+                    {
+                        int channels = std::min(buffer.getNumChannels(),
+                                                busEntry.buffer.getNumChannels());
+                        for (int ch = 0; ch < channels; ++ch)
+                            busEntry.buffer.addFrom(ch, 0, buffer, ch, 0, numSamples, gain);
+                        break;
+                    }
+                }
             }
         }
 
-        // Clear output buffers
-        bufs.outputAudio.clear();
-        bufs.outputMidi.clear();
-
-        // Find node and process
-        auto nodeIt = nodes_.find(nodeId);
-        if (nodeIt == nodes_.end()) continue;
-
-        ProcessContext ctx{bufs.inputAudio, bufs.outputAudio,
-                          bufs.inputMidi, bufs.outputMidi, numSamples};
-        nodeIt->second.node->process(ctx);
+        // Accumulate into output bus
+        if (srcEntry.outputBus)
+        {
+            for (auto& busEntry : activeSnapshot_->buses)
+            {
+                if (busEntry.bus == srcEntry.outputBus)
+                {
+                    int channels = std::min(buffer.getNumChannels(),
+                                            busEntry.buffer.getNumChannels());
+                    for (int ch = 0; ch < channels; ++ch)
+                        busEntry.buffer.addFrom(ch, 0, buffer, ch, 0, numSamples);
+                    break;
+                }
+            }
+        }
     }
 
-    // 6. Copy output node's input buffer to output channels
-    auto outBufIt = activeSnapshot_->nodeBuffers.find(outputNodeId_);
-    if (outBufIt != activeSnapshot_->nodeBuffers.end())
+    // 6. Process buses in dependency order
+    for (auto& busEntry : activeSnapshot_->buses)
     {
-        auto& outInput = outBufIt->second.inputAudio;
-        int channels = std::min(numChannels, outInput.getNumChannels());
-        int samples = std::min(numSamples, outInput.getNumSamples());
-        for (int ch = 0; ch < channels; ++ch)
-            std::memcpy(outputChannels[ch], outInput.getReadPointer(ch),
-                        sizeof(float) * static_cast<size_t>(samples));
-        // Zero any extra output channels
-        for (int ch = channels; ch < numChannels; ++ch)
-            std::memset(outputChannels[ch], 0, sizeof(float) * static_cast<size_t>(numSamples));
+        auto& buffer = busEntry.buffer;
+
+        // Chain processors
+        for (auto* proc : busEntry.chainProcessors)
+        {
+            if (!proc->isBypassed())
+                proc->process(buffer);
+        }
+
+        // Pre-fader sends
+        for (const auto& send : busEntry.sends)
+        {
+            if (send.tap == SendTap::preFader && send.bus)
+            {
+                float gain = dbToLinear(send.levelDb);
+                for (auto& targetEntry : activeSnapshot_->buses)
+                {
+                    if (targetEntry.bus == send.bus)
+                    {
+                        int channels = std::min(buffer.getNumChannels(),
+                                                targetEntry.buffer.getNumChannels());
+                        for (int ch = 0; ch < channels; ++ch)
+                            targetEntry.buffer.addFrom(ch, 0, buffer, ch, 0, numSamples, gain);
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Apply gain and pan
+        float busGain = busEntry.bus->getGain();
+        buffer.applyGain(0, numSamples, busGain);
+        applyPan(buffer, busEntry.bus->getPan(), numSamples);
+
+        // Post-fader sends
+        for (const auto& send : busEntry.sends)
+        {
+            if (send.tap == SendTap::postFader && send.bus)
+            {
+                float gain = dbToLinear(send.levelDb);
+                for (auto& targetEntry : activeSnapshot_->buses)
+                {
+                    if (targetEntry.bus == send.bus)
+                    {
+                        int channels = std::min(buffer.getNumChannels(),
+                                                targetEntry.buffer.getNumChannels());
+                        for (int ch = 0; ch < channels; ++ch)
+                            targetEntry.buffer.addFrom(ch, 0, buffer, ch, 0, numSamples, gain);
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Metering
+        busEntry.bus->updateMetering(buffer, numSamples);
+
+        // Accumulate into downstream bus
+        if (busEntry.outputBus)
+        {
+            for (auto& targetEntry : activeSnapshot_->buses)
+            {
+                if (targetEntry.bus == busEntry.outputBus)
+                {
+                    int channels = std::min(buffer.getNumChannels(),
+                                            targetEntry.buffer.getNumChannels());
+                    for (int ch = 0; ch < channels; ++ch)
+                        targetEntry.buffer.addFrom(ch, 0, buffer, ch, 0, numSamples);
+                    break;
+                }
+            }
+        }
     }
-    else
+
+    // 7. Copy master bus buffer to output
+    Bus* masterBus = master_;
+    for (auto& busEntry : activeSnapshot_->buses)
     {
-        for (int ch = 0; ch < numChannels; ++ch)
-            std::memset(outputChannels[ch], 0, sizeof(float) * static_cast<size_t>(numSamples));
+        if (busEntry.bus == masterBus)
+        {
+            int channels = std::min(numChannels, busEntry.buffer.getNumChannels());
+            int samples = std::min(numSamples, busEntry.buffer.getNumSamples());
+            for (int ch = 0; ch < channels; ++ch)
+                std::memcpy(outputChannels[ch], busEntry.buffer.getReadPointer(ch),
+                            sizeof(float) * static_cast<size_t>(samples));
+            // Zero any extra output channels
+            for (int ch = channels; ch < numChannels; ++ch)
+                std::memset(outputChannels[ch], 0, sizeof(float) * static_cast<size_t>(numSamples));
+            return;
+        }
     }
+
+    // Fallback: silence
+    for (int ch = 0; ch < numChannels; ++ch)
+        std::memset(outputChannels[ch], 0, sizeof(float) * static_cast<size_t>(numSamples));
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -602,7 +1173,7 @@ void Engine::render(int numSamples)
 {
     std::lock_guard<std::mutex> lock(controlMutex_);
 
-    // Drain commands synchronously (we're calling processBlock from control thread)
+    // Drain commands synchronously
     commandQueue_.processPending([this](const Command& cmd) { handleCommand(cmd); });
 
     juce::AudioBuffer<float> outputBuffer(2, numSamples);

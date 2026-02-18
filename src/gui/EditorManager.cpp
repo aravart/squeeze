@@ -1,41 +1,41 @@
 #include "gui/EditorManager.h"
 #include "core/Engine.h"
 #include "core/Logger.h"
-#include "core/PluginNode.h"
+#include "core/PluginProcessor.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
 namespace squeeze {
 
-bool EditorManager::open(Engine& engine, int nodeId, std::string& error)
+bool EditorManager::open(Engine& engine, int procHandle, std::string& error)
 {
-    SQ_DEBUG("EditorManager::open: nodeId=%d", nodeId);
+    SQ_DEBUG("EditorManager::open: procHandle=%d", procHandle);
 
-    if (windows_.count(nodeId))
+    if (windows_.count(procHandle))
     {
-        error = "Editor already open for node " + std::to_string(nodeId);
+        error = "Editor already open for processor " + std::to_string(procHandle);
         SQ_WARN("EditorManager::open: %s", error.c_str());
         return false;
     }
 
-    Node* node = engine.getNode(nodeId);
-    if (!node)
+    Processor* proc = engine.getProcessor(procHandle);
+    if (!proc)
     {
-        error = "Node " + std::to_string(nodeId) + " not found";
+        error = "Processor " + std::to_string(procHandle) + " not found";
         SQ_WARN("EditorManager::open: %s", error.c_str());
         return false;
     }
 
-    auto* pluginNode = dynamic_cast<PluginNode*>(node);
-    if (!pluginNode)
+    auto* pluginProc = dynamic_cast<PluginProcessor*>(proc);
+    if (!pluginProc)
     {
-        error = "Node " + std::to_string(nodeId) + " is not a plugin";
+        error = "Processor " + std::to_string(procHandle) + " is not a plugin";
         SQ_WARN("EditorManager::open: %s", error.c_str());
         return false;
     }
 
-    auto* processor = pluginNode->getProcessor();
-    if (!processor || !processor->hasEditor())
+    auto* juceProcessor = pluginProc->getJuceProcessor();
+    if (!juceProcessor || !juceProcessor->hasEditor())
     {
         error = "Plugin has no editor";
         SQ_WARN("EditorManager::open: %s", error.c_str());
@@ -46,7 +46,7 @@ bool EditorManager::open(Engine& engine, int nodeId, std::string& error)
     bool success = false;
 
     bool dispatched = runOnMessageThread([&]() {
-        auto* editor = processor->createEditorIfNeeded();
+        auto* editor = juceProcessor->createEditorIfNeeded();
         if (!editor)
         {
             errorMsg = "Failed to create editor";
@@ -57,12 +57,12 @@ bool EditorManager::open(Engine& engine, int nodeId, std::string& error)
         juce::Process::setDockIconVisible(true);
 #endif
 
-        auto name = engine.getNodeName(nodeId);
+        auto name = pluginProc->getPluginName();
         auto window = std::make_unique<PluginEditorWindow>(
-            juce::String(name), editor, nodeId,
+            juce::String(name), editor, procHandle,
             [this](int id) { windows_.erase(id); });
 
-        windows_[nodeId] = std::move(window);
+        windows_[procHandle] = std::move(window);
         success = true;
     });
 
@@ -80,18 +80,18 @@ bool EditorManager::open(Engine& engine, int nodeId, std::string& error)
         return false;
     }
 
-    SQ_INFO("EditorManager::open: opened editor for node %d", nodeId);
+    SQ_INFO("EditorManager::open: opened editor for proc %d", procHandle);
     return true;
 }
 
-bool EditorManager::close(int nodeId, std::string& error)
+bool EditorManager::close(int procHandle, std::string& error)
 {
-    SQ_DEBUG("EditorManager::close: nodeId=%d", nodeId);
+    SQ_DEBUG("EditorManager::close: procHandle=%d", procHandle);
 
-    auto it = windows_.find(nodeId);
+    auto it = windows_.find(procHandle);
     if (it == windows_.end())
     {
-        error = "No editor open for node " + std::to_string(nodeId);
+        error = "No editor open for processor " + std::to_string(procHandle);
         SQ_WARN("EditorManager::close: %s", error.c_str());
         return false;
     }
@@ -103,7 +103,7 @@ bool EditorManager::close(int nodeId, std::string& error)
         return false;
     }
 
-    SQ_INFO("EditorManager::close: closed editor for node %d", nodeId);
+    SQ_INFO("EditorManager::close: closed editor for proc %d", procHandle);
     return true;
 }
 
@@ -113,9 +113,9 @@ void EditorManager::closeAll()
     windows_.clear();
 }
 
-bool EditorManager::hasEditor(int nodeId) const
+bool EditorManager::hasEditor(int procHandle) const
 {
-    return windows_.count(nodeId) > 0;
+    return windows_.count(procHandle) > 0;
 }
 
 bool EditorManager::runOnMessageThread(std::function<void()> fn)

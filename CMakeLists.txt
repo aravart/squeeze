@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(Squeeze VERSION 0.2.0 LANGUAGES C CXX)
+project(Squeeze VERSION 0.3.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -21,13 +21,11 @@ add_library(squeeze_core STATIC
     src/core/Bus.cpp
     src/core/Chain.cpp
     src/core/Engine.cpp
-    src/core/Graph.cpp
     src/core/Logger.cpp
     src/core/MidiDeviceManager.cpp
     src/core/MidiRouter.cpp
     src/core/PluginManager.cpp
-    src/core/PluginNode.cpp
-    src/core/Port.cpp
+    src/core/PluginProcessor.cpp
     src/core/Source.cpp
 )
 
@@ -74,14 +72,10 @@ FetchContent_MakeAvailable(Catch2)
 # --- C++ Unit Tests ---
 add_executable(squeeze_unit_tests
     tests/core/LoggerTests.cpp
-    tests/core/PortTests.cpp
-    tests/core/NodeTests.cpp
-    tests/core/GraphTests.cpp
     tests/core/SPSCQueueTests.cpp
     tests/core/CommandQueueTests.cpp
     tests/core/MidiRouterTests.cpp
     tests/core/EngineTests.cpp
-    tests/core/PluginNodeTests.cpp
     tests/core/PluginManagerTests.cpp
     tests/core/ProcessorTests.cpp
     tests/core/ChainTests.cpp
@@ -98,8 +92,6 @@ target_link_libraries(squeeze_unit_tests PRIVATE
 add_executable(squeeze_ffi_tests
     tests/ffi/LoggerFFITests.cpp
     tests/ffi/EngineFFITests.cpp
-    tests/ffi/NodeFFITests.cpp
-    tests/ffi/GraphFFITests.cpp
     tests/ffi/PluginManagerFFITests.cpp
     tests/ffi/AudioDeviceFFITests.cpp
     tests/ffi/MidiDeviceManagerFFITests.cpp

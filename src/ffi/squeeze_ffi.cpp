@@ -1,11 +1,11 @@
 #include "ffi/squeeze_ffi.h"
 #include "core/AudioDevice.h"
 #include "core/Engine.h"
-#include "core/GainNode.h"
+#include "core/GainProcessor.h"
 #include "core/Logger.h"
 #include "core/MidiDeviceManager.h"
 #include "core/PluginManager.h"
-#include "core/PluginNode.h"
+#include "core/PluginProcessor.h"
 #include "core/TestProcessor.h"
 #include "gui/EditorManager.h"
 
@@ -37,7 +37,7 @@ static squeeze::Engine& eng(SqEngine e)
     return cast(e)->engine;
 }
 
-// --- JUCE initialization (lazy, process-wide, never torn down) ---
+// --- JUCE initialization ---
 
 static bool juceInitialised = false;
 static juce::ScopedJuceInitialiser_GUI* juceInit = nullptr;
@@ -76,12 +76,41 @@ void sq_set_log_callback(void (*callback)(int level, const char* message, void* 
     squeeze::Logger::setCallback(callback, user_data);
 }
 
-// --- API implementation ---
+// --- String / List free ---
 
 void sq_free_string(char* s)
 {
     free(s);
 }
+
+void sq_free_string_list(SqStringList list)
+{
+    for (int i = 0; i < list.count; i++)
+        free(list.items[i]);
+    free(list.items);
+}
+
+void sq_free_param_descriptor_list(SqParamDescriptorList list)
+{
+    for (int i = 0; i < list.count; i++)
+    {
+        free(list.descriptors[i].name);
+        free(list.descriptors[i].label);
+        free(list.descriptors[i].group);
+    }
+    free(list.descriptors);
+}
+
+void sq_free_midi_route_list(SqMidiRouteList list)
+{
+    for (int i = 0; i < list.count; i++)
+        free(list.routes[i].device);
+    free(list.routes);
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Engine lifecycle
+// ═══════════════════════════════════════════════════════════════════
 
 SqEngine sq_engine_create(double sample_rate, int block_size, char** error)
 {
@@ -109,85 +138,239 @@ char* sq_version(SqEngine engine)
     return to_c_string(eng(engine).getVersion());
 }
 
-// --- Node management ---
-
-int sq_add_gain(SqEngine engine)
+double sq_engine_sample_rate(SqEngine engine)
 {
-    return eng(engine).addNode("gain", std::make_unique<squeeze::GainNode>());
+    return eng(engine).getSampleRate();
 }
 
-bool sq_remove_node(SqEngine engine, int node_id)
+int sq_engine_block_size(SqEngine engine)
 {
-    return eng(engine).removeNode(node_id);
+    return eng(engine).getBlockSize();
 }
 
-int sq_output_node(SqEngine engine)
+// ═══════════════════════════════════════════════════════════════════
+// Source management
+// ═══════════════════════════════════════════════════════════════════
+
+int sq_add_source(SqEngine engine, const char* name)
 {
-    return eng(engine).getOutputNodeId();
+    auto gen = std::make_unique<squeeze::GainProcessor>();
+    auto* src = eng(engine).addSource(name, std::move(gen));
+    if (!src) return -1;
+    return src->getHandle();
 }
 
-int sq_node_count(SqEngine engine)
+bool sq_remove_source(SqEngine engine, int source_handle)
 {
-    return eng(engine).getNodeCount();
+    auto* src = eng(engine).getSource(source_handle);
+    if (!src) return false;
+    return eng(engine).removeSource(src);
 }
 
-char* sq_node_name(SqEngine engine, int node_id)
+int sq_source_count(SqEngine engine)
 {
-    auto name = eng(engine).getNodeName(node_id);
-    if (name.empty()) return nullptr;
-    return to_c_string(name);
+    return eng(engine).getSourceCount();
 }
 
-SqPortList sq_get_ports(SqEngine engine, int node_id)
+int sq_source_generator(SqEngine engine, int source_handle)
 {
-    SqPortList result = {nullptr, 0};
-    auto* node = eng(engine).getNode(node_id);
-    if (!node) return result;
-
-    auto inputs = node->getInputPorts();
-    auto outputs = node->getOutputPorts();
-    int total = static_cast<int>(inputs.size() + outputs.size());
-    if (total == 0) return result;
-
-    result.ports = static_cast<SqPortDescriptor*>(
-        malloc(sizeof(SqPortDescriptor) * static_cast<size_t>(total)));
-    result.count = total;
-
-    int i = 0;
-    for (const auto& p : inputs)
-    {
-        result.ports[i].name = strdup(p.name.c_str());
-        result.ports[i].direction = 0;
-        result.ports[i].signal_type = (p.signalType == squeeze::SignalType::audio) ? 0 : 1;
-        result.ports[i].channels = p.channels;
-        i++;
-    }
-    for (const auto& p : outputs)
-    {
-        result.ports[i].name = strdup(p.name.c_str());
-        result.ports[i].direction = 1;
-        result.ports[i].signal_type = (p.signalType == squeeze::SignalType::audio) ? 0 : 1;
-        result.ports[i].channels = p.channels;
-        i++;
-    }
-
-    return result;
+    auto* src = eng(engine).getSource(source_handle);
+    if (!src) return -1;
+    auto* gen = src->getGenerator();
+    if (!gen) return -1;
+    return gen->getHandle();
 }
 
-void sq_free_port_list(SqPortList list)
+// ═══════════════════════════════════════════════════════════════════
+// Bus management
+// ═══════════════════════════════════════════════════════════════════
+
+int sq_add_bus(SqEngine engine, const char* name)
 {
-    for (int i = 0; i < list.count; i++)
-        free(list.ports[i].name);
-    free(list.ports);
+    auto* bus = eng(engine).addBus(name);
+    if (!bus) return -1;
+    return bus->getHandle();
 }
 
-SqParamDescriptorList sq_param_descriptors(SqEngine engine, int node_id)
+bool sq_remove_bus(SqEngine engine, int bus_handle)
+{
+    auto* bus = eng(engine).getBus(bus_handle);
+    if (!bus) return false;
+    return eng(engine).removeBus(bus);
+}
+
+int sq_bus_count(SqEngine engine)
+{
+    return eng(engine).getBusCount();
+}
+
+int sq_master(SqEngine engine)
+{
+    auto* m = eng(engine).getMaster();
+    return m ? m->getHandle() : -1;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Routing
+// ═══════════════════════════════════════════════════════════════════
+
+void sq_route(SqEngine engine, int source_handle, int bus_handle)
+{
+    auto* src = eng(engine).getSource(source_handle);
+    auto* bus = eng(engine).getBus(bus_handle);
+    if (src && bus)
+        eng(engine).route(src, bus);
+}
+
+int sq_send(SqEngine engine, int source_handle, int bus_handle, float level_db)
+{
+    auto* src = eng(engine).getSource(source_handle);
+    auto* bus = eng(engine).getBus(bus_handle);
+    if (!src || !bus) return -1;
+    return eng(engine).sendFrom(src, bus, level_db);
+}
+
+void sq_remove_send(SqEngine engine, int source_handle, int send_id)
+{
+    auto* src = eng(engine).getSource(source_handle);
+    if (src)
+        eng(engine).removeSend(src, send_id);
+}
+
+void sq_set_send_level(SqEngine engine, int source_handle, int send_id, float level_db)
+{
+    auto* src = eng(engine).getSource(source_handle);
+    if (src)
+        eng(engine).setSendLevel(src, send_id, level_db);
+}
+
+bool sq_bus_route(SqEngine engine, int from_handle, int to_handle)
+{
+    auto* from = eng(engine).getBus(from_handle);
+    auto* to = eng(engine).getBus(to_handle);
+    if (!from || !to) return false;
+    return eng(engine).busRoute(from, to);
+}
+
+int sq_bus_send(SqEngine engine, int from_handle, int to_handle, float level_db)
+{
+    auto* from = eng(engine).getBus(from_handle);
+    auto* to = eng(engine).getBus(to_handle);
+    if (!from || !to) return -1;
+    return eng(engine).busSend(from, to, level_db);
+}
+
+void sq_bus_remove_send(SqEngine engine, int bus_handle, int send_id)
+{
+    auto* bus = eng(engine).getBus(bus_handle);
+    if (bus)
+        eng(engine).busRemoveSend(bus, send_id);
+}
+
+void sq_bus_set_send_level(SqEngine engine, int bus_handle, int send_id, float level_db)
+{
+    auto* bus = eng(engine).getBus(bus_handle);
+    if (bus)
+        eng(engine).busSendLevel(bus, send_id, level_db);
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Source chain
+// ═══════════════════════════════════════════════════════════════════
+
+int sq_source_append_proc(SqEngine engine, int source_handle)
+{
+    auto* src = eng(engine).getSource(source_handle);
+    if (!src) return -1;
+    auto p = std::make_unique<squeeze::GainProcessor>();
+    auto* proc = eng(engine).sourceAppend(src, std::move(p));
+    return proc ? proc->getHandle() : -1;
+}
+
+int sq_source_insert_proc(SqEngine engine, int source_handle, int index)
+{
+    auto* src = eng(engine).getSource(source_handle);
+    if (!src) return -1;
+    auto p = std::make_unique<squeeze::GainProcessor>();
+    auto* proc = eng(engine).sourceInsert(src, index, std::move(p));
+    return proc ? proc->getHandle() : -1;
+}
+
+void sq_source_remove_proc(SqEngine engine, int source_handle, int index)
+{
+    auto* src = eng(engine).getSource(source_handle);
+    if (src)
+        eng(engine).sourceRemove(src, index);
+}
+
+int sq_source_chain_size(SqEngine engine, int source_handle)
+{
+    auto* src = eng(engine).getSource(source_handle);
+    if (!src) return 0;
+    return eng(engine).sourceChainSize(src);
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Bus chain
+// ═══════════════════════════════════════════════════════════════════
+
+int sq_bus_append_proc(SqEngine engine, int bus_handle)
+{
+    auto* bus = eng(engine).getBus(bus_handle);
+    if (!bus) return -1;
+    auto p = std::make_unique<squeeze::GainProcessor>();
+    auto* proc = eng(engine).busAppend(bus, std::move(p));
+    return proc ? proc->getHandle() : -1;
+}
+
+int sq_bus_insert_proc(SqEngine engine, int bus_handle, int index)
+{
+    auto* bus = eng(engine).getBus(bus_handle);
+    if (!bus) return -1;
+    auto p = std::make_unique<squeeze::GainProcessor>();
+    auto* proc = eng(engine).busInsert(bus, index, std::move(p));
+    return proc ? proc->getHandle() : -1;
+}
+
+void sq_bus_remove_proc(SqEngine engine, int bus_handle, int index)
+{
+    auto* bus = eng(engine).getBus(bus_handle);
+    if (bus)
+        eng(engine).busRemove(bus, index);
+}
+
+int sq_bus_chain_size(SqEngine engine, int bus_handle)
+{
+    auto* bus = eng(engine).getBus(bus_handle);
+    if (!bus) return 0;
+    return eng(engine).busChainSize(bus);
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Parameters
+// ═══════════════════════════════════════════════════════════════════
+
+float sq_get_param(SqEngine engine, int proc_handle, const char* name)
+{
+    return eng(engine).getParameter(proc_handle, name);
+}
+
+bool sq_set_param(SqEngine engine, int proc_handle, const char* name, float value)
+{
+    return eng(engine).setParameter(proc_handle, name, value);
+}
+
+char* sq_param_text(SqEngine engine, int proc_handle, const char* name)
+{
+    auto text = eng(engine).getParameterText(proc_handle, name);
+    if (text.empty()) return nullptr;
+    return to_c_string(text);
+}
+
+SqParamDescriptorList sq_param_descriptors(SqEngine engine, int proc_handle)
 {
     SqParamDescriptorList result = {nullptr, 0};
-    auto* node = eng(engine).getNode(node_id);
-    if (!node) return result;
-
-    auto descs = node->getParameterDescriptors();
+    auto descs = eng(engine).getParameterDescriptors(proc_handle);
     if (descs.empty()) return result;
 
     result.descriptors = static_cast<SqParamDescriptor*>(
@@ -196,109 +379,56 @@ SqParamDescriptorList sq_param_descriptors(SqEngine engine, int node_id)
 
     for (int i = 0; i < result.count; i++)
     {
-        result.descriptors[i].name = strdup(descs[static_cast<size_t>(i)].name.c_str());
-        result.descriptors[i].default_value = descs[static_cast<size_t>(i)].defaultValue;
-        result.descriptors[i].num_steps = descs[static_cast<size_t>(i)].numSteps;
-        result.descriptors[i].automatable = descs[static_cast<size_t>(i)].automatable;
-        result.descriptors[i].boolean_param = descs[static_cast<size_t>(i)].boolean;
-        result.descriptors[i].label = strdup(descs[static_cast<size_t>(i)].label.c_str());
-        result.descriptors[i].group = strdup(descs[static_cast<size_t>(i)].group.c_str());
+        auto& d = descs[static_cast<size_t>(i)];
+        result.descriptors[i].name = strdup(d.name.c_str());
+        result.descriptors[i].default_value = d.defaultValue;
+        result.descriptors[i].min_value = d.minValue;
+        result.descriptors[i].max_value = d.maxValue;
+        result.descriptors[i].num_steps = d.numSteps;
+        result.descriptors[i].automatable = d.automatable;
+        result.descriptors[i].boolean_param = d.boolean;
+        result.descriptors[i].label = strdup(d.label.c_str());
+        result.descriptors[i].group = strdup(d.group.c_str());
     }
 
     return result;
 }
 
-void sq_free_param_descriptor_list(SqParamDescriptorList list)
+// ═══════════════════════════════════════════════════════════════════
+// Metering
+// ═══════════════════════════════════════════════════════════════════
+
+float sq_bus_peak(SqEngine engine, int bus_handle)
 {
-    for (int i = 0; i < list.count; i++)
-    {
-        free(list.descriptors[i].name);
-        free(list.descriptors[i].label);
-        free(list.descriptors[i].group);
-    }
-    free(list.descriptors);
+    auto* bus = eng(engine).getBus(bus_handle);
+    if (!bus) return 0.0f;
+    return eng(engine).busPeak(bus);
 }
 
-float sq_get_param(SqEngine engine, int node_id, const char* name)
+float sq_bus_rms(SqEngine engine, int bus_handle)
 {
-    auto* node = eng(engine).getNode(node_id);
-    if (!node) return 0.0f;
-    return node->getParameter(name);
+    auto* bus = eng(engine).getBus(bus_handle);
+    if (!bus) return 0.0f;
+    return eng(engine).busRMS(bus);
 }
 
-bool sq_set_param(SqEngine engine, int node_id, const char* name, float value)
+// ═══════════════════════════════════════════════════════════════════
+// Batching
+// ═══════════════════════════════════════════════════════════════════
+
+void sq_batch_begin(SqEngine engine)
 {
-    auto* node = eng(engine).getNode(node_id);
-    if (!node) return false;
-    node->setParameter(name, value);
-    return true;
+    eng(engine).batchBegin();
 }
 
-char* sq_param_text(SqEngine engine, int node_id, const char* name)
+void sq_batch_commit(SqEngine engine)
 {
-    auto* node = eng(engine).getNode(node_id);
-    if (!node) return nullptr;
-    auto text = node->getParameterText(name);
-    if (text.empty()) return nullptr;
-    return to_c_string(text);
+    eng(engine).batchCommit();
 }
 
-// --- Connection management ---
-
-int sq_connect(SqEngine engine, int src_node, const char* src_port,
-               int dst_node, const char* dst_port, char** error)
-{
-    std::string err;
-    int result = eng(engine).connect(src_node, src_port, dst_node, dst_port, err);
-    if (result < 0)
-    {
-        set_error(error, err);
-    }
-    else
-    {
-        if (error) *error = nullptr;
-    }
-    return result;
-}
-
-bool sq_disconnect(SqEngine engine, int conn_id)
-{
-    return eng(engine).disconnect(conn_id);
-}
-
-SqConnectionList sq_connections(SqEngine engine)
-{
-    SqConnectionList result = {nullptr, 0};
-    auto conns = eng(engine).getConnections();
-    if (conns.empty()) return result;
-
-    result.count = static_cast<int>(conns.size());
-    result.connections = static_cast<SqConnection*>(
-        malloc(sizeof(SqConnection) * conns.size()));
-
-    for (int i = 0; i < result.count; i++)
-    {
-        result.connections[i].id = conns[static_cast<size_t>(i)].id;
-        result.connections[i].src_node = conns[static_cast<size_t>(i)].source.nodeId;
-        result.connections[i].src_port = strdup(conns[static_cast<size_t>(i)].source.portName.c_str());
-        result.connections[i].dst_node = conns[static_cast<size_t>(i)].dest.nodeId;
-        result.connections[i].dst_port = strdup(conns[static_cast<size_t>(i)].dest.portName.c_str());
-    }
-
-    return result;
-}
-
-void sq_free_connection_list(SqConnectionList list)
-{
-    for (int i = 0; i < list.count; i++)
-    {
-        free(list.connections[i].src_port);
-        free(list.connections[i].dst_port);
-    }
-    free(list.connections);
-}
-
-// --- Transport ---
+// ═══════════════════════════════════════════════════════════════════
+// Transport
+// ═══════════════════════════════════════════════════════════════════
 
 void sq_transport_play(SqEngine engine) { eng(engine).transportPlay(); }
 void sq_transport_stop(SqEngine engine) { eng(engine).transportStop(); }
@@ -319,51 +449,37 @@ double sq_transport_position(SqEngine engine) { return eng(engine).getTransportP
 double sq_transport_tempo(SqEngine engine) { return eng(engine).getTransportTempo(); }
 bool sq_transport_is_playing(SqEngine engine) { return eng(engine).isTransportPlaying(); }
 
-// --- Event scheduling ---
+// ═══════════════════════════════════════════════════════════════════
+// Event scheduling
+// ═══════════════════════════════════════════════════════════════════
 
-bool sq_schedule_note_on(SqEngine engine, int node_id, double beat_time,
+bool sq_schedule_note_on(SqEngine engine, int source_handle, double beat_time,
                          int channel, int note, float velocity)
 {
-    return eng(engine).scheduleNoteOn(node_id, beat_time, channel, note, velocity);
+    return eng(engine).scheduleNoteOn(source_handle, beat_time, channel, note, velocity);
 }
 
-bool sq_schedule_note_off(SqEngine engine, int node_id, double beat_time,
+bool sq_schedule_note_off(SqEngine engine, int source_handle, double beat_time,
                           int channel, int note)
 {
-    return eng(engine).scheduleNoteOff(node_id, beat_time, channel, note);
+    return eng(engine).scheduleNoteOff(source_handle, beat_time, channel, note);
 }
 
-bool sq_schedule_cc(SqEngine engine, int node_id, double beat_time,
+bool sq_schedule_cc(SqEngine engine, int source_handle, double beat_time,
                     int channel, int cc_num, int cc_val)
 {
-    return eng(engine).scheduleCC(node_id, beat_time, channel, cc_num, cc_val);
+    return eng(engine).scheduleCC(source_handle, beat_time, channel, cc_num, cc_val);
 }
 
-bool sq_schedule_param_change(SqEngine engine, int node_id, double beat_time,
+bool sq_schedule_param_change(SqEngine engine, int proc_handle, double beat_time,
                               const char* param_name, float value)
 {
-    return eng(engine).scheduleParamChange(node_id, beat_time, param_name, value);
+    return eng(engine).scheduleParamChange(proc_handle, beat_time, param_name, value);
 }
 
-// --- Plugin nodes ---
-
-int sq_add_test_synth(SqEngine engine)
-{
-    auto proc = std::make_unique<squeeze::TestProcessor>(0, 2, true);
-    auto node = std::make_unique<squeeze::PluginNode>(std::move(proc), 0, 2, true);
-    return eng(engine).addNode("test_synth", std::move(node));
-}
-
-// --- String list ---
-
-void sq_free_string_list(SqStringList list)
-{
-    for (int i = 0; i < list.count; i++)
-        free(list.items[i]);
-    free(list.items);
-}
-
-// --- Plugin manager ---
+// ═══════════════════════════════════════════════════════════════════
+// Plugin manager
+// ═══════════════════════════════════════════════════════════════════
 
 bool sq_load_plugin_cache(SqEngine engine, const char* path, char** error)
 {
@@ -383,15 +499,17 @@ int sq_add_plugin(SqEngine engine, const char* name, char** error)
     int bs = handle->engine.getBlockSize();
 
     std::string err;
-    auto node = handle->pluginManager.createNode(name, sr, bs, err);
-    if (!node)
+    auto proc = handle->pluginManager.createProcessor(name, sr, bs, err);
+    if (!proc)
     {
         set_error(error, err);
         return -1;
     }
 
     if (error) *error = nullptr;
-    return handle->engine.addNode(name, std::move(node));
+    auto* src = handle->engine.addSource(name, std::move(proc));
+    if (!src) return -1;
+    return src->getHandle();
 }
 
 SqStringList sq_available_plugins(SqEngine engine)
@@ -414,14 +532,9 @@ int sq_num_plugins(SqEngine engine)
     return cast(engine)->pluginManager.getNumPlugins();
 }
 
-// --- MIDI device management ---
-
-void sq_free_midi_route_list(SqMidiRouteList list)
-{
-    for (int i = 0; i < list.count; i++)
-        free(list.routes[i].device);
-    free(list.routes);
-}
+// ═══════════════════════════════════════════════════════════════════
+// MIDI device management
+// ═══════════════════════════════════════════════════════════════════
 
 SqStringList sq_midi_devices(SqEngine engine)
 {
@@ -465,14 +578,16 @@ SqStringList sq_midi_open_devices(SqEngine engine)
     return result;
 }
 
-// --- MIDI routing ---
+// ═══════════════════════════════════════════════════════════════════
+// MIDI routing
+// ═══════════════════════════════════════════════════════════════════
 
-int sq_midi_route(SqEngine engine, const char* device, int node_id,
+int sq_midi_route(SqEngine engine, const char* device, int source_handle,
                   int channel_filter, int note_filter, char** error)
 {
     auto& router = eng(engine).getMidiRouter();
     std::string err;
-    int id = router.addRoute(device, node_id, channel_filter, note_filter, err);
+    int id = router.addRoute(device, source_handle, channel_filter, note_filter, err);
     if (id < 0)
     {
         set_error(error, err);
@@ -506,14 +621,16 @@ SqMidiRouteList sq_midi_routes(SqEngine engine)
     {
         result.routes[i].id = routes[static_cast<size_t>(i)].id;
         result.routes[i].device = strdup(routes[static_cast<size_t>(i)].deviceName.c_str());
-        result.routes[i].node_id = routes[static_cast<size_t>(i)].nodeId;
+        result.routes[i].target_handle = routes[static_cast<size_t>(i)].nodeId;
         result.routes[i].channel_filter = routes[static_cast<size_t>(i)].channelFilter;
         result.routes[i].note_filter = routes[static_cast<size_t>(i)].noteFilter;
     }
     return result;
 }
 
-// --- Audio device ---
+// ═══════════════════════════════════════════════════════════════════
+// Audio device
+// ═══════════════════════════════════════════════════════════════════
 
 bool sq_start(SqEngine engine, double sample_rate, int block_size, char** error)
 {
@@ -550,13 +667,15 @@ int sq_block_size(SqEngine engine)
     return cast(engine)->audioDevice.getBlockSize();
 }
 
-// --- Plugin editor ---
+// ═══════════════════════════════════════════════════════════════════
+// Plugin editor
+// ═══════════════════════════════════════════════════════════════════
 
-bool sq_open_editor(SqEngine engine, int node_id, char** error)
+bool sq_open_editor(SqEngine engine, int proc_handle, char** error)
 {
     auto* h = cast(engine);
     std::string err;
-    bool ok = h->editorManager.open(h->engine, node_id, err);
+    bool ok = h->editorManager.open(h->engine, proc_handle, err);
     if (!ok)
         set_error(error, err);
     else if (error)
@@ -564,11 +683,11 @@ bool sq_open_editor(SqEngine engine, int node_id, char** error)
     return ok;
 }
 
-bool sq_close_editor(SqEngine engine, int node_id, char** error)
+bool sq_close_editor(SqEngine engine, int proc_handle, char** error)
 {
     auto* h = cast(engine);
     std::string err;
-    bool ok = h->editorManager.close(node_id, err);
+    bool ok = h->editorManager.close(proc_handle, err);
     if (!ok)
         set_error(error, err);
     else if (error)
@@ -576,9 +695,9 @@ bool sq_close_editor(SqEngine engine, int node_id, char** error)
     return ok;
 }
 
-bool sq_has_editor(SqEngine engine, int node_id)
+bool sq_has_editor(SqEngine engine, int proc_handle)
 {
-    return cast(engine)->editorManager.hasEditor(node_id);
+    return cast(engine)->editorManager.hasEditor(proc_handle);
 }
 
 void sq_process_events(int timeout_ms)
@@ -588,7 +707,9 @@ void sq_process_events(int timeout_ms)
         mm->runDispatchLoopUntil(timeout_ms);
 }
 
-// --- Testing ---
+// ═══════════════════════════════════════════════════════════════════
+// Testing
+// ═══════════════════════════════════════════════════════════════════
 
 void sq_render(SqEngine engine, int num_samples)
 {

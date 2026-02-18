@@ -183,46 +183,46 @@ TEST_CASE("PluginManager getAvailablePlugins returns sorted names")
 // Instantiation — error paths
 // ═══════════════════════════════════════════════════════════════════
 
-TEST_CASE("PluginManager createNode with unknown name returns nullptr")
+TEST_CASE("PluginManager createProcessor with unknown name returns nullptr")
 {
     PluginManager pm;
     std::string error;
     REQUIRE(pm.loadCacheFromString(kValidXml, error));
 
-    auto node = pm.createNode("Nonexistent", 44100.0, 512, error);
-    CHECK(node == nullptr);
+    auto proc = pm.createProcessor("Nonexistent", 44100.0, 512, error);
+    CHECK(proc == nullptr);
     CHECK_FALSE(error.empty());
 }
 
-TEST_CASE("PluginManager createNode with sampleRate 0 returns nullptr")
+TEST_CASE("PluginManager createProcessor with sampleRate 0 returns nullptr")
 {
     PluginManager pm;
     std::string error;
     REQUIRE(pm.loadCacheFromString(kValidXml, error));
 
-    auto node = pm.createNode("Synth A", 0.0, 512, error);
-    CHECK(node == nullptr);
+    auto proc = pm.createProcessor("Synth A", 0.0, 512, error);
+    CHECK(proc == nullptr);
     CHECK_FALSE(error.empty());
 }
 
-TEST_CASE("PluginManager createNode with blockSize 0 returns nullptr")
+TEST_CASE("PluginManager createProcessor with blockSize 0 returns nullptr")
 {
     PluginManager pm;
     std::string error;
     REQUIRE(pm.loadCacheFromString(kValidXml, error));
 
-    auto node = pm.createNode("Synth A", 44100.0, 0, error);
-    CHECK(node == nullptr);
+    auto proc = pm.createProcessor("Synth A", 44100.0, 0, error);
+    CHECK(proc == nullptr);
     CHECK_FALSE(error.empty());
 }
 
-TEST_CASE("PluginManager createNode with negative sampleRate returns nullptr")
+TEST_CASE("PluginManager createProcessor with negative sampleRate returns nullptr")
 {
     PluginManager pm;
     std::string error;
     REQUIRE(pm.loadCacheFromString(kValidXml, error));
 
-    auto node = pm.createNode("Synth A", -1.0, 512, error);
-    CHECK(node == nullptr);
+    auto proc = pm.createProcessor("Synth A", -1.0, 512, error);
+    CHECK(proc == nullptr);
     CHECK_FALSE(error.empty());
 }

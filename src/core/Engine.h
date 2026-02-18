@@ -1,9 +1,10 @@
 #pragma once
 
+#include "core/Bus.h"
 #include "core/CommandQueue.h"
-#include "core/Graph.h"
 #include "core/MidiRouter.h"
-#include "core/Node.h"
+#include "core/Processor.h"
+#include "core/Source.h"
 
 #include <juce_audio_basics/juce_audio_basics.h>
 
@@ -15,24 +16,25 @@
 
 namespace squeeze {
 
-struct GraphSnapshot {
-    std::vector<int> executionOrder;
-
-    struct NodeBuffers {
-        juce::AudioBuffer<float> inputAudio;
-        juce::AudioBuffer<float> outputAudio;
-        juce::MidiBuffer inputMidi;
-        juce::MidiBuffer outputMidi;
+struct MixerSnapshot {
+    struct SourceEntry {
+        Source* source;
+        Processor* generator;
+        std::vector<Processor*> chainProcessors;
+        juce::AudioBuffer<float> buffer;
+        juce::MidiBuffer midiBuffer;
+        Bus* outputBus;
+        std::vector<Send> sends;
     };
-    std::unordered_map<int, NodeBuffers> nodeBuffers;
-
-    struct FanIn {
-        int sourceNodeId;
+    struct BusEntry {
+        Bus* bus;
+        std::vector<Processor*> chainProcessors;
+        juce::AudioBuffer<float> buffer;
+        std::vector<Send> sends;
+        Bus* outputBus;
     };
-    std::unordered_map<int, std::vector<FanIn>> audioFanIn;
-    std::unordered_map<int, std::vector<FanIn>> midiFanIn;
-
-    std::unordered_map<int, juce::MidiBuffer*> midiBufferMap;
+    std::vector<SourceEntry> sources;
+    std::vector<BusEntry> buses; // dependency order, master last
 };
 
 class Engine {
@@ -41,31 +43,64 @@ public:
     ~Engine();
 
     std::string getVersion() const;
+    double getSampleRate() const;
+    int getBlockSize() const;
 
-    // --- Node management (control thread) ---
-    int addNode(const std::string& name, std::unique_ptr<Node> node);
-    bool removeNode(int nodeId);
-    Node* getNode(int nodeId) const;
-    std::string getNodeName(int nodeId) const;
-    int getOutputNodeId() const;
-    int getNodeCount() const;
-    std::vector<std::pair<int, std::string>> getNodes() const;
-    std::vector<int> getExecutionOrder() const;
+    // --- Source management (control thread) ---
+    Source* addSource(const std::string& name, std::unique_ptr<Processor> generator);
+    bool removeSource(Source* src);
+    Source* getSource(int handle) const;
+    std::vector<Source*> getSources() const;
+    int getSourceCount() const;
 
-    // --- Connection management (control thread) ---
-    int connect(int srcNode, const std::string& srcPort,
-                int dstNode, const std::string& dstPort,
-                std::string& error);
-    bool disconnect(int connectionId);
-    std::vector<Connection> getConnections() const;
+    // --- Bus management (control thread) ---
+    Bus* addBus(const std::string& name);
+    bool removeBus(Bus* bus);
+    Bus* getBus(int handle) const;
+    std::vector<Bus*> getBuses() const;
+    int getBusCount() const;
+    Bus* getMaster() const;
 
-    // --- Parameters (control thread) ---
-    float getParameter(int nodeId, const std::string& name) const;
-    bool setParameter(int nodeId, const std::string& name, float value);
-    std::string getParameterText(int nodeId, const std::string& name) const;
-    std::vector<ParameterDescriptor> getParameterDescriptors(int nodeId) const;
+    // --- Routing (control thread) ---
+    void route(Source* src, Bus* bus);
+    int sendFrom(Source* src, Bus* bus, float levelDb);
+    void removeSend(Source* src, int sendId);
+    void setSendLevel(Source* src, int sendId, float levelDb);
 
-    // --- Transport forwarding (control thread, stubs for tier 7) ---
+    bool busRoute(Bus* from, Bus* to);
+    int busSend(Bus* from, Bus* to, float levelDb);
+    void busRemoveSend(Bus* bus, int sendId);
+    void busSendLevel(Bus* bus, int sendId, float levelDb);
+
+    // --- Insert chains (control thread) ---
+    Processor* sourceAppend(Source* src, std::unique_ptr<Processor> p);
+    Processor* sourceInsert(Source* src, int index, std::unique_ptr<Processor> p);
+    void sourceRemove(Source* src, int index);
+    int sourceChainSize(Source* src) const;
+
+    Processor* busAppend(Bus* bus, std::unique_ptr<Processor> p);
+    Processor* busInsert(Bus* bus, int index, std::unique_ptr<Processor> p);
+    void busRemove(Bus* bus, int index);
+    int busChainSize(Bus* bus) const;
+
+    // --- Parameters (control thread, by processor handle) ---
+    float getParameter(int procHandle, const std::string& name) const;
+    bool setParameter(int procHandle, const std::string& name, float value);
+    std::string getParameterText(int procHandle, const std::string& name) const;
+    std::vector<ParamDescriptor> getParameterDescriptors(int procHandle) const;
+
+    // --- Processor lookup ---
+    Processor* getProcessor(int procHandle) const;
+
+    // --- Metering (any thread) ---
+    float busPeak(Bus* bus) const;
+    float busRMS(Bus* bus) const;
+
+    // --- Batching (control thread) ---
+    void batchBegin();
+    void batchCommit();
+
+    // --- Transport forwarding (control thread) ---
     void transportPlay();
     void transportStop();
     void transportPause();
@@ -76,23 +111,21 @@ public:
     void transportSetLoopPoints(double startBeats, double endBeats);
     void transportSetLooping(bool enabled);
 
-    // --- Transport query (control thread, stubs for tier 7) ---
+    // --- Transport query ---
     double getTransportPosition() const;
     double getTransportTempo() const;
     bool isTransportPlaying() const;
 
-    // --- Event scheduling (control thread, stubs for tier 7) ---
-    bool scheduleNoteOn(int nodeId, double beatTime, int channel, int note, float velocity);
-    bool scheduleNoteOff(int nodeId, double beatTime, int channel, int note);
-    bool scheduleCC(int nodeId, double beatTime, int channel, int ccNum, int ccVal);
-    bool scheduleParamChange(int nodeId, double beatTime, const std::string& paramName, float value);
+    // --- Event scheduling stubs ---
+    bool scheduleNoteOn(int sourceHandle, double beatTime, int channel, int note, float velocity);
+    bool scheduleNoteOff(int sourceHandle, double beatTime, int channel, int note);
+    bool scheduleCC(int sourceHandle, double beatTime, int channel, int ccNum, int ccVal);
+    bool scheduleParamChange(int procHandle, double beatTime, const std::string& paramName, float value);
 
     // --- Audio processing (audio thread) ---
     void processBlock(float* const* outputChannels, int numChannels, int numSamples);
 
     // --- Accessors ---
-    double getSampleRate() const;
-    int getBlockSize() const;
     MidiRouter& getMidiRouter();
 
     // --- Testing ---
@@ -101,16 +134,14 @@ public:
 private:
     mutable std::mutex controlMutex_;
 
-    struct NodeEntry {
-        std::string name;
-        std::unique_ptr<Node> node;
-    };
-    std::unordered_map<int, NodeEntry> nodes_;
-    int nextNodeId_ = 1;
-    int outputNodeId_ = -1;
+    std::vector<std::unique_ptr<Source>> sources_;
+    std::vector<std::unique_ptr<Bus>> buses_;
+    Bus* master_ = nullptr;
 
-    Graph graph_;
-    GraphSnapshot* activeSnapshot_ = nullptr;
+    int nextHandle_ = 1;
+    std::unordered_map<int, Processor*> processorRegistry_;
+
+    MixerSnapshot* activeSnapshot_ = nullptr;
 
     CommandQueue commandQueue_;
     MidiRouter midiRouter_;
@@ -118,9 +149,17 @@ private:
     double sampleRate_;
     int blockSize_;
 
+    bool batching_ = false;
+    bool snapshotDirty_ = false;
+
     void collectGarbage();
     void buildAndSwapSnapshot();
+    void maybeRebuildSnapshot();
     void handleCommand(const Command& cmd);
+    bool wouldCreateCycle(Bus* from, Bus* to) const;
+    int assignHandle();
+    void registerProcessor(Processor* p);
+    void unregisterProcessor(Processor* p);
 };
 
 } // namespace squeeze

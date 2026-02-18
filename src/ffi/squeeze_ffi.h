@@ -21,12 +21,9 @@ void sq_free_string(char* s);
 /* ── Logging ───────────────────────────────────────────────────── */
 
 /// Set log level globally. 0=off, 1=warn, 2=info, 3=debug, 4=trace.
-/// Does not require an SqEngine handle.
 void sq_set_log_level(int level);
 
 /// Set a callback to receive log messages. Pass NULL to revert to stderr.
-/// The callback receives: level (int), message (const char*), userData.
-/// Callback is invoked from the control thread only.
 void sq_set_log_callback(void (*callback)(int level, const char* message, void* user_data),
                          void* user_data);
 
@@ -34,36 +31,116 @@ void sq_set_log_callback(void (*callback)(int level, const char* message, void* 
 
 /// Create a new engine with the given sample rate and block size.
 /// Returns NULL on failure (sets *error).
-/// Caller owns the returned handle; free with sq_engine_destroy().
-/// Initializes JUCE MessageManager on first call (static, process-wide).
 SqEngine sq_engine_create(double sample_rate, int block_size, char** error);
 
 /// Destroy the engine and free all resources.
-/// Passing NULL is safe (no-op).
 void sq_engine_destroy(SqEngine engine);
 
-/* ── Version ───────────────────────────────────────────────────── */
+/* ── Version / Info ────────────────────────────────────────────── */
 
-/// Returns the engine version string. Caller must sq_free_string() the result.
+/// Returns the engine version string. Caller must sq_free_string().
 char* sq_version(SqEngine engine);
 
-/* ── Port / Parameter C structs ────────────────────────────────── */
+/// Returns the engine sample rate.
+double sq_engine_sample_rate(SqEngine engine);
 
-typedef struct {
-    char* name;
-    int   direction;    /* 0 = input, 1 = output */
-    int   signal_type;  /* 0 = audio, 1 = midi   */
-    int   channels;
-} SqPortDescriptor;
+/// Returns the engine block size.
+int sq_engine_block_size(SqEngine engine);
 
-typedef struct {
-    SqPortDescriptor* ports;
-    int               count;
-} SqPortList;
+/* ── Source management ─────────────────────────────────────────── */
+
+/// Add a source with a GainProcessor generator (for testing).
+/// Returns the source handle (>0), or -1 on failure.
+int sq_add_source(SqEngine engine, const char* name);
+
+/// Add a source with a custom generator (used internally by sq_add_source_plugin).
+/// Returns the source handle, or -1 on failure.
+int sq_add_source_with_generator(SqEngine engine, const char* name, int gen_proc_handle);
+
+/// Remove a source by handle. Returns false if not found.
+bool sq_remove_source(SqEngine engine, int source_handle);
+
+/// Returns the number of sources.
+int sq_source_count(SqEngine engine);
+
+/// Returns the generator processor handle for a source, or -1 if not found.
+int sq_source_generator(SqEngine engine, int source_handle);
+
+/* ── Bus management ────────────────────────────────────────────── */
+
+/// Add a bus. Returns the bus handle (>0).
+int sq_add_bus(SqEngine engine, const char* name);
+
+/// Remove a bus by handle. Returns false if Master or not found.
+bool sq_remove_bus(SqEngine engine, int bus_handle);
+
+/// Returns the number of buses (including Master).
+int sq_bus_count(SqEngine engine);
+
+/// Returns the Master bus handle.
+int sq_master(SqEngine engine);
+
+/* ── Routing ───────────────────────────────────────────────────── */
+
+/// Route a source to a bus.
+void sq_route(SqEngine engine, int source_handle, int bus_handle);
+
+/// Add a send from a source to a bus. Returns send ID, or -1 on failure.
+int sq_send(SqEngine engine, int source_handle, int bus_handle, float level_db);
+
+/// Remove a send from a source.
+void sq_remove_send(SqEngine engine, int source_handle, int send_id);
+
+/// Set send level.
+void sq_set_send_level(SqEngine engine, int source_handle, int send_id, float level_db);
+
+/// Route a bus to another bus. Returns false if would create cycle.
+bool sq_bus_route(SqEngine engine, int from_handle, int to_handle);
+
+/// Add a send from one bus to another. Returns send ID, or -1 on failure/cycle.
+int sq_bus_send(SqEngine engine, int from_handle, int to_handle, float level_db);
+
+/// Remove a send from a bus.
+void sq_bus_remove_send(SqEngine engine, int bus_handle, int send_id);
+
+/// Set bus send level.
+void sq_bus_set_send_level(SqEngine engine, int bus_handle, int send_id, float level_db);
+
+/* ── Source chain ──────────────────────────────────────────────── */
+
+/// Append a GainProcessor to source's chain. Returns proc handle.
+int sq_source_append_proc(SqEngine engine, int source_handle);
+
+/// Insert a GainProcessor at index. Returns proc handle.
+int sq_source_insert_proc(SqEngine engine, int source_handle, int index);
+
+/// Remove processor at index from source's chain.
+void sq_source_remove_proc(SqEngine engine, int source_handle, int index);
+
+/// Returns the number of processors in source's chain.
+int sq_source_chain_size(SqEngine engine, int source_handle);
+
+/* ── Bus chain ─────────────────────────────────────────────────── */
+
+/// Append a GainProcessor to bus's chain. Returns proc handle.
+int sq_bus_append_proc(SqEngine engine, int bus_handle);
+
+/// Insert a GainProcessor at index. Returns proc handle.
+int sq_bus_insert_proc(SqEngine engine, int bus_handle, int index);
+
+/// Remove processor at index from bus's chain.
+void sq_bus_remove_proc(SqEngine engine, int bus_handle, int index);
+
+/// Returns the number of processors in bus's chain.
+int sq_bus_chain_size(SqEngine engine, int bus_handle);
+
+/* ── Parameters (by processor handle) ─────────────────────────── */
 
 typedef struct {
     char* name;
     float default_value;
+    float min_value;
+    float max_value;
     int   num_steps;
     bool  automatable;
     bool  boolean_param;
@@ -76,78 +153,36 @@ typedef struct {
     int                count;
 } SqParamDescriptorList;
 
-/* ── Node management ───────────────────────────────────────────── */
+/// Get a parameter value by name. Returns 0.0f if invalid.
+float sq_get_param(SqEngine engine, int proc_handle, const char* name);
 
-/// Add a GainNode. Returns node id (>0).
-int sq_add_gain(SqEngine engine);
+/// Set a parameter value by name. Returns false if invalid.
+bool sq_set_param(SqEngine engine, int proc_handle, const char* name, float value);
 
-/// Remove a node by id. Returns false if not found (or if node is the output).
-bool sq_remove_node(SqEngine engine, int node_id);
-
-/// Returns the built-in output node id.
-int sq_output_node(SqEngine engine);
-
-/// Returns the total number of nodes (including the output node).
-int sq_node_count(SqEngine engine);
-
-/// Returns the node's type name. Caller must sq_free_string().
-/// Returns NULL if node_id is invalid.
-char* sq_node_name(SqEngine engine, int node_id);
-
-/// Returns all ports for a node. Free with sq_free_port_list().
-/// Returns empty list if node_id is invalid.
-SqPortList sq_get_ports(SqEngine engine, int node_id);
-
-/// Free a port list returned by sq_get_ports().
-void sq_free_port_list(SqPortList list);
+/// Get parameter display text. Caller must sq_free_string().
+char* sq_param_text(SqEngine engine, int proc_handle, const char* name);
 
 /// Returns parameter descriptors. Free with sq_free_param_descriptor_list().
-/// Returns empty list if node_id is invalid.
-SqParamDescriptorList sq_param_descriptors(SqEngine engine, int node_id);
+SqParamDescriptorList sq_param_descriptors(SqEngine engine, int proc_handle);
 
 /// Free a parameter descriptor list.
 void sq_free_param_descriptor_list(SqParamDescriptorList list);
 
-/// Get a parameter value by name. Returns 0.0f if node_id or name is invalid.
-float sq_get_param(SqEngine engine, int node_id, const char* name);
+/* ── Metering ──────────────────────────────────────────────────── */
 
-/// Set a parameter value by name. Returns false if node_id is invalid.
-bool sq_set_param(SqEngine engine, int node_id, const char* name, float value);
+/// Returns peak level for a bus.
+float sq_bus_peak(SqEngine engine, int bus_handle);
 
-/// Get parameter display text. Caller must sq_free_string().
-/// Returns NULL if node_id or name is invalid.
-char* sq_param_text(SqEngine engine, int node_id, const char* name);
+/// Returns RMS level for a bus.
+float sq_bus_rms(SqEngine engine, int bus_handle);
 
-/* ── Connection C structs ─────────────────────────────────────────── */
+/* ── Batching ──────────────────────────────────────────────────── */
 
-typedef struct {
-    int   id;
-    int   src_node;
-    char* src_port;
-    int   dst_node;
-    char* dst_port;
-} SqConnection;
+/// Begin batching — defers snapshot rebuilds until sq_batch_commit().
+void sq_batch_begin(SqEngine engine);
 
-typedef struct {
-    SqConnection* connections;
-    int           count;
-} SqConnectionList;
-
-/* ── Connection management ────────────────────────────────────────── */
-
-/// Connect two ports. Returns connection id (>= 0) on success, -1 on failure.
-/// On failure, *error is set (caller must sq_free_string it). On success, *error is NULL.
-int sq_connect(SqEngine engine, int src_node, const char* src_port,
-               int dst_node, const char* dst_port, char** error);
-
-/// Disconnect by connection id. Returns false if not found.
-bool sq_disconnect(SqEngine engine, int conn_id);
-
-/// Get all connections. Free with sq_free_connection_list().
-SqConnectionList sq_connections(SqEngine engine);
-
-/// Free a connection list returned by sq_connections().
-void sq_free_connection_list(SqConnectionList list);
+/// Commit batch — rebuilds snapshot if dirty.
+void sq_batch_commit(SqEngine engine);
 
 /* ── Transport ────────────────────────────────────────────────── */
 
@@ -166,13 +201,13 @@ bool   sq_transport_is_playing(SqEngine engine);
 
 /* ── Event scheduling ─────────────────────────────────────────── */
 
-bool sq_schedule_note_on(SqEngine engine, int node_id, double beat_time,
+bool sq_schedule_note_on(SqEngine engine, int source_handle, double beat_time,
                          int channel, int note, float velocity);
-bool sq_schedule_note_off(SqEngine engine, int node_id, double beat_time,
+bool sq_schedule_note_off(SqEngine engine, int source_handle, double beat_time,
                           int channel, int note);
-bool sq_schedule_cc(SqEngine engine, int node_id, double beat_time,
+bool sq_schedule_cc(SqEngine engine, int source_handle, double beat_time,
                     int channel, int cc_num, int cc_val);
-bool sq_schedule_param_change(SqEngine engine, int node_id, double beat_time,
+bool sq_schedule_param_change(SqEngine engine, int proc_handle, double beat_time,
                               const char* param_name, float value);
 
 /* ── String list ──────────────────────────────────────────────── */
@@ -182,22 +217,14 @@ typedef struct {
     int    count;
 } SqStringList;
 
-/// Free a string list returned by sq_available_plugins().
 void sq_free_string_list(SqStringList list);
-
-/* ── Plugin nodes ─────────────────────────────────────────────── */
-
-/// Add a built-in test synth (PluginNode wrapping TestProcessor).
-/// 0 audio inputs, 2 audio outputs, accepts MIDI. Has "Gain" and "Mix" parameters.
-/// Returns node id (>0).
-int sq_add_test_synth(SqEngine engine);
 
 /* ── Plugin manager ──────────────────────────────────────────── */
 
 /// Load a plugin cache XML file. Returns false on failure (sets *error).
 bool sq_load_plugin_cache(SqEngine engine, const char* path, char** error);
 
-/// Add a plugin by name. Returns node id (>0) on success, -1 on failure (sets *error).
+/// Add a plugin as a source generator. Returns source handle, or -1 on failure (sets *error).
 int sq_add_plugin(SqEngine engine, const char* name, char** error);
 
 /// Return the list of available plugin names (sorted). Free with sq_free_string_list().
@@ -211,7 +238,7 @@ int sq_num_plugins(SqEngine engine);
 typedef struct {
     int   id;
     char* device;
-    int   node_id;
+    int   target_handle;    /* source handle */
     int   channel_filter;
     int   note_filter;
 } SqMidiRoute;
@@ -221,78 +248,46 @@ typedef struct {
     int          count;
 } SqMidiRouteList;
 
-/// Free a MIDI route list returned by sq_midi_routes().
 void sq_free_midi_route_list(SqMidiRouteList list);
 
 /* ── MIDI device management ──────────────────────────────────── */
 
-/// Return available MIDI input devices. Free with sq_free_string_list().
 SqStringList sq_midi_devices(SqEngine engine);
-
-/// Open a MIDI input device by name. Returns false on failure (sets *error).
 bool sq_midi_open(SqEngine engine, const char* name, char** error);
-
-/// Close a MIDI input device by name. No-op if not open.
 void sq_midi_close(SqEngine engine, const char* name);
-
-/// Return currently open MIDI devices. Free with sq_free_string_list().
 SqStringList sq_midi_open_devices(SqEngine engine);
 
 /* ── MIDI routing ─────────────────────────────────────────────── */
 
-/// Route a MIDI device to a node. Returns route id (>= 0), -1 on failure (sets *error).
-/// channel_filter: 0=all, 1-16=specific. note_filter: -1=all, 0-127=specific.
-int sq_midi_route(SqEngine engine, const char* device, int node_id,
+int sq_midi_route(SqEngine engine, const char* device, int source_handle,
                   int channel_filter, int note_filter, char** error);
-
-/// Remove a MIDI route by id. Returns false if not found.
 bool sq_midi_unroute(SqEngine engine, int route_id);
-
-/// Get all MIDI routes. Free with sq_free_midi_route_list().
 SqMidiRouteList sq_midi_routes(SqEngine engine);
 
 /* ── Audio device ─────────────────────────────────────────────── */
 
-/// Start the audio device with the given sample rate and block size hints.
-/// Returns false on failure (sets *error). The actual device SR/BS may differ
-/// from the hints — use sq_sample_rate() / sq_block_size() to query actual values.
 bool sq_start(SqEngine engine, double sample_rate, int block_size, char** error);
-
-/// Stop the audio device. No-op if not running.
 void sq_stop(SqEngine engine);
-
-/// Returns true if the audio device is currently running.
 bool sq_is_running(SqEngine engine);
-
-/// Returns the actual device sample rate (0.0 if not running).
 double sq_sample_rate(SqEngine engine);
-
-/// Returns the actual device block size (0 if not running).
 int sq_block_size(SqEngine engine);
 
 /* ── Plugin editor ────────────────────────────────────────────── */
 
-/// Open the native editor window for a plugin node.
-/// Returns false on failure (sets *error). Caller must sq_free_string the error.
-/// Fails if: node not found, not a plugin, no editor, already open, GUI timeout.
-bool sq_open_editor(SqEngine engine, int node_id, char** error);
+/// Open editor for a plugin processor (by handle).
+bool sq_open_editor(SqEngine engine, int proc_handle, char** error);
 
-/// Close the editor window for a plugin node.
-/// Returns false on failure (sets *error). Caller must sq_free_string the error.
-bool sq_close_editor(SqEngine engine, int node_id, char** error);
+/// Close editor for a plugin processor (by handle).
+bool sq_close_editor(SqEngine engine, int proc_handle, char** error);
 
-/// Returns true if an editor window is currently open for this node.
-bool sq_has_editor(SqEngine engine, int node_id);
+/// Returns true if editor is open for this processor.
+bool sq_has_editor(SqEngine engine, int proc_handle);
 
-/// Process pending JUCE GUI/message events.
-/// With timeout_ms=0, processes pending events and returns immediately (non-blocking).
-/// With timeout_ms>0, processes events for up to that many milliseconds (blocking).
-/// Call from the main thread. Does not require an SqEngine handle.
+/// Process JUCE GUI events.
 void sq_process_events(int timeout_ms);
 
 /* ── Testing ──────────────────────────────────────────────────── */
 
-/// Render one block in test mode (allocates output buffer internally).
 void sq_render(SqEngine engine, int num_samples);
 
 #ifdef __cplusplus

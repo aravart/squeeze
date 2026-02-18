@@ -1,6 +1,6 @@
 #pragma once
 
-#include "core/Node.h"
+#include "core/Processor.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
@@ -11,8 +11,8 @@
 namespace squeeze {
 
 /// Manages plugin cache loading and plugin instantiation.
-/// Loads JUCE KnownPluginList XML caches and creates PluginNode instances.
-/// Has no Engine dependency — returns std::unique_ptr<Node>.
+/// Loads JUCE KnownPluginList XML caches and creates PluginProcessor instances.
+/// Has no Engine dependency — returns std::unique_ptr<Processor>.
 class PluginManager {
 public:
     PluginManager();
@@ -31,9 +31,9 @@ public:
     int getNumPlugins() const;
 
     // --- Instantiation ---
-    std::unique_ptr<Node> createNode(const std::string& name,
-                                     double sampleRate, int blockSize,
-                                     std::string& error);
+    std::unique_ptr<Processor> createProcessor(const std::string& name,
+                                                double sampleRate, int blockSize,
+                                                std::string& error);
 
 private:
     juce::AudioPluginFormatManager formatManager_;
