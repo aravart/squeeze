@@ -238,6 +238,8 @@ The staging buffer is **audio-thread-local only**. No synchronization needed. Re
 - What events mean — Engine interprets and dispatches (MIDI → MidiBuffer, paramChange → sub-block split)
 - Loop wrapping — Engine splits blocks at loop boundaries before calling `retrieve()`
 - Pattern storage, repetition, or loop scheduling — client's responsibility
+- Event cancellation — once scheduled, events cannot be removed; client must schedule compensating events
+- Stuck note prevention — `clear()` discards pending noteOffs; Engine sends all-notes-off (CC 123) on stop/seek to compensate (see Engine spec)
 - Transport state — Engine passes timing parameters; EventScheduler has no Transport dependency
 - Source/processor lookup or parameter name resolution — Engine's concern
 - MIDI device input (MidiRouter)

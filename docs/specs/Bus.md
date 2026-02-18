@@ -346,7 +346,7 @@ void  sq_remove_bus(SqEngine engine, SqBus bus);
 SqBus sq_master(SqEngine engine);
 
 // Routing
-void sq_bus_route(SqEngine engine, SqBus from, SqBus to);
+bool sq_bus_route(SqEngine engine, SqBus from, SqBus to, char** error);
 int  sq_bus_send(SqEngine engine, SqBus from, SqBus to, float level_db, int pre_fader);
 void sq_bus_remove_send(SqEngine engine, SqBus bus, int send_id);
 void sq_bus_set_send_level(SqEngine engine, SqBus bus, int send_id, float level_db);

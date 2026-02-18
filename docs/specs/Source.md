@@ -393,7 +393,7 @@ void     sq_remove_source(SqEngine engine, SqSource src);
 SqProc sq_source_set_generator(SqEngine engine, SqSource src, const char* plugin_path, char** error);
 
 // Routing
-void sq_route(SqEngine engine, SqSource src, SqBus bus);
+bool sq_route(SqEngine engine, SqSource src, SqBus bus, char** error);
 int  sq_send(SqEngine engine, SqSource src, SqBus bus, float level_db, int pre_fader);
 void sq_remove_send(SqEngine engine, SqSource src, int send_id);
 void sq_set_send_level(SqEngine engine, SqSource src, int send_id, float level_db);

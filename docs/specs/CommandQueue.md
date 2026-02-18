@@ -246,6 +246,7 @@ commandQueue_.processPending([this](const Command& cmd) {
         case Command::Type::transportStop:
             transport_.stop();
             eventScheduler_.clear();
+            sendAllNotesOff();  // CC 123 to every source MidiBuffer — prevents stuck notes
             break;
         case Command::Type::setTempo:
             transport_.setTempo(cmd.doubleValue1);

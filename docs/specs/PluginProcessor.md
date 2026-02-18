@@ -6,15 +6,17 @@
 - Process audio in-place via the plugin's `processBlock()`
 - Expose the plugin's parameters via the Processor parameter interface (string-based names, normalized 0–1 values)
 - Report the plugin's processing latency
-- Provide access to the underlying `juce::AudioProcessor` for editor windows
+- Provide access to the underlying `juce::AudioProcessor` for editor windows and PlayHead wiring
 
 ## Overview
 
-PluginProcessor hosts a single VST3 or AU plugin as a Processor in a Source chain or Bus chain. It takes ownership of a `juce::AudioProcessor` (typically an `AudioPluginInstance` from JUCE's plugin loading, or a test processor for unit tests). Channel configuration is determined at construction from the plugin's layout.
+PluginProcessor hosts a single VST3 or AU plugin as a Processor in a Source chain or Bus chain. It takes ownership of a `juce::AudioProcessor` (typically an `AudioPluginInstance` from JUCE's plugin loading, or a test processor for unit tests). Channel configuration (separate input and output counts) is determined at construction from the plugin's layout.
 
 PluginProcessor does not load plugins itself — PluginManager handles cache lookup and instantiation, returning a `std::unique_ptr<Processor>`.
 
 Unlike the old PluginNode, PluginProcessor has no ports. Audio processing is in-place — the plugin reads from and writes to the same buffer. JUCE plugins already process in-place internally (despite the separate input/output convention), so PluginProcessor aligns naturally with JUCE's actual behavior.
+
+MIDI output from plugins is discarded. Plugins that transform MIDI (arpeggiators, chord generators, MIDI effects) are not supported as MIDI processors — only their audio output is used. The working MIDI buffer is internal and not read back after `processBlock()`.
 
 ## Interface
 
@@ -26,10 +28,11 @@ namespace squeeze {
 class PluginProcessor : public Processor {
 public:
     // Takes ownership of a processor.
-    // numChannels determines the buffer layout for processing.
+    // inputChannels/outputChannels determine the buffer layout for processing.
+    // Instruments typically have 0 inputs and 2 outputs; effects have matching counts.
     // acceptsMidi determines whether process(buffer, midi) uses the midi buffer.
     explicit PluginProcessor(std::unique_ptr<juce::AudioProcessor> processor,
-                              int numChannels, bool acceptsMidi);
+                              int inputChannels, int outputChannels, bool acceptsMidi);
     ~PluginProcessor();
 
     // Non-copyable, non-movable (inherits from Processor)
@@ -55,22 +58,24 @@ public:
 
     // --- Plugin-specific queries ---
     const std::string& getPluginName() const;
-    juce::AudioProcessor* getProcessor();
-
-    // --- Sidechain support ---
-    void setSidechainBuffer(const juce::AudioBuffer<float>* buffer);
+    juce::AudioProcessor* getJuceProcessor();
+    bool hasMidi() const;
+    int getInputChannels() const;
+    int getOutputChannels() const;
 
 private:
     std::unique_ptr<juce::AudioProcessor> processor_;
-    int numChannels_;
+    int inputChannels_;
+    int outputChannels_;
     bool acceptsMidi_;
     std::string pluginName_;
 
     // Parameter name → JUCE parameter index lookup
     std::unordered_map<std::string, int> parameterMap_;
 
-    // Optional sidechain buffer (read-only, set by Engine)
-    const juce::AudioBuffer<float>* sidechainBuffer_ = nullptr;
+    // Working MIDI buffer — pre-allocated in prepare(), reused each process() call.
+    // MIDI output from the plugin is discarded after processBlock().
+    juce::MidiBuffer tempMidi_;
 };
 
 } // namespace squeeze
@@ -102,25 +107,19 @@ print(eq.param_descriptors())
 
 `process()` delegates to the plugin's `processBlock()`:
 
-1. Copy input MIDI to a working MIDI buffer (if `acceptsMidi_`)
-2. Call `processor_->processBlock(buffer, midiBuffer)` — plugin processes audio in-place
-3. If sidechain buffer is set, map it to the plugin's sidechain bus before processing
+1. Clear `tempMidi_`, copy input MIDI into it (if `acceptsMidi_`)
+2. Call `processor_->processBlock(buffer, tempMidi_)` — plugin processes audio in-place
+3. Any MIDI the plugin writes back into `tempMidi_` is discarded — MIDI output is not forwarded
 
 JUCE plugins process audio in-place. The `AudioBuffer` passed to `processBlock` serves as both input and output.
 
-### Sidechain Support
+### AudioPlayHead
 
-Some plugins (compressors, gates) accept a sidechain input. This is a read-only auxiliary buffer that the plugin uses for detection while processing the main audio in-place.
+JUCE plugins query transport state (tempo, position, time signature, loop points, playing/stopped) through the `juce::AudioPlayHead` interface. Without a PlayHead, plugins that do tempo sync, beat-accurate delay, LFO sync, or transport display will receive null position info.
 
-```python
-bass = engine.add_source("Bass", plugin="bass_synth.vst3")
-kick = engine.add_source("Kick", sampler="kick.wav")
+`prepare()` calls `processor_->setPlayHead(playHead)` using a PlayHead provided by the Engine. The Engine implements `juce::AudioPlayHead` backed by Transport state — `getPosition()` returns the current position, tempo, time signature, and loop points from `Transport`'s atomic query interface.
 
-sc_comp = bass.chain.append("Compressor.vst3")
-engine.sidechain(sc_comp, source=kick)
-```
-
-The Engine sets the sidechain buffer reference on the PluginProcessor before each process call. The buffer is read-only and does not participate in the in-place chain flow.
+The PlayHead pointer is set once during `prepare()` and remains valid for the processor's lifetime. The PlayHead reads Transport state via atomic loads, so `getPosition()` is RT-safe and can be called from the plugin's `processBlock()`.
 
 ## Parameters
 
@@ -140,7 +139,7 @@ The parameter map (name → JUCE index) is built once at construction and is imm
 
 - `process()` is RT-safe (delegates to the plugin's `processBlock`, which is expected to be RT-safe by the plugin vendor)
 - `reset()` is RT-safe (delegates to the plugin's `reset()`, which clears internal state — reverb tails, delay buffers, filter histories)
-- Channel configuration is fixed after construction
+- Channel configuration (input/output counts) is fixed after construction
 - `prepare()` is called before the first `process()` and after any sample rate or block size change
 - `release()` is called before destruction
 - PluginProcessor owns the `AudioProcessor` and destroys it on destruction
@@ -148,6 +147,8 @@ The parameter map (name → JUCE index) is built once at construction and is imm
 - `getParameter()` with unknown name returns 0.0f (not an error)
 - `setParameter()` with unknown name is a no-op (not an error)
 - `getLatencySamples()` delegates to the plugin's reported latency
+- MIDI output from plugins is discarded — `tempMidi_` is not read back after `processBlock()`
+- `prepare()` wires the Engine's PlayHead to the plugin via `setPlayHead()`
 
 ## Error Conditions
 
@@ -163,13 +164,15 @@ The parameter map (name → JUCE index) is built once at construction and is imm
 - **Plugin scanning / cache management** — PluginManager
 - **Plugin GUI / editor windows** — PluginEditorWindow (separate component)
 - **Plugin state save / restore (presets)** — future
-- **Sidechain buffer provision** — Engine maps sidechain sources to processor buffers
+- **Sidechain** — future; requires JUCE bus layout negotiation and wider buffers (see `docs/discussion/sidechain.md`)
 - **Parameter automation from EventScheduler** — Engine handles sub-block splitting and calls setParameter at split boundaries
+- **MIDI effect plugins** — MIDI output from processBlock() is discarded; arpeggiators and chord generators are not supported as MIDI processors
+- **PlayHead ownership** — Engine implements AudioPlayHead backed by Transport; PluginProcessor receives it via `prepare()`
 
 ## Dependencies
 
 - Processor (base class)
-- JUCE (`juce_audio_processors`: AudioProcessor, AudioPluginInstance, AudioProcessorParameter)
+- JUCE (`juce_audio_processors`: AudioProcessor, AudioPluginInstance, AudioProcessorParameter, AudioPlayHead)
 - JUCE (`juce_audio_basics`: AudioBuffer, MidiBuffer)
 
 ## Thread Safety
@@ -177,16 +180,16 @@ The parameter map (name → JUCE index) is built once at construction and is imm
 | Method | Thread | Notes |
 |--------|--------|-------|
 | Constructor | Control | Builds parameter map, stores processor |
-| `prepare()` / `release()` | Control | Delegates to processor |
+| `prepare()` / `release()` | Control | Delegates to processor; prepare wires PlayHead |
 | `reset()` | Audio | Delegates to processor->reset(); must be RT-safe |
-| `process()` | Audio | Delegates to processor's processBlock |
+| `process()` | Audio | Delegates to processor's processBlock; MIDI output discarded |
 | `getParameterDescriptors()` | Any | Immutable after construction |
 | `getParameter()` | Control | Reads from JUCE parameter (atomic internally) |
 | `setParameter()` | Control | Writes to JUCE parameter |
 | `getParameterText()` | Control | Reads from JUCE parameter |
-| `getPluginName()` / `getProcessor()` | Any | Immutable / stable pointer |
+| `getPluginName()` / `getJuceProcessor()` | Any | Immutable / stable pointer |
+| `hasMidi()` / `getInputChannels()` / `getOutputChannels()` | Any | Immutable after construction |
 | `getLatencySamples()` | Control | Delegates to processor |
-| `setSidechainBuffer()` | Control | Set before audio thread processes |
 
 JUCE's parameter system handles the control-thread-write / audio-thread-read synchronization internally.
 
@@ -200,6 +203,7 @@ auto instance = formatManager_.createPluginInstance(
 
 auto processor = std::make_unique<PluginProcessor>(
     std::move(instance),
+    description.numInputChannels,
     description.numOutputChannels,
     description.isInstrument);
 ```
@@ -218,7 +222,7 @@ engine.setParameter(src->getGenerator()->getHandle(), "cutoff", 0.5f);  // norma
 
 ```cpp
 auto mockProcessor = std::make_unique<MockAudioProcessor>();
-auto proc = std::make_unique<PluginProcessor>(std::move(mockProcessor), 2, true);
+auto proc = std::make_unique<PluginProcessor>(std::move(mockProcessor), 2, 2, true);
 
 proc->prepare(44100.0, 512);
 juce::AudioBuffer<float> buffer(2, 512);
