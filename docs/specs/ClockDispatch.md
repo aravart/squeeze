@@ -17,6 +17,8 @@ The clock dispatch system decouples beat-timed notifications from the audio thre
 
 Latency is functional, not advisory. A clock subscription with 50ms latency receives its callback ~50ms before the audio thread actually renders that beat. The clock dispatch thread achieves this by shifting the audio thread's beat window forward by each subscription's latency (converted to beats at the current tempo) and detecting boundary crossings in the shifted window.
 
+Callbacks may call `sq_schedule_*` functions directly to schedule events. This is safe because clock management and event scheduling use independent mutexes with no circular dependency (see Thread Safety).
+
 ## Key Concepts
 
 ### Beat Range Update
@@ -219,7 +221,7 @@ with Squeeze() as s:
 
 ## Does NOT Handle
 
-- Scheduling events into the engine — that is the client's responsibility from within the callback, using existing `sq_schedule_*` functions on the control thread
+- Scheduling events into the engine — that is the client's responsibility from within the callback, using existing `sq_schedule_*` functions (which acquire `controlMutex_` independently; see Thread Safety)
 - Tempo changes — the clock dispatch thread uses whatever tempo the audio thread reports in each `BeatRangeUpdate`. Tempo ramps, automation, or tap tempo are Transport/Engine concerns
 - Wall-time clocks — future extension. Same dispatch thread, different trigger source (real clock instead of transport beat position). Not specified here
 - Swing/groove quantization — future extension. Would offset tick positions before firing callbacks
@@ -233,13 +235,53 @@ with Squeeze() as s:
 
 ## Thread Safety
 
+### Thread Roles
+
 | Thread | Operations |
 |--------|-----------|
 | Audio thread | `pushBeatRange()` only — one lock-free queue push per sub-block, then `sem_post` |
-| Clock dispatch thread | `sem_wait()`, drain queue, iterate subscriptions, fire callbacks. Owns all tick detection logic |
-| Control thread | `addClock()`, `removeClock()`, `prime()`, `onTransportStop()`. Internally synchronized with the dispatch thread (mutex or similar, never contended by audio thread) |
+| Clock dispatch thread | `sem_wait()`, drain queue, iterate subscriptions, fire callbacks. Owns all tick detection logic. Callbacks may call `sq_schedule_*` functions. |
+| Control thread | `addClock()`, `removeClock()`, `prime()`, `onTransportStop()`. Internally synchronized with the dispatch thread via `subscriptionMutex_`. |
 
-The audio thread never acquires any lock held by the control or dispatch threads. `pushBeatRange` is a lock-free write + semaphore post — fully RT-safe.
+### Lock Hierarchy
+
+Two mutexes exist, and they are **independent** — no code path acquires both:
+
+| Mutex | Purpose | Acquired by | Never acquired by |
+|-------|---------|-------------|-------------------|
+| `controlMutex_` (Engine) | Protects Engine state, serializes `sq_schedule_*` and other `sq_*` calls | Control thread, dispatch thread (from within callbacks calling `sq_schedule_*`) | Audio thread, clock management functions |
+| `subscriptionMutex_` (ClockDispatch) | Protects subscription list, synchronizes `addClock`/`removeClock` with dispatch thread iteration | Control thread (`addClock`, `removeClock`), dispatch thread (iteration) | Audio thread, `sq_schedule_*` functions |
+
+**Why no deadlock is possible:**
+
+- `sq_clock_create` and `sq_clock_destroy` acquire `subscriptionMutex_` only — never `controlMutex_`.
+- `sq_schedule_*` functions acquire `controlMutex_` only — never `subscriptionMutex_`.
+- No code path acquires both mutexes simultaneously, so no circular dependency can form.
+
+**Concrete scenario — callback schedules events during `removeClock`:**
+
+```
+Dispatch thread                        Control thread
+───────────────                        ──────────────
+holds subscriptionMutex_ (iterating)
+  fires callback
+    calls sq_schedule_param_change()
+      acquires controlMutex_ ✓         sq_clock_destroy()
+      resolves name → token              tries subscriptionMutex_
+      pushes to EventScheduler             blocked (dispatch holds it)
+      releases controlMutex_               ... waits, no deadlock
+  callback returns
+releases subscriptionMutex_            acquires subscriptionMutex_ ✓
+                                         proceeds with removal
+```
+
+**SPSC queue safety:** EventScheduler's queue is SPSC (single producer, single consumer). Both the control thread and the dispatch thread may call `sq_schedule_*`, but `controlMutex_` serializes all pushes, so only one thread produces at a time. The single-producer invariant is maintained by the mutex.
+
+**RT safety:** The audio thread never acquires any mutex. `pushBeatRange` is a lock-free write + semaphore post — fully RT-safe.
+
+### Restrictions
+
+- **Do not call `sq_clock_create` or `sq_clock_destroy` from within a clock callback.** The dispatch thread holds `subscriptionMutex_` during iteration; attempting to acquire it again from a callback would self-deadlock. If dynamic clock management from callbacks is needed, defer it (e.g., set a flag and handle it after the callback returns).
 
 ## Implementation Notes
 
@@ -252,10 +294,11 @@ The audio thread never acquires any lock held by the control or dispatch threads
 
 ### Subscription Synchronization
 
-`addClock` and `removeClock` are called from the control thread. The dispatch thread iterates subscriptions. Options:
+`addClock` and `removeClock` are called from the control thread. The dispatch thread iterates subscriptions. Both use `subscriptionMutex_` — a mutex internal to `ClockDispatch`, independent of Engine's `controlMutex_`:
 
-- A mutex between control thread and dispatch thread for subscription list modifications. This mutex is never touched by the audio thread, so it does not affect RT safety.
-- `removeClock` acquires the mutex, marks the subscription for removal, and waits for the dispatch thread to confirm no in-flight callback before returning.
+- The dispatch thread holds `subscriptionMutex_` while iterating and firing callbacks.
+- `addClock` acquires `subscriptionMutex_`, adds the subscription, releases.
+- `removeClock` acquires `subscriptionMutex_`, marks the subscription for removal, and waits for the dispatch thread to confirm no in-flight callback before returning. Since `subscriptionMutex_` is not held by the dispatch thread between iterations, `removeClock` will acquire it once the current iteration completes — guaranteeing no in-flight callback on return.
 
 ### Semaphore Choice
 
