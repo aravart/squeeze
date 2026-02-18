@@ -279,7 +279,7 @@ Engine calls `pluginProcessor->getJuceProcessor()->setPlayHead(&transport_)` whe
 - `setPositionInSamples(n)` with negative value: clamped to 0
 - `advance(n)` with n <= 0: no-op
 - `setLoopPoints(start, end)` with end <= start: no change, no error
-- `setLoopPoints(start, end)` where cached sample length < `blockSize_`: no change, no error
+- `setLoopPoints(start, end)` where cached sample length < `blockSize_`: beat-domain points stored, looping auto-disabled, warning logged (same behavior as tempo/prepare shrinking a loop — beat-domain points are preserved so a subsequent change can re-enable)
 - `setTempo()` or `prepare()` shrinks an active loop below minimum: looping auto-disabled, beat-domain points preserved, warning logged
 - `setLooping(true)` when loop points are both 0: silently stays disabled
 - `getPositionInSeconds()` / `getPositionInBeats()` before `prepare()`: return 0.0
