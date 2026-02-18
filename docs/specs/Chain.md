@@ -36,8 +36,8 @@ public:
     void release();
 
     // --- Structural modification (control thread only) ---
-    void append(Processor* p);
-    void insert(int index, Processor* p);
+    void append(std::unique_ptr<Processor> p);
+    void insert(int index, std::unique_ptr<Processor> p);
     std::unique_ptr<Processor> remove(int index);
     void move(int fromIndex, int toIndex);
     void clear();  // destroys all processors immediately
@@ -81,13 +81,13 @@ When un-bypassing a Source or Bus, the Engine calls `reset()` on the generator a
 
 All structural operations happen on the control thread and take effect at the next snapshot swap:
 
-### `append(p)`
+### `append(unique_ptr<Processor> p)`
 
-Add a processor to the end of the chain. The chain takes ownership. Calls `p->prepare(sampleRate, blockSize)` if the chain is already prepared.
+Add a processor to the end of the chain. Ownership transfers via `unique_ptr`. Calls `p->prepare(sampleRate, blockSize)` if the chain is already prepared.
 
-### `insert(index, p)`
+### `insert(index, unique_ptr<Processor> p)`
 
-Insert a processor at the given index. Elements at and after `index` shift right. The chain takes ownership. Calls `p->prepare()` if already prepared.
+Insert a processor at the given index. Elements at and after `index` shift right. Ownership transfers via `unique_ptr`. Calls `p->prepare()` if already prepared.
 
 - If `index == size()`, equivalent to `append()`.
 - If `index < 0` or `index > size()`, clamps to valid range.
@@ -212,9 +212,9 @@ auto eq = std::make_unique<PluginProcessor>(loadPlugin("EQ.vst3"));
 auto comp = std::make_unique<PluginProcessor>(loadPlugin("Comp.vst3"));
 auto limit = std::make_unique<PluginProcessor>(loadPlugin("Limiter.vst3"));
 
-chain.append(eq.release());
-chain.append(comp.release());
-chain.append(limit.release());
+chain.append(std::move(eq));
+chain.append(std::move(comp));
+chain.append(std::move(limit));
 
 // Audio thread processes via snapshot, not directly:
 // for (auto* p : snapshot.chainProcessors) p->process(buffer);
@@ -225,7 +225,7 @@ chain.append(limit.release());
 ```cpp
 // On control thread: insert a saturator between EQ and compressor
 auto sat = std::make_unique<PluginProcessor>(loadPlugin("Saturator.vst3"));
-chain.insert(1, sat.release());
+chain.insert(1, std::move(sat));
 // Engine rebuilds snapshot → audio thread picks up new chain at next block boundary
 
 // Later: remove the saturator

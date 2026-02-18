@@ -204,7 +204,7 @@ auto* src = engine.addSource("synth", std::move(gen));
 
 auto rec = std::make_unique<RecordingProcessor>();
 auto* recorder = rec.get();
-src->getChain().append(rec.release());
+src->getChain().append(std::move(rec));
 
 engine.render(512);  // install snapshot
 
@@ -228,7 +228,7 @@ auto* src = engine.addSource("synth", std::move(gen));
 
 auto rec = std::make_unique<RecordingProcessor>();
 auto* recorder = rec.get();
-src->getChain().append(rec.release());
+src->getChain().append(std::move(rec));
 
 engine.render(512);
 

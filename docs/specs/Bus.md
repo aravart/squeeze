@@ -431,7 +431,7 @@ Engine engine(44100.0, 512);
 
 auto* bus = engine.addBus("FX");
 auto gain = std::make_unique<GainProcessor>();
-bus->getChain().append(gain.release());
+bus->getChain().append(std::move(gain));
 bus->setGain(0.85f);
 bus->setPan(0.1f);
 bus->routeTo(engine.getMaster());

@@ -302,7 +302,7 @@ auto gen2 = std::make_unique<TestSynthProcessor>();
 auto* src2 = engine.addSource("wet", std::move(gen2));
 
 auto latencyProc = std::make_unique<TestLatencyProcessor>(256);
-src2->getChain().append(latencyProc.release());
+src2->getChain().append(std::move(latencyProc));
 
 // Both route to master — dry path should get 256 samples compensation
 assert(engine.getTotalLatency() == 256);

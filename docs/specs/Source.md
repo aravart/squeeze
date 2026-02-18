@@ -479,7 +479,7 @@ auto* src = engine.addSource("synth", std::move(gen));
 
 // Insert an effect
 auto eq = std::make_unique<GainProcessor>();
-src->getChain().append(eq.release());
+src->getChain().append(std::move(eq));
 
 // Channel strip controls
 src->setGain(0.75f);
