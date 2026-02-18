@@ -9,7 +9,7 @@
 namespace squeeze {
 
 struct LogEntry {
-    char message[256];
+    char message[512];
     int level;
 };
 
@@ -23,7 +23,10 @@ public:
     // Control-thread logging — direct fprintf to stderr (or callback)
     static void log(LogLevel level, const char* file, int line, const char* fmt, ...);
 
-    // Audio-thread logging — lock-free push to internal ring buffer
+    // Audio-thread logging — lock-free push to internal ring buffer.
+    // Caveat: uses vsnprintf, which is allocation-free for simple specifiers
+    // (%d, %s, %x, %p) on mainstream platforms but not guaranteed by POSIX.
+    // Avoid %f with extreme values and locale-dependent specifiers on the RT thread.
     static void logRT(LogLevel level, const char* file, int line, const char* fmt, ...);
 
     // Drain RT queue (control thread only)

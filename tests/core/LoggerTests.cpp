@@ -444,22 +444,22 @@ TEST_CASE("Long messages are truncated safely")
     Logger::setLevel(LogLevel::debug);
     Logger::setCallback(captureCallback, nullptr);
 
-    char longMsg[512];
+    char longMsg[1024];
     memset(longMsg, 'A', sizeof(longMsg) - 1);
     longMsg[sizeof(longMsg) - 1] = '\0';
 
     // Should not crash — message gets truncated by vsnprintf/snprintf
     SQ_DEBUG("%s", longMsg);
     REQUIRE(g_captured.size() == 1);
-    // Full message is capped at 256 chars total (including format prefix)
-    REQUIRE(g_captured[0].message.size() <= 256);
+    // Full message is capped at 512 chars total (including format prefix)
+    REQUIRE(g_captured[0].message.size() <= 512);
 
     g_captured.clear();
 
     SQ_DEBUG_RT("%s", longMsg);
     Logger::drain();
     REQUIRE(g_captured.size() == 1);
-    REQUIRE(g_captured[0].message.size() <= 256);
+    REQUIRE(g_captured[0].message.size() <= 512);
 
     resetLogger();
 }

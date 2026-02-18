@@ -63,13 +63,13 @@ LogLevel Logger::getLevel()
 
 void Logger::log(LogLevel level, const char* file, int line, const char* fmt, ...)
 {
-    char userMsg[200];
+    char userMsg[400];
     va_list args;
     va_start(args, fmt);
     vsnprintf(userMsg, sizeof(userMsg), fmt, args);
     va_end(args);
 
-    char fullMsg[256];
+    char fullMsg[512];
     snprintf(fullMsg, sizeof(fullMsg), "[%06ld][CT][%s] %s:%d %s",
              elapsedMs(), levelTag(level), basename(file), line, userMsg);
 
@@ -86,7 +86,7 @@ void Logger::logRT(LogLevel level, const char* file, int line, const char* fmt, 
     if (nextW == readPos_.load(std::memory_order_acquire))
         return; // full — silently drop
 
-    char userMsg[200];
+    char userMsg[400];
     va_list args;
     va_start(args, fmt);
     vsnprintf(userMsg, sizeof(userMsg), fmt, args);

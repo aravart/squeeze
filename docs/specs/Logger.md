@@ -13,7 +13,7 @@
 ```cpp
 namespace squeeze {
 
-struct LogEntry { char message[256]; };
+struct LogEntry { char message[512]; int level; };
 
 enum class LogLevel : int { off = 0, warn = 1, info = 2, debug = 3, trace = 4 };
 
@@ -99,7 +99,7 @@ All macros short-circuit: if the current level is below the macro's threshold, n
 - `logRT()` never allocates, never blocks, never does I/O
 - `logRT()` silently drops the entry if the internal ring buffer is full
 - `drain()` is safe to call when the queue is empty (no-op)
-- Messages exceeding 256 bytes are truncated, never overflow
+- Messages exceeding 512 bytes are truncated, never overflow
 - When a callback is set, messages are forwarded to the callback instead of (not in addition to) stderr
 - The callback is invoked from the control thread only (via `log()` and `drain()`), never from the audio thread
 
@@ -130,12 +130,13 @@ All macros short-circuit: if the current level is below the macro's threshold, n
 | `setCallback()` | Control thread only | Must not be called while audio is running |
 
 ### RT Safety of `logRT()`
-- No `new` / `malloc` / `free`
 - No mutex or blocking
 - No `fprintf` or I/O (deferred to `drain()`)
-- `vsnprintf` into a fixed stack buffer (`char[200]`)
-- `snprintf` into the `LogEntry` struct (fixed 256 bytes)
+- `vsnprintf` into a fixed stack buffer (`char[400]`)
+- `snprintf` into the `LogEntry` struct (fixed 512 bytes)
 - Atomic head/tail for lock-free ring buffer push
+
+**Caveat:** `vsnprintf` is not guaranteed allocation-free by POSIX. On mainstream platforms (glibc, macOS libc, MSVC) it does not allocate for simple format specifiers (`%d`, `%s`, `%x`, `%p`), but locale-dependent or exotic specifiers (e.g. `%f` with extreme values, `%ls`) may allocate on some implementations. Callers on the audio thread should stick to integer and string format specifiers. This is a pragmatic tradeoff — fully safe deferred formatting (pushing raw arguments and formatting in `drain()`) would add substantial complexity for minimal real-world benefit.
 
 ## C ABI
 
