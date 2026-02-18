@@ -47,6 +47,9 @@ Host Language (Python / Rust / Node.js / etc.)
 │  ┌────────────┐ ┌──────────────────────┐    │
 │  │ Transport  │ │  EventScheduler      │    │
 │  └────────────┘ └──────────────────────┘    │
+│  ┌────────────────────────────────────┐     │
+│  │         ClockDispatch             │     │
+│  └────────────────────────────────────┘     │
 │  ┌──────────────────┐ ┌────────────────┐    │
 │  │ MixerSnapshot    │ │ GarbageQueue   │    │
 │  └──────────────────┘ └────────────────┘    │
@@ -149,6 +152,7 @@ Engine is the central coordinator. It owns:
 - **CommandQueue** (lock-free control → audio SPSC bridge)
 - **Transport** (tempo, position, loop state)
 - **EventScheduler** (beat-timed event resolution)
+- **ClockDispatch** (beat-driven callbacks for external clients via dedicated thread)
 - **PerfMonitor** (audio thread instrumentation)
 - **MidiRouter** (MIDI device queue dispatch in processBlock)
 - **MixerSnapshot** building and atomic swap
@@ -214,33 +218,34 @@ Build bottom-up, organized into phases.
 
 **After tier 11:** Load a VST plugin as a Source, open a MIDI keyboard, route MIDI to the source, hear audio output through Master. First working end-to-end demo.
 
-### Phase 3: Transport & Scheduling (tiers 12–14)
+### Phase 3: Transport & Scheduling (tiers 12–15)
 
 ```
 12. Transport             (no dependencies)
 13. EventScheduler        (SPSCQueue)
-14. PerfMonitor           (no dependencies)
+14. ClockDispatch         (SPSCQueue, Transport, Engine)
+15. PerfMonitor           (no dependencies)
 ```
 
-After phase 3, Engine's processBlock gains transport advance, beat-timed event resolution, and audio thread instrumentation.
+After phase 3, Engine's processBlock gains transport advance, beat-timed event resolution, clock dispatch (beat-driven callbacks for external clients), and audio thread instrumentation.
 
-### Phase 4: Sample Playback (tiers 15–20)
-
-```
-15. Buffer                (no dependencies)
-16. SamplerVoice          (Buffer)
-17. TimeStretchEngine     (signalsmith-stretch)
-18. VoiceAllocator        (SamplerVoice)
-19. SamplerProcessor      (Processor, VoiceAllocator, TimeStretchEngine, Buffer)
-20. BufferLibrary         (Buffer, JUCE AudioFormatManager)
-```
-
-### Phase 5: Advanced (tiers 21–23)
+### Phase 4: Sample Playback (tiers 16–21)
 
 ```
-21. RecordingProcessor    (Processor)
-22. PDC                   (Processor, Chain, Source, Bus, Engine — cross-cutting)
-23. MeterProcessor        (Processor)
+16. Buffer                (no dependencies)
+17. SamplerVoice          (Buffer)
+18. TimeStretchEngine     (signalsmith-stretch)
+19. VoiceAllocator        (SamplerVoice)
+20. SamplerProcessor      (Processor, VoiceAllocator, TimeStretchEngine, Buffer)
+21. BufferLibrary         (Buffer, JUCE AudioFormatManager)
+```
+
+### Phase 5: Advanced (tiers 22–24)
+
+```
+22. RecordingProcessor    (Processor)
+23. PDC                   (Processor, Chain, Source, Bus, Engine — cross-cutting)
+24. MeterProcessor        (Processor)
 ```
 
 ### Notes
