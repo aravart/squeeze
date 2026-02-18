@@ -8,10 +8,7 @@
 using namespace squeeze;
 using Catch::Approx;
 
-// --- Minimal Bus definition for testing ---
-// Source stores Bus* pointers without dereferencing them.
-// The real Bus class will replace this when Tier 4 is implemented.
-// Defined here so we can create Bus objects on the stack for pointer tests.
+namespace {
 
 // --- Test helpers ---
 
@@ -88,6 +85,8 @@ static std::unique_ptr<TestGenerator> makeGen(const std::string& name = "TestGen
 {
     return std::make_unique<TestGenerator>(name, latency);
 }
+
+} // anonymous namespace
 
 // ═══════════════════════════════════════════════════════════════════
 // Construction & Identity
@@ -326,7 +325,7 @@ TEST_CASE("Source: outputBus defaults to nullptr")
 TEST_CASE("Source: routeTo sets output bus")
 {
     Source src("S", makeGen());
-    Bus dummyBus;
+    Bus dummyBus("dummy");
     src.routeTo(&dummyBus);
     CHECK(src.getOutputBus() == &dummyBus);
 }
@@ -334,7 +333,7 @@ TEST_CASE("Source: routeTo sets output bus")
 TEST_CASE("Source: routeTo nullptr is a no-op")
 {
     Source src("S", makeGen());
-    Bus dummyBus;
+    Bus dummyBus("dummy");
     src.routeTo(&dummyBus);
     src.routeTo(nullptr);
     CHECK(src.getOutputBus() == &dummyBus);  // unchanged
@@ -343,7 +342,7 @@ TEST_CASE("Source: routeTo nullptr is a no-op")
 TEST_CASE("Source: routeTo changes output bus")
 {
     Source src("S", makeGen());
-    Bus bus1, bus2;
+    Bus bus1("b1"), bus2("b2");
     src.routeTo(&bus1);
     CHECK(src.getOutputBus() == &bus1);
     src.routeTo(&bus2);
@@ -363,7 +362,7 @@ TEST_CASE("Source: no sends by default")
 TEST_CASE("Source: addSend returns unique monotonic IDs")
 {
     Source src("S", makeGen());
-    Bus bus1, bus2;
+    Bus bus1("b1"), bus2("b2");
     int id1 = src.addSend(&bus1, -6.0f);
     int id2 = src.addSend(&bus2, -3.0f);
 
@@ -374,7 +373,7 @@ TEST_CASE("Source: addSend returns unique monotonic IDs")
 TEST_CASE("Source: addSend stores correct data")
 {
     Source src("S", makeGen());
-    Bus bus;
+    Bus bus("b");
     int id = src.addSend(&bus, -6.0f, SendTap::preFader);
 
     auto sends = src.getSends();
@@ -388,7 +387,7 @@ TEST_CASE("Source: addSend stores correct data")
 TEST_CASE("Source: addSend defaults to postFader")
 {
     Source src("S", makeGen());
-    Bus bus;
+    Bus bus("b");
     src.addSend(&bus, -6.0f);
 
     auto sends = src.getSends();
@@ -407,7 +406,7 @@ TEST_CASE("Source: addSend with nullptr bus returns -1")
 TEST_CASE("Source: removeSend removes by ID")
 {
     Source src("S", makeGen());
-    Bus bus;
+    Bus bus("b");
     int id1 = src.addSend(&bus, -6.0f);
     int id2 = src.addSend(&bus, -3.0f);
 
@@ -426,7 +425,7 @@ TEST_CASE("Source: removeSend with unknown ID returns false")
 TEST_CASE("Source: setSendLevel updates existing send")
 {
     Source src("S", makeGen());
-    Bus bus;
+    Bus bus("b");
     int id = src.addSend(&bus, -6.0f);
 
     src.setSendLevel(id, -12.0f);
@@ -439,7 +438,7 @@ TEST_CASE("Source: setSendLevel updates existing send")
 TEST_CASE("Source: setSendLevel with unknown ID is a no-op")
 {
     Source src("S", makeGen());
-    Bus bus;
+    Bus bus("b");
     int id = src.addSend(&bus, -6.0f);
     src.setSendLevel(999, -12.0f);
 
@@ -451,7 +450,7 @@ TEST_CASE("Source: setSendLevel with unknown ID is a no-op")
 TEST_CASE("Source: setSendTap updates existing send")
 {
     Source src("S", makeGen());
-    Bus bus;
+    Bus bus("b");
     int id = src.addSend(&bus, -6.0f, SendTap::postFader);
 
     src.setSendTap(id, SendTap::preFader);
@@ -464,7 +463,7 @@ TEST_CASE("Source: setSendTap updates existing send")
 TEST_CASE("Source: setSendTap with unknown ID is a no-op")
 {
     Source src("S", makeGen());
-    Bus bus;
+    Bus bus("b");
     src.addSend(&bus, -6.0f, SendTap::postFader);
     src.setSendTap(999, SendTap::preFader);
 
@@ -475,7 +474,7 @@ TEST_CASE("Source: setSendTap with unknown ID is a no-op")
 TEST_CASE("Source: send IDs are never reused after removal")
 {
     Source src("S", makeGen());
-    Bus bus;
+    Bus bus("b");
     int id1 = src.addSend(&bus, -6.0f);
     src.removeSend(id1);
     int id2 = src.addSend(&bus, -3.0f);
@@ -678,12 +677,12 @@ TEST_CASE("Source: full channel strip workflow")
     CHECK(src.getPan() == Approx(-0.3f));
 
     // Bus routing
-    Bus masterBus;
+    Bus masterBus("master");
     src.routeTo(&masterBus);
     CHECK(src.getOutputBus() == &masterBus);
 
     // Sends
-    Bus reverbBus, monitorBus;
+    Bus reverbBus("reverb"), monitorBus("monitor");
     int sendReverb = src.addSend(&reverbBus, -6.0f);
     int sendMonitor = src.addSend(&monitorBus, 0.0f, SendTap::preFader);
     CHECK(src.getSends().size() == 2);

@@ -4,6 +4,8 @@
 
 using namespace squeeze;
 
+namespace {
+
 // --- Local test helper: TrackingProcessor ---
 // Records lifecycle calls and has configurable latency.
 
@@ -47,6 +49,8 @@ static std::unique_ptr<TrackingProcessor> makeTracker(const std::string& name, i
 {
     return std::make_unique<TrackingProcessor>(name, latency);
 }
+
+} // anonymous namespace
 
 // ═══════════════════════════════════════════════════════════════════
 // Construction & Default State
