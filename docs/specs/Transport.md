@@ -214,7 +214,6 @@ advance(int numSamples):
 
     if (state_ != playing || numSamples <= 0) return;
 
-    blockStartBeats_ = getPositionInBeats();
     positionInSamples_ += numSamples;
 
     if (looping_ && loopEndSamples_ > loopStartSamples_
