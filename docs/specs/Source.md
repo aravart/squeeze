@@ -157,20 +157,17 @@ private:
 
 ## Processing
 
-Source processing produces the post-chain audio. The Engine orchestrates the full channel strip pipeline:
+Source processing produces the post-chain audio. The Engine orchestrates the full channel strip pipeline (see Engine spec, `processSubBlock` for the definitive pseudocode):
 
 ```
 Engine processing for each source:
 
     if source.isBypassed():
         buffer.clear()
-        wasBypassed = true
-        return
+        continue
 
-    if wasBypassed:
-        source.generator->reset()
-        source.chain.resetAll()       // calls reset() on each processor
-        wasBypassed = false
+    // On bypass→active transition:
+    //   reset generator and all chain processors (via wasBypassed_ on each Processor)
 
     source.process(buffer, midi)     ← generator → chain (in-place)
 
@@ -190,22 +187,23 @@ Engine processing for each source:
     outputBus.accumulate(buffer)
 ```
 
-`Source::process()` itself only runs the generator and chain:
+`Source::process()` runs the generator and chain. The chain is iterated via the snapshot's processor array (not by calling `Chain::process()` — see Chain spec):
 
 ```
 process(buffer, midi):
     generator->process(buffer, midi)    // generate audio (in-place)
-    chain.process(buffer, midi)         // insert effects (in-place)
+    // Engine iterates snapshot.chainProcessors with bypass tracking
 ```
 
 The Engine is responsible for:
 1. Providing the buffer (pre-allocated in the snapshot)
 2. Providing the MIDI buffer (from MidiRouter, filtered by this source's MidiAssignment)
-3. Checking bypass state
-4. Tapping pre-fader sends after `process()` returns
-5. Applying gain and pan
-6. Tapping post-fader sends
-7. Adding the buffer to the output bus's input accumulator
+3. Checking bypass state and calling reset() on bypass→active transitions
+4. Iterating chain processors (via snapshot array) with per-processor bypass tracking
+5. Tapping pre-fader sends
+6. Applying gain and pan
+7. Tapping post-fader sends
+8. Adding the buffer to the output bus's input accumulator
 
 ## Bus Routing
 
@@ -257,7 +255,7 @@ vocal.gain = 0.0        # "mute" — silent but still processing
 
 ## Bypass
 
-When bypassed, the source skips all processing (generator and chain). The buffer is cleared to silence. Bypassed sources do not feed sends. **On un-bypass, the Engine calls `reset()` on the generator and all chain processors** to clear stale internal state. The Engine detects the bypassed→active transition by tracking per-source state across blocks on the audio thread.
+When bypassed, the source skips all processing (generator and chain). The buffer is cleared to silence. Bypassed sources do not feed sends. **On un-bypass, the Engine calls `reset()` on the generator and all chain processors** to clear stale internal state. The Engine tracks per-source bypass state across blocks on the audio thread (separate from per-processor `wasBypassed_` tracking).
 
 ```python
 vocal.bypassed = True   # no processing, saves CPU, sends get nothing
@@ -338,7 +336,7 @@ Gain and pan have zero latency. This is used by PDC to compute compensation dela
 - `setSendLevel()` with unknown send ID: no-op
 - `setSendTap()` with unknown send ID: no-op
 - `setGenerator()` with null processor: no-op, logged at warn level
-- `setGenerator()` with a plugin that fails to load: returns error, old generator is preserved
+- `sq_source_set_generator()` with a plugin that fails to load: FFI returns error, old generator is preserved
 - `setGain()` with negative value: clamped to 0.0
 - `setPan()` outside [-1.0, 1.0]: clamped
 

@@ -11,7 +11,7 @@
 
 ## Overview
 
-BufferLibrary is the central registry for audio buffers. It loads audio files using JUCE's format readers, creates empty buffers for recording, and manages their lifetimes with stable integer IDs. It has no Engine dependency — it is a pure buffer management component. The FFI layer orchestrates interactions between BufferLibrary and Engine (e.g., assigning a buffer to a SamplerNode).
+BufferLibrary is the central registry for audio buffers. It loads audio files using JUCE's format readers, creates empty buffers for recording, and manages their lifetimes with stable integer IDs. It has no Engine dependency — it is a pure buffer management component. The FFI layer orchestrates interactions between BufferLibrary and Engine (e.g., assigning a buffer to a sampler Source).
 
 ## Interface
 
@@ -85,15 +85,16 @@ info = engine.buffer_info(buf_id) # BufferInfo namedtuple
 
 ### FFI Orchestration
 
-Buffer assignment to nodes is orchestrated by the FFI layer:
+Buffer assignment to sources is orchestrated by the FFI layer:
 
 ```cpp
-bool sq_assign_buffer(SqEngine handle, int node_id, int buffer_id, char** error) {
+bool sq_assign_buffer(SqEngine handle, SqSource src, int buffer_id, char** error) {
     Buffer* buf = handle->bufferLibrary.getBuffer(buffer_id);
     if (!buf) { /* set error, return false */ }
-    Node* node = handle->engine.getNode(node_id);
-    if (!node) { /* set error, return false */ }
-    // node->setBuffer(buf) or equivalent via parameter system
+    Source* source = static_cast<Source*>(src);
+    Processor* gen = source->getGenerator();
+    if (!gen) { /* set error, return false */ }
+    // gen->setBuffer(buf) or equivalent via parameter system
     return true;
 }
 ```
@@ -123,10 +124,10 @@ bool sq_assign_buffer(SqEngine handle, int node_id, int buffer_id, char** error)
 
 ## Does NOT Handle
 
-- **Assigning buffers to nodes** — FFI layer orchestrates (get Buffer*, pass to node)
+- **Assigning buffers to sources** — FFI layer orchestrates (get Buffer*, pass to generator)
 - **Deferred deletion timing** — caller decides when to destroy the returned `unique_ptr`
 - **Buffer playback or DSP** — SamplerNode / SamplerVoice
-- **Sample rate conversion** — stores at native rate; playback nodes handle rate matching
+- **Sample rate conversion** — stores at native rate; sampler processors handle rate matching
 - **Disk streaming** — entire file loaded to RAM
 - **Buffer editing** — buffers are immutable after creation (recording uses atomic write position in Buffer)
 
@@ -153,7 +154,7 @@ All BufferLibrary methods are called from the control thread. The FFI layer seri
 
 ```c
 char* error = NULL;
-SqEngine engine = sq_engine_create(&error);
+SqEngine engine = sq_create(44100.0, 512, &error);
 
 // Load a sample
 int kick = sq_load_buffer(engine, "/samples/kick.wav", &error);
@@ -175,7 +176,7 @@ sq_free_id_name_list(bufs);
 // Remove a buffer
 sq_remove_buffer(engine, kick);
 
-sq_engine_destroy(engine);
+sq_destroy(engine);
 ```
 
 ### Python

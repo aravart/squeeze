@@ -18,7 +18,7 @@ class PluginEditorWindow : public juce::DocumentWindow {
 public:
     PluginEditorWindow(const juce::String& name,
                        juce::AudioProcessorEditor* editor,
-                       int nodeId,
+                       int procHandle,
                        std::function<void(int)> onClose);
 
     void closeButtonPressed() override;
@@ -32,10 +32,10 @@ public:
 ```cpp
 class EditorManager {
 public:
-    bool open(Engine& engine, int nodeId, std::string& error);
-    bool close(int nodeId, std::string& error);
+    bool open(Engine& engine, int procHandle, std::string& error);
+    bool close(int procHandle, std::string& error);
     void closeAll();
-    bool hasEditor(int nodeId) const;
+    bool hasEditor(int procHandle) const;
 
 private:
     static bool runOnMessageThread(std::function<void()> fn);
@@ -46,9 +46,9 @@ private:
 ### C ABI (`squeeze_ffi.h`)
 
 ```c
-bool sq_open_editor(SqEngine engine, int node_id, char** error);
-bool sq_close_editor(SqEngine engine, int node_id, char** error);
-bool sq_has_editor(SqEngine engine, int node_id);
+bool sq_editor_open(SqEngine engine, SqProc proc, char** error);
+bool sq_editor_close(SqEngine engine, SqProc proc, char** error);
+bool sq_editor_has(SqEngine engine, SqProc proc);
 void sq_process_events(int timeout_ms);
 ```
 
@@ -61,27 +61,27 @@ class Processor:
     @property
     def editor_open(self) -> bool:
 
-class Engine:
+class Squeeze:
     @staticmethod
     def process_events(timeout_ms: int = 0) -> None:
 ```
 
 ## Invariants
 
-- At most one editor window per node ID at any time
+- At most one editor window per processor handle at any time
 - Closing the window's close button removes the window from the map (deferred via `callAsync`)
-- `closeAll()` is called during `sq_engine_destroy` before the engine is deleted
+- `closeAll()` is called during `sq_destroy` before the engine is deleted
 - The core library (`squeeze_core`) has zero GUI dependencies — `EditorManager` and `PluginEditorWindow` are compiled only into `squeeze_ffi`
 - `runOnMessageThread` executes synchronously if already on the message thread, otherwise dispatches via `callAsync` + `WaitableEvent`
 
 ## Error Conditions
 
-- `open` with non-existent node ID: returns false, sets error "Node N not found"
-- `open` with a node that is not a PluginNode: returns false, sets error "Node N is not a plugin"
+- `open` with unknown processor handle: returns false, sets error "Processor not found"
+- `open` with a processor that is not a PluginProcessor: returns false, sets error "Processor is not a plugin"
 - `open` with a plugin that has no editor: returns false, sets error "Plugin has no editor"
-- `open` when editor already open for that node: returns false, sets error "Editor already open for node N"
+- `open` when editor already open for that processor: returns false, sets error "Editor already open"
 - `open` when GUI dispatch times out (5s): returns false, sets error "GUI unavailable (timeout)"
-- `close` when no editor is open for that node: returns false, sets error "No editor open for node N"
+- `close` when no editor is open for that processor: returns false, sets error "No editor open"
 - `close` when GUI dispatch times out: returns false, sets error "GUI unavailable (timeout)"
 
 ## Does NOT Handle
@@ -93,8 +93,8 @@ class Engine:
 
 ## Dependencies
 
-- `Engine` — for `getNode()` and `getNodeName()`
-- `PluginNode` — for `getProcessor()` and `dynamic_cast` check
+- `Engine` — for processor handle lookup via `processorRegistry_`
+- `PluginProcessor` — for `getProcessor()` and `dynamic_cast` check
 - `juce::AudioProcessor` — for `hasEditor()` and `createEditorIfNeeded()`
 - `juce::DocumentWindow` — window hosting
 - `juce::MessageManager` — thread dispatch
@@ -104,7 +104,7 @@ class Engine:
 - `open()`, `close()`, `hasEditor()` are called from the FFI/control thread
 - All GUI object creation/destruction is dispatched to the message thread via `runOnMessageThread()`
 - `runOnMessageThread()` uses `callAsync` + `WaitableEvent` with a 5-second timeout
-- Lock ordering: `open()` calls `engine.getNode()` first (acquires+releases `controlMutex_`), THEN dispatches to message thread. Never holds both locks simultaneously.
+- Lock ordering: `open()` looks up the processor first (acquires+releases `controlMutex_`), THEN dispatches to message thread. Never holds both locks simultaneously.
 - `closeButtonPressed()` uses `callAsync` to defer map erasure, avoiding destruction during callback
 
 ## Example Usage

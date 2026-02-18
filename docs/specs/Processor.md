@@ -88,6 +88,9 @@ public:
     int getHandle() const { return handle_; }
     void setHandle(int h) { handle_ = h; }
 
+    // --- Audio-thread bypass tracking (written by Engine, not by Processor) ---
+    bool wasBypassed_ = false;  // audio-thread only, not atomic
+
 private:
     std::string name_;
     int handle_ = -1;
@@ -107,7 +110,7 @@ construct → prepare() → [process()...] → release() → destroy
 ```
 
 - `prepare(sampleRate, blockSize)` — called on the control thread before the first `process()`. Store sample rate and block size, allocate any pre-sized state. Must handle being called multiple times (e.g., device restart).
-- `reset()` — clears internal processing state (filter histories, delay lines, gain reduction, etc.) without the full `prepare()`/`release()` cycle. Called by Chain on the audio thread when un-bypassing a processor so that stale state doesn't produce artifacts. **Must be RT-safe** (same constraint as `process()`). Parameters and configuration are preserved — only transient processing state is cleared. Default: no-op.
+- `reset()` — clears internal processing state (filter histories, delay lines, gain reduction, etc.) without the full `prepare()`/`release()` cycle. Called by the Engine on the audio thread when un-bypassing a processor so that stale state doesn't produce artifacts. **Must be RT-safe** (same constraint as `process()`). Parameters and configuration are preserved — only transient processing state is cleared. Default: no-op.
 - `process(buffer)` — called on the audio thread. **Must be RT-safe.** Processes audio in-place: reads from the buffer, writes results back to the same buffer. Called repeatedly between `prepare()` and `release()`.
 - `process(buffer, midi)` — variant for MIDI-receiving processors. Default implementation ignores MIDI and delegates to `process(buffer)`.
 - `release()` — called on the control thread before destruction or device shutdown. Free resources. Default: no-op.
@@ -160,12 +163,12 @@ The name (set at construction) is for display/debugging. Multiple processors may
 
 ## Bypass
 
-A processor can be bypassed, causing audio to pass through unchanged. Bypass is a flag on the Processor base class — the **Chain** reads the flag during iteration and skips bypassed processors entirely (no virtual call overhead).
+A processor can be bypassed, causing audio to pass through unchanged. Bypass is a flag on the Processor base class — the **Engine** reads the flag during snapshot iteration and skips bypassed processors entirely (no virtual call overhead).
 
 - `setBypassed(bool)` — control thread. Atomic store.
 - `isBypassed()` — any thread. Atomic load.
 - Default: not bypassed (`false`).
-- **On un-bypass, Chain calls `reset()` before resuming processing.** This clears stale internal state (old reverb tails, delay line contents, compressor gain reduction) that would otherwise produce artifacts. Parameters are preserved. Chain detects the bypassed→active transition by tracking per-processor bypass state across blocks (audio thread only — no extra atomics needed).
+- **Bypass transition tracking** uses `wasBypassed_` (a non-atomic `bool` on the Processor, written only by the audio thread). Each block, the Engine compares `isBypassed()` against `wasBypassed_`. On a bypassed→active transition, the Engine calls `reset()` before the first `process()` call to clear stale internal state. Because `wasBypassed_` lives on the Processor object itself (not in the snapshot), it naturally survives snapshot swaps with no transfer logic.
 - **Latency still counts when bypassed.** `getLatencySamples()` returns the same value regardless of bypass state. This avoids audible glitches from PDC recalculation when toggling bypass.
 - Bypass is not mute. A bypassed processor passes audio through; a muted source/bus produces silence.
 - Bypass applies to insert chain processors. It does not apply to Source generators — use `Source.muted` to silence a source.
@@ -192,7 +195,7 @@ A processor can be bypassed, causing audio to pass through unchanged. Bypass is 
 
 - Buffer allocation (Engine/Chain provides buffers)
 - Audio routing (Source and Bus handle routing)
-- Sequential chaining (Chain handles processor ordering and bypass enforcement)
+- Sequential chaining (Chain manages ordering; Engine iterates snapshot and enforces bypass)
 - Thread safety of control-thread mutations (Engine's controlMutex_)
 - Deferred deletion (Engine manages lifecycle)
 - RT-safe parameter dispatch optimization (Engine/EventScheduler)
@@ -208,7 +211,7 @@ A processor can be bypassed, causing audio to pass through unchanged. Bypass is 
 |--------|--------|-------|
 | Constructor | Control | Sets name |
 | `prepare()` | Control | Called with controlMutex_ held |
-| `reset()` | Audio | Called by Chain on un-bypass; must be RT-safe |
+| `reset()` | Audio | Called by Engine on un-bypass; must be RT-safe |
 | `release()` | Control | Called with controlMutex_ held |
 | `process()` | Audio | Must be RT-safe |
 | `getParameter()` | Control | Audio-thread param reads happen inside `process()` via internal state |

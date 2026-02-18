@@ -51,7 +51,7 @@ public:
     bool captureAudio = false;
     std::vector<std::vector<float>> capturedAudio; // [channel][sample]
 
-    int blockIndex_ = 0;
+    int blockIndex = 0;
 
     // --- Processor interface ---
 
@@ -105,36 +105,36 @@ No-op.
 ### `process(buffer)`
 
 Audio-only variant:
-1. Record a `ProcessCall{blockIndex_, buffer.getNumSamples()}` into `processCalls`.
+1. Record a `ProcessCall{blockIndex, buffer.getNumSamples()}` into `processCalls`.
 2. If `captureAudio` is true: for each channel, append samples from buffer to `capturedAudio[channel]`.
 3. **Audio passes through unchanged** (in-place, no modification).
-4. Increment `blockIndex_`.
+4. Increment `blockIndex`.
 
 ### `process(buffer, midi)`
 
 MIDI variant:
-1. Record a `ProcessCall{blockIndex_, buffer.getNumSamples()}` into `processCalls`.
-2. Iterate `midi`: for each MIDI message, record `MidiEvent{samplePosition, blockIndex_, message}` into `midiEvents`.
+1. Record a `ProcessCall{blockIndex, buffer.getNumSamples()}` into `processCalls`.
+2. Iterate `midi`: for each MIDI message, record `MidiEvent{samplePosition, blockIndex, message}` into `midiEvents`.
 3. If `captureAudio` is true: for each channel, append samples from buffer to `capturedAudio[channel]`.
 4. **Audio passes through unchanged** (in-place, no modification).
-5. Increment `blockIndex_`.
+5. Increment `blockIndex`.
 
 ### `setParameter(name, value)`
 
-1. Record `ParamChange{name, value, callIndex, blockIndex_}` into `paramChanges`.
+1. Record `ParamChange{name, value, callIndex, blockIndex}` into `paramChanges`.
 2. Store `value` in an internal map for `getParameter` retrieval.
 
 ### `clearRecordings()`
 
-Clears `midiEvents`, `paramChanges`, `processCalls`, `capturedAudio`. Resets `blockIndex_` to 0 and the `setParameter` call counter to 0. Does not reset stored parameter values.
+Clears `midiEvents`, `paramChanges`, `processCalls`, `capturedAudio`. Resets `blockIndex` to 0 and the `setParameter` call counter to 0. Does not reset stored parameter values.
 
 ## Invariants
 
 - Audio passthrough is bit-exact: buffer is not modified
-- Every `process()` call increments `blockIndex_` exactly once
+- Every `process()` call increments `blockIndex` exactly once
 - `MidiEvent.sampleOffset` faithfully reflects `juce::MidiMessageMetadata::samplePosition`
 - `ParamChange.callIndex` is strictly increasing across all `setParameter` calls
-- `ParamChange.blockIndex` matches the `blockIndex_` at the time `setParameter` was called
+- `ParamChange.blockIndex` matches the `blockIndex` at the time `setParameter` was called
 
 ## Error Conditions
 

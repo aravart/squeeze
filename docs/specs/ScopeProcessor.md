@@ -7,6 +7,10 @@
 - Provides time-domain waveform data (oscilloscope)
 - Provides frequency-domain spectrum data (FFT magnitudes)
 
+## Overview
+
+ScopeProcessor is a Processor subclass that acts as a transparent audio tap. Inserted into any Source or Bus chain, it passes audio through unmodified while capturing samples into a lock-free ring buffer. The control/UI thread can then read waveform (time-domain) and spectrum (frequency-domain) data without blocking the audio thread. This is the data provider for oscilloscopes, spectrum analyzers, and other visualization widgets.
+
 ## Interface
 
 ### C++ (`ScopeProcessor : Processor`)
@@ -46,31 +50,29 @@ int      sq_scope_get_spectrum(SqEngine engine, SqScope scope, float* out, int m
 int      sq_scope_get_buffer_size(SqEngine engine, SqScope scope);
 ```
 
-`sq_add_scope` creates the ScopeProcessor but does not insert it into any chain. The caller uses `sq_source_append` / `sq_bus_append` (or insert variants) to place it. `sq_remove_scope` removes and destroys it.
+`sq_add_scope` creates the ScopeProcessor but does not insert it into any chain. The caller uses `sq_source_append_proc` / `sq_bus_append_proc` to place a pre-created processor into a chain (see note below). `sq_remove_scope` removes and destroys it.
 
-### Python (low-level)
+**Chain insertion for built-in processors:** The standard `sq_source_append` takes a `plugin_path` string and creates a PluginProcessor. Built-in processors like ScopeProcessor and RecordingProcessor are created via their own `sq_add_*` functions and inserted via `sq_source_append_proc` / `sq_bus_append_proc`, which accept an existing `SqProc` handle:
 
-```python
-class Squeeze:
-    def add_scope(self, buffer_size: int = 2048) -> int: ...
-    def remove_scope(self, scope: int) -> None: ...
-    def scope_get_waveform(self, scope: int, max_samples: int) -> list[float]: ...
-    def scope_get_spectrum(self, scope: int, max_bins: int) -> list[float]: ...
-    def scope_get_buffer_size(self, scope: int) -> int: ...
+```c
+SqProc sq_source_append_proc(SqEngine engine, SqSource src, SqProc proc);
+SqProc sq_bus_append_proc(SqEngine engine, SqBus bus, SqProc proc);
 ```
 
-### Python (high-level)
+### Python
 
 ```python
 class Scope:
     """Read-only audio analysis tap. Insert into any chain."""
-    buffer_size: int          # read-only, set at construction
+
+    @property
+    def buffer_size(self) -> int: ...
 
     def waveform(self, max_samples: int | None = None) -> list[float]: ...
     def spectrum(self, max_bins: int | None = None) -> list[float]: ...
 ```
 
-Created via `engine.add_scope(buffer_size=2048)`, inserted via `source.chain.append(scope)` or `bus.chain.append(scope)`.
+Created via `s.add_scope(buffer_size=2048)`, inserted via `source.chain.append(scope)` or `bus.chain.append(scope)`. The Chain `append`/`insert` methods accept either a plugin path string or a pre-created Processor/Scope object.
 
 ## Invariants
 
@@ -117,18 +119,18 @@ Created via `engine.add_scope(buffer_size=2048)`, inserted via `source.chain.app
 ## Example Usage
 
 ```python
-from squeeze import Engine
+from squeeze import Squeeze
 
-engine = Engine(sample_rate=44100, block_size=128)
+s = Squeeze(sample_rate=44100, block_size=128)
 
-synth = engine.add_source("Lead", plugin="Diva.vst3")
-synth.route_to(engine.master)
+synth = s.add_source("Lead", plugin="Diva.vst3")
+synth.route_to(s.master)
 
 # Add scope to the source's insert chain (post-effects)
-scope = engine.add_scope(buffer_size=2048)
+scope = s.add_scope(buffer_size=2048)
 synth.chain.append(scope)
 
-engine.start()
+s.start()
 
 # Poll from control thread / UI loop
 waveform = scope.waveform()          # 2048 floats, time-domain

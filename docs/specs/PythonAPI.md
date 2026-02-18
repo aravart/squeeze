@@ -191,14 +191,40 @@ class Source:
     def generator(self) -> Processor:
         """The generator processor (synth, sampler, etc.)."""
 
+    # --- Gain and Pan ---
+
+    @property
+    def gain(self) -> float:
+        """Linear gain (0.0–1.0+). Default 1.0 (unity)."""
+
+    @gain.setter
+    def gain(self, value: float) -> None: ...
+
+    @property
+    def pan(self) -> float:
+        """Stereo pan (-1.0 left to 1.0 right). Default 0.0 (center)."""
+
+    @pan.setter
+    def pan(self, value: float) -> None: ...
+
+    # --- Bypass ---
+
+    @property
+    def bypassed(self) -> bool: ...
+
+    @bypassed.setter
+    def bypassed(self, value: bool) -> None: ...
+
     # --- Routing ---
 
     def route_to(self, bus: "Bus") -> None:
         """Route this source's output to a bus."""
 
-    def send(self, bus: "Bus", *, level: float = 0.0) -> int:
+    def send(self, bus: "Bus", *, level: float = 0.0,
+             tap: str = "post") -> int:
         """Add a send to a bus. Returns send ID.
         Level is in dB (0.0 = unity).
+        tap: "pre" (pre-fader) or "post" (post-fader, default).
         """
 
     def remove_send(self, send_id: int) -> None:
@@ -206,6 +232,9 @@ class Source:
 
     def set_send_level(self, send_id: int, level: float) -> None:
         """Change a send's level in dB."""
+
+    def set_send_tap(self, send_id: int, tap: str) -> None:
+        """Change a send's tap point: "pre" or "post"."""
 
     # --- MIDI ---
 
@@ -248,7 +277,7 @@ class Source:
         return f"Source({self.name!r})"
 
     def __eq__(self, other) -> bool:
-        if isinstance(other, Processor):
+        if isinstance(other, Source):
             return self._handle == other._handle
         return NotImplemented
 
@@ -282,19 +311,49 @@ class Bus:
     def chain(self) -> Chain:
         """The insert effects chain."""
 
+    # --- Gain and Pan ---
+
+    @property
+    def gain(self) -> float:
+        """Linear gain (0.0–1.0+). Default 1.0 (unity)."""
+
+    @gain.setter
+    def gain(self, value: float) -> None: ...
+
+    @property
+    def pan(self) -> float:
+        """Stereo pan (-1.0 left to 1.0 right). Default 0.0 (center)."""
+
+    @pan.setter
+    def pan(self, value: float) -> None: ...
+
+    # --- Bypass ---
+
+    @property
+    def bypassed(self) -> bool: ...
+
+    @bypassed.setter
+    def bypassed(self, value: bool) -> None: ...
+
     # --- Routing ---
 
     def route_to(self, bus: "Bus") -> None:
         """Route this bus's output to another bus."""
 
-    def send(self, bus: "Bus", *, level: float = 0.0) -> int:
-        """Add a send to a bus. Returns send ID."""
+    def send(self, bus: "Bus", *, level: float = 0.0,
+             tap: str = "post") -> int:
+        """Add a send to a bus. Returns send ID.
+        tap: "pre" (pre-fader) or "post" (post-fader, default).
+        """
 
     def remove_send(self, send_id: int) -> None:
         """Remove a send by ID."""
 
     def set_send_level(self, send_id: int, level: float) -> None:
         """Change a send's level in dB."""
+
+    def set_send_tap(self, send_id: int, tap: str) -> None:
+        """Change a send's tap point: "pre" or "post"."""
 
     # --- Metering ---
 
@@ -364,6 +423,9 @@ class Transport:
     def set_time_signature(self, numerator: int, denominator: int) -> None: ...
 
     def set_loop(self, start: float, end: float) -> None: ...
+
+    @property
+    def looping(self) -> bool: ...
 
     @looping.setter
     def looping(self, enabled: bool) -> None: ...
@@ -484,6 +546,19 @@ class Squeeze:
     def midi_cc_map(self, *, device: str, cc: int,
                     target: Processor, param: str) -> None:
         """Map a MIDI CC to a processor parameter."""
+
+    # --- Batching ---
+
+    def batch(self):
+        """Context manager that defers snapshot rebuilds until exit.
+
+        Usage:
+            with s.batch():
+                synth = s.add_source("Lead", plugin="Serum.vst3")
+                synth.chain.append("EQ.vst3")
+                synth.route_to(lead_bus)
+            # single snapshot rebuild here
+        """
 
     # --- PDC ---
 

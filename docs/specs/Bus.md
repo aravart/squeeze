@@ -89,10 +89,6 @@ public:
     void updateMetering(const juce::AudioBuffer<float>& buffer, int numSamples);
     void resetMetering();
 
-    // --- Processing (audio thread, RT-safe) ---
-    // Chain processing only. Engine handles summing, gain/pan, and sends.
-    void process(juce::AudioBuffer<float>& buffer);
-
     // --- Latency ---
     int getLatencySamples() const;
 
@@ -118,7 +114,7 @@ private:
 
 ## Processing
 
-Bus processing runs the insert chain on the summed input. The Engine orchestrates the full pipeline:
+Bus processing is orchestrated by the Engine (see Engine spec, `processSubBlock` for the definitive pseudocode):
 
 ```
 Engine processing for each bus (in dependency order):
@@ -126,15 +122,13 @@ Engine processing for each bus (in dependency order):
     if bus.isBypassed():
         buffer.clear()
         bus.resetMetering()
-        wasBypassed = true
-        return
+        continue
 
-    if wasBypassed:
-        bus.chain.resetAll()          // calls reset() on each processor
-        wasBypassed = false
+    // On bypass→active transition:
+    //   reset all chain processors (via wasBypassed_ on each Processor)
 
     // buffer already contains the sum of all inputs (Engine handles accumulation)
-    bus.process(buffer)              ← chain.process(buffer)
+    // Engine iterates snapshot.busChainProcessors with per-processor bypass tracking
 
     // Pre-fader send taps
     for send in bus.sends where send.tap == preFader:
@@ -155,17 +149,12 @@ Engine processing for each bus (in dependency order):
         outputBus.accumulate(buffer)
 ```
 
-`Bus::process()` itself only runs the chain:
-
-```
-process(buffer):
-    chain.process(buffer)       // insert effects, in-place
-```
+The chain is iterated via the snapshot's processor array (not by calling `Chain::process()` — see Chain spec). The Engine handles all audio-thread processing.
 
 The **Engine** is responsible for:
 1. Pre-allocating the bus buffer in the snapshot
 2. Accumulating source outputs and upstream bus outputs into the bus buffer (summing)
-3. Calling `bus.process()` for chain processing
+3. Iterating chain processors (via snapshot array) with per-processor bypass tracking
 4. Tapping pre-fader sends
 5. Applying gain and pan
 6. Updating metering
@@ -285,7 +274,6 @@ Gain and pan have zero latency. PDC uses this, along with Source latencies, to c
 - Master bus does not route to another bus
 - A bus routes to exactly one downstream bus (or is the Master)
 - Bus buffers are pre-allocated in the snapshot — no allocation on the audio thread
-- `process()` is RT-safe
 - Metering values are atomic — safe to read from any thread
 - Metering reflects post gain/pan levels
 - Send IDs are monotonically increasing, never reused
@@ -335,7 +323,6 @@ Gain and pan have zero latency. PDC uses this, along with Source latencies, to c
 |--------|--------|-------|
 | Constructor / Destructor | Control | |
 | `prepare()` / `release()` | Control | Forwarded to chain |
-| `process()` | Audio | RT-safe, called via snapshot |
 | `setGain()` / `setPan()` | Control | Atomic store |
 | `getGain()` / `getPan()` | Any | Atomic load |
 | `routeTo()` | Control | Under Engine's controlMutex_, triggers snapshot rebuild |

@@ -3,16 +3,17 @@
 ## Responsibilities
 
 - Own an ordered list of Processors
-- Process audio sequentially through all processors in-place on the same buffer
 - Support structural modification (append, insert, remove, move) on the control thread
-- Swap the active processor array atomically at the next block boundary for glitch-free live changes
+- Provide the processor array to the Engine for snapshot building
 - Report total latency as the sum of all processor latencies
 
 ## Overview
 
-Chain is the **insert rack**. It owns an ordered sequence of Processors and calls each one sequentially on the same audio buffer — zero-copy serial processing. Every Source and every Bus owns a Chain for insert effects.
+Chain is the **insert rack**. It owns an ordered sequence of Processors. Every Source and every Bus owns a Chain for insert effects.
 
-Structural modifications (adding, removing, reordering processors) happen on the control thread. The Chain builds a new processor array internally, which is swapped atomically at the next block boundary via the Engine's snapshot mechanism. The audio thread never sees a partially-modified chain.
+Chain is a **control-thread-only** container. The audio thread never accesses the Chain directly. Instead, during snapshot build, the Engine calls `getProcessorArray()` to copy the current processor pointer list into the snapshot. The audio thread iterates the snapshot's array, calling each processor sequentially on the same buffer — zero-copy serial processing.
+
+Structural modifications (adding, removing, reordering processors) happen on the control thread and are invisible to the audio thread until the next snapshot swap.
 
 ## Interface
 
@@ -34,18 +35,12 @@ public:
     void prepare(double sampleRate, int blockSize);
     void release();
 
-    // --- Processing (audio thread, RT-safe) ---
-    void process(juce::AudioBuffer<float>& buffer);
-    void process(juce::AudioBuffer<float>& buffer, const juce::MidiBuffer& midi);
-    void resetAll();  // calls reset() on every processor; used by Engine on source/bus un-bypass
-
     // --- Structural modification (control thread only) ---
-    // All return the processor handle assigned by Engine.
     void append(Processor* p);
     void insert(int index, Processor* p);
-    Processor* remove(int index);
+    std::unique_ptr<Processor> remove(int index);
     void move(int fromIndex, int toIndex);
-    void clear();
+    void clear();  // destroys all processors immediately
 
     // --- Query ---
     int size() const;
@@ -57,13 +52,12 @@ public:
     int getLatencySamples() const;
 
     // --- Snapshot support ---
-    // Returns an immutable copy of the processor pointer array for the snapshot.
-    // The audio thread reads this array — it never accesses the chain directly.
+    // Returns a copy of the processor pointer array for snapshot building.
+    // The audio thread reads the snapshot's copy — it never accesses the Chain.
     std::vector<Processor*> getProcessorArray() const;
 
 private:
     std::vector<std::unique_ptr<Processor>> processors_;
-    std::vector<bool> wasBypassed_;  // per-processor bypass transition tracking (audio thread only)
     double sampleRate_ = 0.0;
     int blockSize_ = 0;
 };
@@ -71,47 +65,17 @@ private:
 } // namespace squeeze
 ```
 
-## Processing
+## Audio-Thread Processing
 
-`process()` calls each processor in sequence on the **same buffer**, skipping bypassed processors:
-
-```
-process(buffer, midi):
-    for i in 0..size():
-        p = processors_[i]
-        bypassed = p->isBypassed()
-
-        if bypassed:
-            wasBypassed_[i] = true
-            continue
-
-        if wasBypassed_[i]:
-            p->reset()
-            wasBypassed_[i] = false
-
-        p->process(buffer, midi)
-```
-
-The audio-only variant is identical but calls `p->process(buffer)`.
-
-This is zero-copy serial processing. Each processor reads from the buffer, modifies it in-place, and the next processor sees the modified result. The buffer's channel count and sample count are unchanged throughout.
+Chain does not have a `process()` method. The audio thread iterates the snapshot's `vector<Processor*>` directly in the Engine's `processBlock()`. This is zero-copy serial processing: each processor reads from the buffer, modifies it in-place, and the next processor sees the modified result.
 
 ### Bypass enforcement
 
-Chain is responsible for enforcing Processor bypass. It tracks per-processor bypass state across blocks (`wasBypassed_[]`, audio thread only — no atomics needed). When a processor transitions from bypassed→active, Chain calls `reset()` on it before the first `process()` call to clear stale internal state (see Processor spec, Bypass section). Bypassed processors are skipped entirely — no virtual call overhead.
+Bypass tracking is per-Processor (see Processor spec, `wasBypassed_`). The Engine reads `isBypassed()` and compares against `wasBypassed_` on each Processor during iteration. When a processor transitions from bypassed→active, the Engine calls `reset()` before the first `process()` call. This state lives on the Processor object itself, so it naturally survives snapshot swaps without any transfer logic.
 
-### `resetAll()`
+### Source/Bus un-bypass
 
-Calls `reset()` on every processor in the chain. Used by the Engine when un-bypassing a Source or Bus to clear all stale chain state at once.
-
-```cpp
-void resetAll() {
-    for (auto& p : processors_)
-        p->reset();
-    // Also reset wasBypassed_ tracking
-    std::fill(wasBypassed_.begin(), wasBypassed_.end(), false);
-}
-```
+When un-bypassing a Source or Bus, the Engine calls `reset()` on the generator and every processor in the chain. This is done by iterating the snapshot's processor array — not by calling a method on Chain.
 
 ## Structural Modification
 
@@ -130,7 +94,7 @@ Insert a processor at the given index. Elements at and after `index` shift right
 
 ### `remove(index)`
 
-Remove and return the processor at `index`. Ownership transfers back to the caller. The caller is responsible for deferred deletion (via Engine's garbage collection).
+Remove and return the processor at `index` as a `unique_ptr`. The caller takes ownership and is responsible for deferred deletion (via Engine's garbage collection).
 
 - If `index` is out of range, returns nullptr.
 
@@ -140,7 +104,7 @@ Move a processor from one position to another within the chain. Other elements s
 
 ### `clear()`
 
-Remove all processors. Ownership transfers to the caller via deferred deletion.
+Remove and destroy all processors immediately. Only safe when no snapshot references the processors (e.g., during shutdown).
 
 ## Latency
 
@@ -157,23 +121,21 @@ The chain's latency is the sum of all its processor latencies. This is used by P
 
 ## Snapshot Integration
 
-The Chain itself is not directly accessed by the audio thread. Instead, during snapshot build, the Engine reads `getProcessorArray()` to get a copy of the current processor pointer list. The snapshot stores this array. The audio thread iterates the snapshot's array, not the Chain's internal vector.
+During snapshot build, the Engine calls `getProcessorArray()` to get a copy of the current processor pointer list. The snapshot stores this `vector<Processor*>`. The audio thread iterates the snapshot's array — it never accesses the Chain.
 
-This means structural modifications to the Chain (append, insert, remove, move) are invisible to the audio thread until the next snapshot swap. The control thread can modify the chain freely while audio is processing.
+Structural modifications (append, insert, remove, move) are invisible to the audio thread until the next snapshot swap. The control thread can modify the Chain freely while audio is processing.
 
 ## Invariants
 
-- `process()` and `resetAll()` are RT-safe: no allocation, no blocking
-- Processors are called in index order (0, 1, 2, ...)
-- Bypassed processors are skipped during `process()`
-- On bypass→active transition, `reset()` is called before the first `process()`
+- Chain is control-thread-only — the audio thread never accesses it
 - The chain owns its processors — they are destroyed when the chain is destroyed (unless removed first)
 - `prepare()` is forwarded to all current processors
 - `release()` is forwarded to all current processors
 - A newly appended/inserted processor is prepared if the chain is already prepared
 - `getLatencySamples()` returns the sum of all processor latencies (>= 0)
 - `size()` returns the current number of processors (>= 0)
-- Structural modifications are control-thread-only — they do not affect the audio thread until the next snapshot swap
+- Structural modifications do not affect the audio thread until the next snapshot swap
+- `remove()` returns a `unique_ptr` — the caller controls when it is destroyed
 
 ## Error Conditions
 
@@ -181,7 +143,6 @@ This means structural modifications to the Chain (append, insert, remove, move) 
 - `remove()` with out-of-range index: returns nullptr
 - `at()` with out-of-range index: returns nullptr
 - `move()` with out-of-range indices: no-op
-- `process()` on an empty chain: no-op (buffer passes through unchanged)
 
 ## Does NOT Handle
 
@@ -202,29 +163,40 @@ This means structural modifications to the Chain (append, insert, remove, move) 
 | Method | Thread | Notes |
 |--------|--------|-------|
 | `prepare()` / `release()` | Control | Forwarded to all processors |
-| `process()` / `resetAll()` | Audio | Called via snapshot array, not directly on Chain |
 | `append()` / `insert()` / `remove()` / `move()` / `clear()` | Control | Under Engine's controlMutex_ |
 | `size()` / `at()` / `findByHandle()` / `indexOf()` | Control | Read-only queries |
 | `getProcessorArray()` | Control | Called during snapshot build |
 | `getLatencySamples()` | Control | Called during snapshot build |
 
-The Chain is only directly accessed by the control thread. The audio thread accesses a snapshot copy of the processor array.
+Chain is only accessed by the control thread. The audio thread reads a snapshot copy of the processor array.
 
 ## C ABI
 
 Chain operations are accessed through Source and Bus:
 
 ```c
-// Source chain operations
+// Source chain operations (plugin path — creates a PluginProcessor)
 SqProc sq_source_append(SqEngine engine, SqSource src, const char* plugin_path);
 SqProc sq_source_insert(SqEngine engine, SqSource src, int index, const char* plugin_path);
+
+// Source chain operations (pre-created processor — for built-in processors)
+SqProc sq_source_append_proc(SqEngine engine, SqSource src, SqProc proc);
+SqProc sq_source_insert_proc(SqEngine engine, SqSource src, int index, SqProc proc);
+
 void   sq_source_remove(SqEngine engine, SqSource src, int index);
+void   sq_source_move(SqEngine engine, SqSource src, int from_index, int to_index);
 int    sq_source_chain_size(SqEngine engine, SqSource src);
 
-// Bus chain operations
+// Bus chain operations (plugin path — creates a PluginProcessor)
 SqProc sq_bus_append(SqEngine engine, SqBus bus, const char* plugin_path);
 SqProc sq_bus_insert(SqEngine engine, SqBus bus, int index, const char* plugin_path);
+
+// Bus chain operations (pre-created processor — for built-in processors)
+SqProc sq_bus_append_proc(SqEngine engine, SqBus bus, SqProc proc);
+SqProc sq_bus_insert_proc(SqEngine engine, SqBus bus, int index, SqProc proc);
+
 void   sq_bus_remove(SqEngine engine, SqBus bus, int index);
+void   sq_bus_move(SqEngine engine, SqBus bus, int from_index, int to_index);
 int    sq_bus_chain_size(SqEngine engine, SqBus bus);
 ```
 
@@ -244,10 +216,8 @@ chain.append(eq.release());
 chain.append(comp.release());
 chain.append(limit.release());
 
-// Process in-place
-juce::AudioBuffer<float> buffer(2, 512);
-chain.process(buffer);
-// buffer has been processed through EQ → Compressor → Limiter
+// Audio thread processes via snapshot, not directly:
+// for (auto* p : snapshot.chainProcessors) p->process(buffer);
 ```
 
 ### Live insert (hot-swap)
@@ -259,8 +229,8 @@ chain.insert(1, sat.release());
 // Engine rebuilds snapshot → audio thread picks up new chain at next block boundary
 
 // Later: remove the saturator
-Processor* removed = chain.remove(1);
-// Engine defers deletion of `removed` via garbage queue
+auto removed = chain.remove(1);  // returns unique_ptr
+// Engine defers deletion via garbage queue
 ```
 
 ### Python

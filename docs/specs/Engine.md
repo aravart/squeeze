@@ -42,6 +42,8 @@ public:
     ~Engine();
 
     std::string getVersion() const;  // Returns "0.3.0"
+    double getSampleRate() const;
+    int getBlockSize() const;
 
     // --- Source management (control thread) ---
     Source* addSource(const std::string& name, std::unique_ptr<Processor> generator);
@@ -125,6 +127,10 @@ public:
     int getProcessorLatency(int procHandle) const;
     int getTotalLatency() const;
 
+    // --- Batching (control thread) ---
+    void batchBegin();   // defer snapshot rebuilds until batchCommit()
+    void batchCommit();  // rebuild snapshot if dirty, clear batch flag
+
     // --- Audio processing (audio thread) ---
     void processBlock(float** outputChannels, int numChannels, int numSamples);
 
@@ -161,6 +167,8 @@ private:
     MidiRouter midiRouter_;
 
     bool pdcEnabled_ = true;
+    bool batching_ = false;
+    bool snapshotDirty_ = false;
 
     // Internal
     void buildAndSwapSnapshot();
@@ -201,23 +209,31 @@ int      sq_bus_count(SqEngine engine);
 
 // Routing
 void     sq_route(SqEngine engine, SqSource src, SqBus bus);
-int      sq_send(SqEngine engine, SqSource src, SqBus bus, float level_db);
+int      sq_send(SqEngine engine, SqSource src, SqBus bus, float level_db, int pre_fader);
 void     sq_remove_send(SqEngine engine, SqSource src, int send_id);
 void     sq_set_send_level(SqEngine engine, SqSource src, int send_id, float level_db);
+void     sq_set_send_tap(SqEngine engine, SqSource src, int send_id, int pre_fader);
 void     sq_bus_route(SqEngine engine, SqBus from, SqBus to);
-int      sq_bus_send(SqEngine engine, SqBus from, SqBus to, float level_db);
+int      sq_bus_send(SqEngine engine, SqBus from, SqBus to, float level_db, int pre_fader);
 void     sq_bus_remove_send(SqEngine engine, SqBus bus, int send_id);
 void     sq_bus_set_send_level(SqEngine engine, SqBus bus, int send_id, float level_db);
+void     sq_bus_set_send_tap(SqEngine engine, SqBus bus, int send_id, int pre_fader);
 
 // Insert chains
 SqProc   sq_source_append(SqEngine engine, SqSource src, const char* plugin_path);
 SqProc   sq_source_insert(SqEngine engine, SqSource src, int index, const char* plugin_path);
+SqProc   sq_source_append_proc(SqEngine engine, SqSource src, SqProc proc);
+SqProc   sq_source_insert_proc(SqEngine engine, SqSource src, int index, SqProc proc);
 void     sq_source_remove_proc(SqEngine engine, SqSource src, int index);
+void     sq_source_move(SqEngine engine, SqSource src, int from_index, int to_index);
 int      sq_source_chain_size(SqEngine engine, SqSource src);
 
 SqProc   sq_bus_append(SqEngine engine, SqBus bus, const char* plugin_path);
 SqProc   sq_bus_insert(SqEngine engine, SqBus bus, int index, const char* plugin_path);
+SqProc   sq_bus_append_proc(SqEngine engine, SqBus bus, SqProc proc);
+SqProc   sq_bus_insert_proc(SqEngine engine, SqBus bus, int index, SqProc proc);
 void     sq_bus_remove_proc(SqEngine engine, SqBus bus, int index);
+void     sq_bus_move(SqEngine engine, SqBus bus, int from_index, int to_index);
 int      sq_bus_chain_size(SqEngine engine, SqBus bus);
 
 // Parameters (by processor handle)
@@ -276,6 +292,10 @@ bool     sq_schedule_cc(SqEngine engine, SqSource src, double beat_time,
 bool     sq_schedule_param_change(SqEngine engine, SqProc proc, double beat_time,
                                    const char* param_name, float value);
 
+// Batching
+void     sq_batch_begin(SqEngine engine);
+void     sq_batch_commit(SqEngine engine);
+
 // Testing
 void     sq_render(SqEngine engine, int num_samples);
 
@@ -288,9 +308,14 @@ void     sq_pump(void);
 ```c
 typedef struct {
     char** names;
+    float* default_values;
     float* min_values;
     float* max_values;
-    float* default_values;
+    int*   num_steps;       // 0 = continuous, >0 = stepped
+    bool*  automatable;
+    bool*  booleans;
+    char** labels;          // unit: "dB", "Hz", "%", ""
+    char** groups;          // "" = ungrouped
     int count;
 } SqParamDescriptorList;
 
@@ -360,20 +385,89 @@ processSubBlock(startSample, endSample, beatRange):
      collect paramChange events → sub-block split points
 
   3. For each source (independent — future: parallelizable):
-       source.process(buffer, midiBuffer)
 
-  4. Accumulate bus inputs:
-       For each source:
-         add source buffer to source.outputBus input accumulator
-       For each source:
-         for each send, add buffer * db_to_linear(level) to send.bus accumulator
-       For each bus (in dependency order):
-         for each send, add buffer * db_to_linear(level) to send.bus accumulator
+       if source.isBypassed():
+           buffer.clear()
+           wasBypassed = true
+           continue
 
-  5. For each bus in dependency order:
-       bus.process(buffer)    // sum + chain + metering
+       if wasBypassed:
+           source.generator->reset()
+           for each proc in snapshot.sourceChainProcessors:
+               proc->reset()
+               proc->wasBypassed_ = false
+           wasBypassed = false
 
-  6. Master: bus.process(buffer) // always last
+       // Generator
+       source.generator->process(buffer, midiBuffer)
+
+       // Chain (iterate snapshot array, not Chain object)
+       for each proc in snapshot.sourceChainProcessors:
+           bypassed = proc->isBypassed()
+           if !bypassed && proc->wasBypassed_:
+               proc->reset()
+           if !bypassed:
+               proc->process(buffer, midiBuffer)
+           proc->wasBypassed_ = bypassed
+
+       // Pre-fader send taps
+       for send in source.sends where send.tap == preFader:
+           sendBus.accumulate(buffer * dbToLinear(send.levelDb))
+
+       // Channel strip: gain + pan
+       buffer.applyGain(source.getGain())
+       applyPan(buffer, source.getPan())
+
+       // Post-fader send taps
+       for send in source.sends where send.tap == postFader:
+           sendBus.accumulate(buffer * dbToLinear(send.levelDb))
+
+       // Route to output bus
+       outputBus.accumulate(buffer)
+
+  4. For each bus in dependency order:
+
+       // Sum accumulated inputs (already done via accumulate() above)
+
+       if bus.isBypassed():
+           buffer.clear()
+           wasBypassed = true
+           continue
+
+       if wasBypassed:
+           for each proc in snapshot.busChainProcessors:
+               proc->reset()
+               proc->wasBypassed_ = false
+           wasBypassed = false
+
+       // Chain (iterate snapshot array)
+       for each proc in snapshot.busChainProcessors:
+           bypassed = proc->isBypassed()
+           if !bypassed && proc->wasBypassed_:
+               proc->reset()
+           if !bypassed:
+               proc->process(buffer)
+           proc->wasBypassed_ = bypassed
+
+       // Pre-fader send taps
+       for send in bus.sends where send.tap == preFader:
+           sendBus.accumulate(buffer * dbToLinear(send.levelDb))
+
+       // Gain + pan
+       buffer.applyGain(bus.getGain())
+       applyPan(buffer, bus.getPan())
+
+       // Post-fader send taps
+       for send in bus.sends where send.tap == postFader:
+           sendBus.accumulate(buffer * dbToLinear(send.levelDb))
+
+       // Metering (atomic writes)
+       bus.updateMetering(buffer)
+
+       // Route to downstream bus
+       downstreamBus.accumulate(buffer)
+
+  5. Master bus: same as step 4, always processed last
 ```
 
 ## MixerSnapshot (internal)

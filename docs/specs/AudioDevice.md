@@ -6,11 +6,11 @@
 - Implement `juce::AudioIODeviceCallback` — call `Engine::processBlock()` from the JUCE audio callback
 - Provide start/stop control over the audio device
 - Report actual device sample rate and block size
-- Handle `audioDeviceAboutToStart` — prepare Engine and all nodes with actual device parameters
+- Handle `audioDeviceAboutToStart` — notify Engine of actual device parameters
 
 ## Overview
 
-AudioDevice is the bridge between the JUCE audio device system and the Engine. It owns the `juce::AudioDeviceManager`, opens/closes audio devices, and forwards the audio callback to `Engine::processBlock()`. Engine has no dependency on JUCE audio devices — AudioDevice depends on Engine, not the other way around. For headless testing, `Engine::prepareForTesting()` bypasses AudioDevice entirely.
+AudioDevice is the bridge between the JUCE audio device system and the Engine. It owns the `juce::AudioDeviceManager`, opens/closes audio devices, and forwards the audio callback to `Engine::processBlock()`. Engine has no dependency on JUCE audio devices — AudioDevice depends on Engine, not the other way around. For headless testing, `Engine::render()` bypasses AudioDevice entirely — the Engine is always prepared from construction.
 
 ## Interface
 
@@ -86,7 +86,7 @@ engine.block_size      # property (0 if not running)
 - `stop()` when not running is a no-op
 - `start()` when already running stops first, then restarts with new parameters
 - The audio callback calls `Engine::processBlock()` exactly once per invocation
-- `audioDeviceAboutToStart` prepares all nodes via Engine before the first callback
+- `audioDeviceAboutToStart` is called by JUCE before the first audio callback
 - AudioDevice never acquires `controlMutex_` — Engine's processBlock is lock-free
 
 ## Error Conditions
@@ -98,16 +98,16 @@ engine.block_size      # property (0 if not running)
 
 ## Does NOT Handle
 
-- **Graph topology, node management** — Engine
+- **Source/bus management** — Engine
 - **processBlock logic** — Engine (AudioDevice just calls it)
-- **Testing bypass** — `Engine::prepareForTesting()` handles headless tests
+- **Headless testing** — `Engine::render()` bypasses AudioDevice entirely
 - **Device enumeration / selection** — future (currently opens default device)
 - **MIDI device management** — MidiDeviceManager
 - **Message pump** — `sq_pump()` at FFI level
 
 ## Dependencies
 
-- Engine (reference — calls `processBlock()` and `prepareForTesting()` equivalent)
+- Engine (reference — calls `processBlock()`)
 - JUCE (`juce_audio_devices`: AudioDeviceManager, AudioIODeviceCallback)
 
 ## Thread Safety
@@ -129,7 +129,7 @@ engine.block_size      # property (0 if not running)
 
 ```c
 char* error = NULL;
-SqEngine engine = sq_engine_create(&error);
+SqEngine engine = sq_create(44100.0, 512, &error);
 
 // Start audio with hints (device may choose actual values)
 if (!sq_start(engine, 44100.0, 512, &error)) {
@@ -142,7 +142,7 @@ printf("Actual SR: %.0f, BS: %d\n", sq_sample_rate(engine), sq_block_size(engine
 // ... audio is processing ...
 
 sq_stop(engine);
-sq_engine_destroy(engine);
+sq_destroy(engine);
 ```
 
 ### Python
@@ -162,10 +162,8 @@ s.close()
 ### Headless testing (no AudioDevice)
 
 ```cpp
-Engine engine;
-engine.prepareForTesting(44100.0, 512);
+Engine engine(44100.0, 512);
 
 // Process directly — no AudioDevice involved
-float* outputs[2] = { leftBuf, rightBuf };
-engine.processBlock(outputs, 2, 512);
+engine.render(512);
 ```

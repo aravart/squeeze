@@ -10,7 +10,7 @@
 
 EventScheduler is the beat-synced event delivery system. It accepts events timestamped in beats (PPQ / quarter notes), holds them in a staging buffer, and resolves them to sample-accurate offsets within the current audio block. Engine calls `retrieve()` once per block (or per sub-block at loop boundaries), passing the current beat range, and receives a sorted array of resolved events ready for dispatch.
 
-EventScheduler has no knowledge of Transport, nodes, loops, or audio processing. It is a pure time-resolution engine: beats in, sample offsets out. Engine provides the timing context and interprets the results.
+EventScheduler has no knowledge of Transport, sources, loops, or audio processing. It is a pure time-resolution engine: beats in, sample offsets out. Engine provides the timing context and interprets the results.
 
 ### Loop handling
 
@@ -40,7 +40,7 @@ namespace squeeze {
 
 struct ScheduledEvent {
     double beatTime;        // PPQ timestamp (quarter notes from origin)
-    int targetNodeId;       // which node receives this event
+    int targetHandle;       // source or processor handle
 
     enum class Type { noteOn, noteOff, cc, paramChange };
     Type type;
@@ -53,7 +53,7 @@ struct ScheduledEvent {
 
 struct ResolvedEvent {
     int sampleOffset;       // sample position within the block [0, numSamples)
-    int targetNodeId;
+    int targetHandle;
     ScheduledEvent::Type type;
     int channel;
     int data1;
@@ -99,7 +99,7 @@ Trivially copyable POD struct. No heap allocation. Fixed size for SPSC queue sto
 | Field | Type | Description |
 |-------|------|-------------|
 | `beatTime` | `double` | PPQ timestamp — quarter notes from timeline origin |
-| `targetNodeId` | `int` | Global node ID (Engine resolves to the actual node) |
+| `targetHandle` | `int` | Source or processor handle (Engine resolves to the target) |
 | `type` | `Type` | Event type: noteOn, noteOff, cc, paramChange |
 | `channel` | `int` | MIDI channel 1–16 (MIDI events only; ignored for paramChange) |
 | `data1` | `int` | Note number (0–127), CC number (0–127), or param token (opaque int) |
@@ -230,7 +230,7 @@ The staging buffer is **audio-thread-local only**. No synchronization needed. Re
 - `schedule()` with full SPSC queue: returns `false`, event dropped, logged at warn
 - Staging buffer full during drain: incoming events dropped, logged at warn (`SQ_WARN_RT`)
 - `beatTime` is NaN or negative: event discarded during drain (never enters staging)
-- `targetNodeId` doesn't exist: Engine skips the event (not EventScheduler's concern)
+- `targetHandle` doesn't exist: Engine skips the event (not EventScheduler's concern — source/processor may have been removed)
 - `tempo <= 0` or `sampleRate <= 0`: undefined behavior (caller must guard)
 
 ## Does NOT Handle
@@ -239,7 +239,7 @@ The staging buffer is **audio-thread-local only**. No synchronization needed. Re
 - Loop wrapping — Engine splits blocks at loop boundaries before calling `retrieve()`
 - Pattern storage, repetition, or loop scheduling — client's responsibility
 - Transport state — Engine passes timing parameters; EventScheduler has no Transport dependency
-- Node lookup or parameter name resolution — Engine's concern
+- Source/processor lookup or parameter name resolution — Engine's concern
 - MIDI device input (MidiRouter)
 - Infrastructure commands (CommandQueue)
 
@@ -247,7 +247,7 @@ The staging buffer is **audio-thread-local only**. No synchronization needed. Re
 
 - SPSCQueue (lock-free ring buffer)
 
-No dependency on Node, Graph, Transport, or Engine. EventScheduler is a pure time-resolution component.
+No dependency on Source, Bus, Processor, Transport, or Engine. EventScheduler is a pure time-resolution component.
 
 ## Thread Safety
 
@@ -264,14 +264,14 @@ EventScheduler has no mutexes. Thread safety relies on the SPSC contract (one pr
 EventScheduler has no direct C ABI surface. Events are scheduled through Engine-level functions:
 
 ```c
-// Schedule beat-timed events
-bool sq_schedule_note_on(SqEngine engine, int node_id, double beat_time,
+// Schedule beat-timed events (MIDI events target a Source, param changes target a Processor)
+bool sq_schedule_note_on(SqEngine engine, SqSource src, double beat_time,
                          int channel, int note, float velocity);
-bool sq_schedule_note_off(SqEngine engine, int node_id, double beat_time,
+bool sq_schedule_note_off(SqEngine engine, SqSource src, double beat_time,
                           int channel, int note);
-bool sq_schedule_cc(SqEngine engine, int node_id, double beat_time,
+bool sq_schedule_cc(SqEngine engine, SqSource src, double beat_time,
                     int channel, int cc_num, int cc_val);
-bool sq_schedule_param_change(SqEngine engine, int node_id, double beat_time,
+bool sq_schedule_param_change(SqEngine engine, SqProc proc, double beat_time,
                               const char* param_name, float value);
 ```
 
@@ -311,6 +311,6 @@ if (transport_.isPlaying() && transport_.getSampleRate() > 0.0) {
 }
 
 // 4. Engine dispatches resolved events:
-//    - MIDI types → node MidiBuffers at sampleOffset
+//    - MIDI types → source MidiBuffers at sampleOffset
 //    - paramChange → sub-block splitting
 ```

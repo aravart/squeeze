@@ -61,26 +61,19 @@ SqStringList sq_midi_devices(SqEngine engine);
 bool sq_midi_open(SqEngine engine, const char* name, char** error);
 void sq_midi_close(SqEngine engine, const char* name);
 SqStringList sq_midi_open_devices(SqEngine engine);
-
-// Routing (delegates to MidiRouter)
-int  sq_midi_route(SqEngine engine, const char* device, int node_id,
-                   int channel_filter, int note_filter, char** error);
-bool sq_midi_unroute(SqEngine engine, int route_id);
-SqMidiRouteList sq_midi_routes(SqEngine engine);
 ```
+
+MIDI routing is handled through Source-level assignment (`sq_midi_assign`, `sq_midi_note_range`) — see Source spec and Engine spec. MidiDeviceManager only manages device connections.
 
 ### Python API
 
 ```python
-devices = engine.midi_devices              # property, list of strings
-engine.midi_open("Launchpad Pro")
-engine.midi_close("Launchpad Pro")
-open_devs = engine.midi_open_devices       # property, list of strings
-
-# Routing (delegates to MidiRouter)
-route_id = engine.midi_route("Launchpad Pro", synth_id, channel=0, note=-1)
-engine.midi_unroute(route_id)
-routes = engine.midi_routes                # property, list of MidiRoute
+# Via squeeze.midi sub-object
+devs = s.midi.devices           # list of MidiDevice
+dev = s.midi.devices[0]
+dev.open()
+dev.close()
+open_devs = s.midi.open_devices # list of MidiDevice
 ```
 
 ## Invariants
@@ -104,8 +97,8 @@ routes = engine.midi_routes                # property, list of MidiRoute
 
 ## Does NOT Handle
 
-- **Routing configuration** — MidiRouter (addRoute/removeRoute)
-- **MIDI dispatch to nodes** — MidiRouter (drain queues in processBlock)
+- **Routing configuration** — via Source MidiAssignment (sq_midi_assign, sq_midi_note_range)
+- **MIDI dispatch to sources** — MidiRouter (drain queues in processBlock)
 - **Queue monitoring / drop counts** — MidiRouter
 - **MIDI output** — future
 - **Virtual MIDI ports** — future
@@ -135,7 +128,7 @@ All control-thread methods are called from the FFI layer under `controlMutex_`. 
 
 ```c
 char* error = NULL;
-SqEngine engine = sq_engine_create(&error);
+SqEngine engine = sq_create(44100.0, 512, &error);
 
 // List available MIDI devices
 SqStringList devices = sq_midi_devices(engine);
@@ -150,15 +143,14 @@ if (!sq_midi_open(engine, "Launchpad Pro", &error)) {
     sq_free_string(error);
 }
 
-// Route the device to a synth node
-int synth = sq_add_plugin(engine, "Diva", &error);
-int route = sq_midi_route(engine, "Launchpad Pro", synth, 0, -1, &error);
+// Create a source and assign MIDI
+SqSource synth = sq_add_source_plugin(engine, "Lead", "Diva.vst3", &error);
+sq_midi_assign(engine, synth, "Launchpad Pro", 1);
 
-// Later: remove route and close device
-sq_midi_unroute(engine, route);
+// Later: close device
 sq_midi_close(engine, "Launchpad Pro");
 
-sq_engine_destroy(engine);
+sq_destroy(engine);
 ```
 
 ### Python
