@@ -247,14 +247,6 @@ class Source:
         note_range: (low, high) inclusive note range
         """
 
-    # --- Mute ---
-
-    @property
-    def muted(self) -> bool: ...
-
-    @muted.setter
-    def muted(self, value: bool) -> None: ...
-
     # --- Event scheduling ---
 
     def note_on(self, beat: float, channel: int, note: int,
@@ -364,14 +356,6 @@ class Bus:
     @property
     def rms(self) -> float:
         """Current RMS level."""
-
-    # --- Mute ---
-
-    @property
-    def muted(self) -> bool: ...
-
-    @muted.setter
-    def muted(self, value: bool) -> None: ...
 
     # --- Lifecycle ---
 
@@ -672,7 +656,7 @@ All calls from a single thread (the control thread). Objects are proxies to the 
 
 - **One set of Python tests** covering the public API
 - Source tests: create, routing, chain ops, MIDI assignment
-- Bus tests: create, routing, sends, metering, mute
+- Bus tests: create, routing, sends, metering, bypass
 - Chain tests: append/insert/remove/index
 - Processor tests: get/set params, descriptors, latency
 - Transport tests: play/stop/pause, tempo, seek, loop

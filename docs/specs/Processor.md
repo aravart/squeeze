@@ -121,14 +121,23 @@ Calling `process()` before `prepare()` is undefined behavior (caller's responsib
 
 Parameters are identified by **name only**. No index appears in the public API (Processor, C ABI, or Python). This is a deliberate design: the C ABI is the primary interface, and FFI callers work with names, not opaque integers.
 
+### Parameter Value Ranges
+
+Parameter value ranges depend on the Processor subclass:
+
+- **PluginProcessor (VST3/AU)**: Values are **normalized 0.0–1.0** as required by the VST3/AU specification. `getParameterText()` returns the display string in real-world units (e.g., "440 Hz", "-12 dB"). The `ParamDescriptor` will have `minValue = 0.0`, `maxValue = 1.0`.
+- **Built-in processors** (GainProcessor, etc.): Values use **real-world ranges** defined by the processor. For example, a gain parameter might range 0.0–2.0 (linear) and a frequency parameter might range 20.0–20000.0 (Hz). The `ParamDescriptor` `minValue`/`maxValue` fields reflect these real-world ranges.
+
+The C ABI and Python API pass values in whatever range the processor defines. Callers should consult `sq_param_descriptors()` to discover the valid range for each parameter.
+
 ### ParamDescriptor
 
 | Field | Description |
 |-------|-------------|
 | `name` | Unique string identifier — the only key |
-| `defaultValue` | Default value |
-| `minValue` | Minimum value (typically 0.0) |
-| `maxValue` | Maximum value (typically 1.0) |
+| `defaultValue` | Default value (in the processor's native range) |
+| `minValue` | Minimum value (0.0 for plugins, real-world for built-ins) |
+| `maxValue` | Maximum value (1.0 for plugins, real-world for built-ins) |
 | `numSteps` | 0 = continuous, >0 = discrete steps |
 | `automatable` | Whether EventScheduler can target this parameter |
 | `boolean` | Two-state parameter (0.0 or 1.0) |
@@ -170,8 +179,8 @@ A processor can be bypassed, causing audio to pass through unchanged. Bypass is 
 - Default: not bypassed (`false`).
 - **Bypass transition tracking** uses `wasBypassed_` (a non-atomic `bool` on the Processor, written only by the audio thread). Each block, the Engine compares `isBypassed()` against `wasBypassed_`. On a bypassed→active transition, the Engine calls `reset()` before the first `process()` call to clear stale internal state. Because `wasBypassed_` lives on the Processor object itself (not in the snapshot), it naturally survives snapshot swaps with no transfer logic.
 - **Latency still counts when bypassed.** `getLatencySamples()` returns the same value regardless of bypass state. This avoids audible glitches from PDC recalculation when toggling bypass.
-- Bypass is not mute. A bypassed processor passes audio through; a muted source/bus produces silence.
-- Bypass applies to insert chain processors. It does not apply to Source generators — use `Source.muted` to silence a source.
+- Bypass is not mute. A bypassed processor passes audio through unchanged. A bypassed source/bus produces silence (skips all processing).
+- Bypass applies to insert chain processors. It does not apply to Source generators — use `Source.setBypassed(true)` to silence a source entirely, or set `Source.gain = 0.0` to mute while preserving processing state.
 
 ## Invariants
 

@@ -449,11 +449,11 @@ void        sq_bus_set_bypassed(SqEngine, SqBus, int bypassed);
 // Insert chains
 SqProc      sq_source_insert(SqEngine, SqSource, int index, const char* plugin_path);
 SqProc      sq_source_append(SqEngine, SqSource, const char* plugin_path);
-void        sq_source_remove(SqEngine, SqSource, int index);
+void        sq_source_remove_proc(SqEngine, SqSource, int index);
 
 SqProc      sq_bus_insert(SqEngine, SqBus, int index, const char* plugin_path);
 SqProc      sq_bus_append(SqEngine, SqBus, const char* plugin_path);
-void        sq_bus_remove(SqEngine, SqBus, int index);
+void        sq_bus_remove_proc(SqEngine, SqBus, int index);
 
 // Parameters
 float       sq_get_param(SqEngine, SqProc, const char* name);

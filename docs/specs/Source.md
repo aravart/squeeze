@@ -412,7 +412,7 @@ void sq_midi_note_range(SqEngine engine, SqSource src, int low, int high);
 // Source chain (insert effects)
 SqProc sq_source_append(SqEngine engine, SqSource src, const char* plugin_path);
 SqProc sq_source_insert(SqEngine engine, SqSource src, int index, const char* plugin_path);
-void   sq_source_remove(SqEngine engine, SqSource src, int index);
+void   sq_source_remove_proc(SqEngine engine, SqSource src, int index);
 int    sq_source_chain_size(SqEngine engine, SqSource src);
 
 // Bypass

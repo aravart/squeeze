@@ -36,6 +36,7 @@ public:
 
     // --- Processor interface ---
     void prepare(double sampleRate, int blockSize) override;
+    void reset() override;
     void process(juce::AudioBuffer<float>& buffer) override;
     void process(juce::AudioBuffer<float>& buffer,
                  const juce::MidiBuffer& midi) override;
@@ -88,13 +89,16 @@ synth = engine.add_source("Lead", plugin="Diva.vst3")
 # Add plugin to a chain
 eq = vocal.chain.append("EQ.vst3")
 
-# Parameters accessed via processor handle
-eq.set_param("high_gain", -3.0)
-print(eq.get_param("high_gain"))
+# Parameters accessed via processor handle (normalized 0-1 for plugins)
+eq.set_param("high_gain", 0.4)
+print(eq.get_param("high_gain"))       # e.g., 0.4
+print(eq.get_param_text("high_gain"))  # e.g., "-3.0 dB"
 print(eq.param_descriptors())
 ```
 
 ## Processing
+
+`reset()` delegates to `processor_->reset()`, which clears the plugin's internal processing state (reverb tails, delay line contents, filter histories, gain reduction, etc.). Called by the Engine on the audio thread when un-bypassing — **must be RT-safe**. JUCE's `AudioProcessor::reset()` is expected to be RT-safe by convention.
 
 `process()` delegates to the plugin's `processBlock()`:
 
@@ -120,19 +124,22 @@ The Engine sets the sidechain buffer reference on the PluginProcessor before eac
 
 ## Parameters
 
-Parameters are exposed by their JUCE parameter name (`AudioProcessorParameter::getName()`). Values are normalized 0.0–1.0.
+Parameters are exposed by their JUCE parameter name (`AudioProcessorParameter::getName()`). Values are **normalized 0.0–1.0** as required by the VST3/AU plugin specification. Use `getParameterText()` to get human-readable display values in real-world units.
 
 - `getParameterCount()`: number of plugin parameters
-- `getParameterDescriptors()`: returns name, default, min (0), max (1), and metadata for each parameter
-- `getParameter(name)`: returns the current normalized value, or 0.0 if name unknown
-- `setParameter(name, value)`: sets the normalized value, no-op if name unknown
-- `getParameterText(name)`: returns the display text for the current value (e.g., "440 Hz", "-12 dB")
+- `getParameterDescriptors()`: returns name, default, min (0.0), max (1.0), and metadata for each parameter
+- `getParameter(name)`: returns the current normalized value (0.0–1.0), or 0.0 if name unknown
+- `setParameter(name, value)`: sets the normalized value (0.0–1.0), no-op if name unknown
+- `getParameterText(name)`: returns the display text in real-world units (e.g., "440 Hz", "-12 dB")
+
+Note: Built-in processors (GainProcessor, etc.) use real-world parameter ranges, not normalized 0–1. See Processor spec for details.
 
 The parameter map (name → JUCE index) is built once at construction and is immutable.
 
 ## Invariants
 
 - `process()` is RT-safe (delegates to the plugin's `processBlock`, which is expected to be RT-safe by the plugin vendor)
+- `reset()` is RT-safe (delegates to the plugin's `reset()`, which clears internal state — reverb tails, delay buffers, filter histories)
 - Channel configuration is fixed after construction
 - `prepare()` is called before the first `process()` and after any sample rate or block size change
 - `release()` is called before destruction
@@ -171,6 +178,7 @@ The parameter map (name → JUCE index) is built once at construction and is imm
 |--------|--------|-------|
 | Constructor | Control | Builds parameter map, stores processor |
 | `prepare()` / `release()` | Control | Delegates to processor |
+| `reset()` | Audio | Delegates to processor->reset(); must be RT-safe |
 | `process()` | Audio | Delegates to processor's processBlock |
 | `getParameterDescriptors()` | Any | Immutable after construction |
 | `getParameter()` | Control | Reads from JUCE parameter (atomic internally) |
@@ -203,7 +211,7 @@ auto proc = pluginManager.createProcessor("Diva", 44100.0, 512, error);
 auto* src = engine.addSource("Lead", std::move(proc));
 // Source generator is now the plugin
 // Parameters through Engine's generic interface
-engine.setParameter(src->getGenerator()->getHandle(), "cutoff", 0.5f);
+engine.setParameter(src->getGenerator()->getHandle(), "cutoff", 0.5f);  // normalized 0-1
 ```
 
 ### Unit testing with a mock processor

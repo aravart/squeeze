@@ -91,10 +91,6 @@ public:
     void midiNoteRange(Source* src, int low, int high);
     void midiCCMap(int procHandle, const std::string& paramName, int ccNumber);
 
-    // --- Mute (control thread) ---
-    void setSourceMuted(Source* src, bool muted);
-    void setBusMuted(Bus* bus, bool muted);
-
     // --- Metering (any thread) ---
     float busPeak(Bus* bus) const;
     float busRMS(Bus* bus) const;
@@ -250,12 +246,6 @@ SqParamDescriptorList sq_param_descriptors(SqEngine engine, SqProc proc);
 void     sq_midi_assign(SqEngine engine, SqSource src, const char* device, int channel);
 void     sq_midi_note_range(SqEngine engine, SqSource src, int low, int high);
 void     sq_midi_cc_map(SqEngine engine, SqProc proc, const char* param, int cc_number);
-
-// Mute
-void     sq_source_set_muted(SqEngine engine, SqSource src, bool muted);
-bool     sq_source_is_muted(SqEngine engine, SqSource src);
-void     sq_bus_set_muted(SqEngine engine, SqBus bus, bool muted);
-bool     sq_bus_is_muted(SqEngine engine, SqBus bus);
 
 // Metering
 float    sq_bus_peak(SqEngine engine, SqBus bus);
@@ -624,7 +614,7 @@ int main() {
 
     // Insert effects
     SqProc eq = sq_bus_append(engine, drum_bus, "EQ.vst3");
-    sq_set_param(engine, eq, "high_gain", -3.0f);
+    sq_set_param(engine, eq, "high_gain", 0.4f);  // normalized 0-1 for plugins
 
     // MIDI
     sq_midi_assign(engine, synth, "Keylab", 1);

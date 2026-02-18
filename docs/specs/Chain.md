@@ -183,7 +183,7 @@ SqProc sq_source_insert(SqEngine engine, SqSource src, int index, const char* pl
 SqProc sq_source_append_proc(SqEngine engine, SqSource src, SqProc proc);
 SqProc sq_source_insert_proc(SqEngine engine, SqSource src, int index, SqProc proc);
 
-void   sq_source_remove(SqEngine engine, SqSource src, int index);
+void   sq_source_remove_proc(SqEngine engine, SqSource src, int index);
 void   sq_source_move(SqEngine engine, SqSource src, int from_index, int to_index);
 int    sq_source_chain_size(SqEngine engine, SqSource src);
 
@@ -195,7 +195,7 @@ SqProc sq_bus_insert(SqEngine engine, SqBus bus, int index, const char* plugin_p
 SqProc sq_bus_append_proc(SqEngine engine, SqBus bus, SqProc proc);
 SqProc sq_bus_insert_proc(SqEngine engine, SqBus bus, int index, SqProc proc);
 
-void   sq_bus_remove(SqEngine engine, SqBus bus, int index);
+void   sq_bus_remove_proc(SqEngine engine, SqBus bus, int index);
 void   sq_bus_move(SqEngine engine, SqBus bus, int from_index, int to_index);
 int    sq_bus_chain_size(SqEngine engine, SqBus bus);
 ```

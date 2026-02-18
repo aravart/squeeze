@@ -361,7 +361,7 @@ float sq_bus_get_pan(SqEngine engine, SqBus bus);
 // Bus chain (insert effects)
 SqProc sq_bus_append(SqEngine engine, SqBus bus, const char* plugin_path);
 SqProc sq_bus_insert(SqEngine engine, SqBus bus, int index, const char* plugin_path);
-void   sq_bus_remove(SqEngine engine, SqBus bus, int index);
+void   sq_bus_remove_proc(SqEngine engine, SqBus bus, int index);
 int    sq_bus_chain_size(SqEngine engine, SqBus bus);
 
 // Bypass
