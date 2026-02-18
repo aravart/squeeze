@@ -27,6 +27,7 @@ add_library(squeeze_core STATIC
     src/core/PluginManager.cpp
     src/core/PluginNode.cpp
     src/core/Port.cpp
+    src/core/Source.cpp
 )
 
 target_include_directories(squeeze_core PUBLIC src)
@@ -83,6 +84,7 @@ add_executable(squeeze_unit_tests
     tests/core/PluginManagerTests.cpp
     tests/core/ProcessorTests.cpp
     tests/core/ChainTests.cpp
+    tests/core/SourceTests.cpp
 )
 
 target_link_libraries(squeeze_unit_tests PRIVATE
