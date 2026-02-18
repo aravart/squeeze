@@ -1,6 +1,6 @@
 # CLAUDE.md — Squeeze v2
 
-Squeeze is a modern, modular JUCE/C++ audio engine for hosting VST/AU plugins and routing audio through programmable graphs with a C ABI for multi-language integration.
+Squeeze is a modern, modular JUCE/C++ audio engine for hosting VST/AU plugins and routing audio through a mixer-centric architecture with a C ABI for multi-language integration.
 
 v2 is a ground-up rewrite. The v1 codebase lives in `./squeeze/` for reference (architecture, specs, DSP algorithms, test patterns) but no code is carried over directly.
 
@@ -11,7 +11,7 @@ v2 is a ground-up rewrite. The v1 codebase lives in `./squeeze/` for reference (
 - **Language:** C++17
 - **Framework:** JUCE (plugin hosting, audio I/O, DSP, MIDI, GUI)
 - **Public API:** C ABI (`squeeze_ffi`) — opaque handles, plain C types, no C++ in the public header
-- **Python package:** `python/` — proper Python package (`squeeze`) with two layers: a low-level 1:1 ctypes wrapper (`_low_level.Squeeze`) and a high-level Pythonic API (`engine.Engine`, `node.Node`, etc.). Both layers are maintained alongside `squeeze_ffi.h`. Includes its own unit tests, buildable via `pyproject.toml`.
+- **Python package:** `python/` — proper Python package (`squeeze`) with one public API layer: `Squeeze`, `Source`, `Bus`, `Chain`, `Processor`, etc. Internal ctypes bindings (`_ffi.py`) and helpers (`_helpers.py`) are not public. Maintained alongside `squeeze_ffi.h`. Includes its own unit tests, buildable via `pyproject.toml`.
 - **Build:** CMake 3.24+
 - **Tests:** Catch2 v3
 - **Dependencies fetched via CMake FetchContent:** JUCE, signalsmith-stretch, Catch2
@@ -33,7 +33,7 @@ cd build && ctest --output-on-failure
 
 See `docs/ARCHITECTURE.md` for system design, component architecture, thread model, dependency order, data flow examples, realtime safety rules, and design patterns.
 
-**Every tier ships a working FFI and Python client.** Each tier extends the C++ engine, the C API surface, and both Python layers together. Do not build internal components without their corresponding `sq_` functions, low-level `Squeeze` methods, and high-level `Engine`/`Node` methods.
+**Every tier ships a working FFI and Python client.** Each tier extends the C++ engine, the C API surface, and the Python package together. Do not build internal components without their corresponding `sq_` functions and Python `Squeeze`/`Source`/`Bus`/`Chain`/`Processor` methods.
 
 Do not skip ahead. Each component: spec → tests → implement → review.
 
@@ -94,7 +94,7 @@ Before any code, create or update a specification document in `docs/specs/{Compo
 - **Framework:** Catch2 v3 with `Catch2::Catch2WithMain`
 - **FFI tests:** Primary. Test every feature through the C API — these are the tests that must pass.
 - **C++ unit tests:** Secondary. Test internal invariants, edge cases, and RT-safety properties that aren't visible through the C API.
-- **Naming:** Descriptive sentences — `"sq_connect rejects connections that would create cycles"`
+- **Naming:** Descriptive sentences — `"sq_bus_route rejects routing that would create cycles"`
 - **Independence:** Each test creates own fixtures, no shared mutable state
 - **Coverage:** All `sq_` functions exercised, all error codes returned, edge cases (0, 1, max, empty, boundary)
 - **Engine testing:** `Engine(sr, bs)` is always prepared from construction — use `render()` for headless tests
@@ -102,14 +102,14 @@ Before any code, create or update a specification document in `docs/specs/{Compo
 
 ### Step 3: Implement to Pass Tests
 
-This includes the C++ component, its `sq_` functions in `squeeze_ffi.h`/`.cpp`, the corresponding low-level Python methods in `python/squeeze/_low_level.py`, and the high-level Python wrappers in `python/squeeze/` (engine, node, transport, midi, types as appropriate).
+This includes the C++ component, its `sq_` functions in `squeeze_ffi.h`/`.cpp`, and the Python wrappers in `python/squeeze/` (squeeze, source, bus, chain, processor, transport, midi, types as appropriate).
 
 ### Step 4: Review
 
 **Review checklist for generated implementation:**
 
 - [ ] All tests pass
-- [ ] Public interface matches spec exactly (C++, C ABI, low-level Python, and high-level Python)
+- [ ] Public interface matches spec exactly (C++, C ABI, and Python)
 - [ ] No functionality beyond what's specified
 - [ ] Realtime safety (if applicable): no allocation, no blocking, no unbounded loops
 - [ ] Thread safety
@@ -131,7 +131,7 @@ After implementation, verify the component works with its dependencies:
 - **Namespace:** `squeeze`
 - **Headers:** `.h` with `#pragma once`
 - **Naming:** `camelCase` for methods/variables, `PascalCase` for types, `kConstantName` for enum values, `member_` suffix for private members
-- **Parameters:** String-based API on `Node` — `getParameter(name)`, `setParameter(name, value)`. No index in the public interface (Node, C ABI, or Python). RT-safe dispatch for sample-accurate automation is an Engine/EventScheduler concern (pre-resolved tokens), not a Node concern. Subclasses store parameters however they choose internally.
+- **Parameters:** String-based API on `Processor` — `getParameter(name)`, `setParameter(name, value)`. No index in the public interface (Processor, C ABI, or Python). RT-safe dispatch for sample-accurate automation is an Engine/EventScheduler concern (pre-resolved tokens), not a Processor concern. Subclasses store parameters however they choose internally.
 - **No over-engineering:** No features beyond the spec. No premature abstractions. Three similar lines > one premature helper.
 
 ### Logging Standards
@@ -144,20 +144,20 @@ Every component must include comprehensive logging using the `SQ_*` macros. Logg
 |-------|-------------|---------|
 | `SQ_WARN` / `SQ_WARN_RT` | Something went wrong or was dropped | Xruns, queue overflows, failed operations, dropped events |
 | `SQ_INFO` / `SQ_INFO_RT` | High-level operational milestones | Engine start/stop, device open/close, plugin loaded, graph rebuilt |
-| `SQ_DEBUG` / `SQ_DEBUG_RT` | Every public API call and state transition | connect/disconnect, node add/remove, buffer load, snapshot swap |
+| `SQ_DEBUG` / `SQ_DEBUG_RT` | Every public API call and state transition | route/send, source/bus add/remove, chain insert, snapshot swap |
 | `SQ_TRACE` / `SQ_TRACE_RT` | Per-message/per-event granularity | Individual MIDI messages, per-event scheduling, per-block details |
 
 **Rules:**
 - Use `SQ_*_RT` variants on the audio thread, plain `SQ_*` on the control thread. Never `fprintf`/`std::cout` directly.
 - Log all public method entry points at `debug` or `info` level with key parameters.
 - Log all error paths at `warn` level with enough context to diagnose the problem.
-- Format: include relevant IDs, names, and numeric values — `SQ_DEBUG("connect: %d:%s -> %d:%s", srcId, srcPort, dstId, dstPort)`, not `SQ_DEBUG("connected")`.
+- Format: include relevant IDs, names, and numeric values — `SQ_DEBUG("route: source %d -> bus %d", srcHandle, busHandle)`, not `SQ_DEBUG("routed")`.
 
 ---
 
 ## Python Package (`python/`)
 
-The `python/` directory is a proper Python package, buildable and eventually publishable.
+The `python/` directory is a proper Python package, buildable and eventually publishable. It provides **one public API layer** — no separate low-level/high-level split.
 
 ### Structure
 
@@ -165,18 +165,20 @@ The `python/` directory is a proper Python package, buildable and eventually pub
 python/
 ├── pyproject.toml          # Package metadata, dependencies, build config
 ├── squeeze/
-│   ├── __init__.py         # Re-exports from both high-level and low-level APIs
-│   ├── _ffi.py             # ctypes bindings (internal)
-│   ├── _low_level.py       # Low-level 1:1 wrapper: Squeeze, SqueezeError, set_log_level
-│   ├── engine.py           # High-level Engine entry point
-│   ├── node.py             # Node, PortRef, ParamMap, Param
+│   ├── __init__.py         # Re-exports: Squeeze, Source, Bus, Chain, Processor, etc.
+│   ├── _ffi.py             # ctypes declarations (internal, mechanical)
+│   ├── _helpers.py         # Error checking, string/list conversion (internal)
+│   ├── squeeze.py          # Squeeze — the public entry point
+│   ├── source.py           # Source object
+│   ├── bus.py              # Bus object
+│   ├── chain.py            # Chain object
+│   ├── processor.py        # Processor object
 │   ├── transport.py        # Transport sub-object
 │   ├── midi.py             # Midi, MidiDevice sub-objects
-│   └── types.py            # Direction, SignalType enums; Port, ParamDescriptor, Connection dataclasses
+│   └── types.py            # ParamDescriptor dataclass
 └── tests/
     ├── conftest.py          # Shared fixtures (e.g. lib path, engine setup)
-    ├── test_engine.py       # Low-level tests mirroring the C FFI acceptance tests
-    └── test_highlevel.py    # High-level API tests
+    └── test_squeeze.py      # Python API tests
 ```
 
 ### Conventions
@@ -184,10 +186,9 @@ python/
 - **Test framework:** pytest
 - **Test location:** `python/tests/`
 - **Run tests:** `cd python && pytest`
-- **Every `sq_` function** exposed through the C ABI must have a corresponding low-level `Squeeze` method, a high-level wrapper (on `Engine`, `Node`, `Transport`, `Midi`, etc. as appropriate), and Python tests for both layers
-- **Low-level Python tests mirror C FFI tests.** If a Catch2 FFI test exercises `sq_foo()`, there should be a pytest case exercising `squeeze.Squeeze.foo()`.
-- **High-level Python tests** verify the Pythonic API (`Engine`, `Node`, `>>` operator, `ParamMap`, etc.) in `test_highlevel.py`.
-- **No standalone scripts.** `squeeze.py` as a single-file module is replaced by the package layout above.
+- **Every `sq_` function** exposed through the C ABI must have a corresponding Python method on the appropriate class (`Squeeze`, `Source`, `Bus`, `Chain`, `Processor`, `Transport`, `Midi`) and a pytest case
+- **One set of Python tests.** No separate low-level/high-level test files. Each `sq_*` function is tested through the public Python API.
+- **`_ffi.py` and `_helpers.py` are internal.** Users import `Squeeze`, `Source`, `Bus`, etc. — never `_ffi` or `_helpers`.
 
 ### Build & Install
 
@@ -202,11 +203,10 @@ pytest                    # Run Python tests
 The existing rule — **every tier ships a working FFI and Python client** — extends to the Python test suite. When implementing a new component:
 
 1. Add the `sq_` C ABI functions
-2. Add the low-level Python wrapper method to `squeeze/_low_level.py`
-3. Add the high-level Python wrapper to the appropriate module (`engine.py`, `node.py`, `transport.py`, `midi.py`, `types.py`)
-4. Add low-level Python tests in `python/tests/`
-5. Add high-level Python tests in `python/tests/test_highlevel.py`
-6. All four (C++ Catch2 tests, C FFI Catch2 tests, low-level Python tests, high-level Python tests) must pass before the tier is complete
+2. Add the ctypes declaration to `squeeze/_ffi.py`
+3. Add the Python wrapper to the appropriate module (`squeeze.py`, `source.py`, `bus.py`, `chain.py`, `processor.py`, `transport.py`, `midi.py`, `types.py`)
+4. Add Python tests in `python/tests/`
+5. All three (C++ Catch2 tests, C FFI Catch2 tests, Python tests) must pass before the tier is complete
 
 ---
 

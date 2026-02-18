@@ -80,6 +80,7 @@ add_executable(squeeze_unit_tests
     tests/core/EngineTests.cpp
     tests/core/PluginNodeTests.cpp
     tests/core/PluginManagerTests.cpp
+    tests/core/ProcessorTests.cpp
 )
 
 target_link_libraries(squeeze_unit_tests PRIVATE

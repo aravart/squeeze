@@ -181,17 +181,17 @@ sq_engine_destroy(engine);
 ### Python
 
 ```python
-from squeeze import Engine
+from squeeze import Squeeze
 
-engine = Engine()
+s = Squeeze()
 
-kick = engine.load_buffer("/samples/kick.wav")
-rec = engine.create_buffer(channels=2, length=44100 * 60,
-                           sample_rate=44100.0, name="recording")
+kick = s.load_buffer("/samples/kick.wav")
+rec = s.create_buffer(channels=2, length=44100 * 60,
+                      sample_rate=44100.0, name="recording")
 
-for buf_id, name in engine.buffers:
+for buf_id, name in s.buffers:
     print(f"Buffer {buf_id}: {name}")
 
-engine.remove_buffer(kick)
-engine.close()
+s.remove_buffer(kick)
+s.close()
 ```

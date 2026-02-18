@@ -2,15 +2,17 @@
 
 ## Overview
 
-Squeeze v2 is a modular C++17 audio engine for hosting VST/AU plugins and routing audio through programmable graphs. It exposes a C ABI (`squeeze_ffi`) for multi-language integration — the host language (Python, Rust, etc.) provides the user-facing interface. All routing is explicit (named ports, no global buses), execution order is derived from topology, and the audio thread is strictly lock-free.
+Squeeze v2 is a mixer-centric C++17 audio engine for hosting VST/AU plugins and routing audio through a structured mixer model. It exposes a C ABI (`squeeze_ffi`) for multi-language integration — the host language (Python, Rust, etc.) provides the user-facing interface.
+
+The architecture models what the requirements actually describe: a mixer. Sources generate audio through insert chains, buses sum and process, sends tap signals to effects returns, and the master bus outputs to the audio device. This purpose-built structure replaces the general-purpose node graph, eliminating ports, connections, topological sorts, GroupNode, dynamic ports, and cascading change detection.
 
 ---
 
 ## Design Principles
 
-1. **Connections are the API, topology is derived.** Users declare data flow between nodes via explicit `connect()` calls; the engine computes execution order automatically.
+1. **Mixer-centric model.** The primitives directly model what users build: channel strips, buses, sends, insert racks. Not a circuit diagram — a mixer.
 
-2. **Explicit over implicit.** Named, typed ports with explicit connections. No auto-summing. No global buses. Audio goes where you connect it, nowhere else. Errors caught at connection time, not runtime.
+2. **In-place processing.** Processors read and write the same buffer. Chains call processors sequentially on a single buffer — zero-copy serial processing.
 
 3. **Realtime safety.** The audio thread never blocks, allocates, or waits. All mutations flow through lock-free SPSC queues. Deferred deletion handles cleanup.
 
@@ -36,14 +38,17 @@ Host Language (Python / Rust / Node.js / etc.)
 │  DeviceMgr)  │   PluginCache)              │
 ├──────────────┴──────────────────────────────┤
 │                  Engine                     │
-│  ┌────────┐ ┌────────────┐ ┌────────────┐  │
-│  │ Graph  │ │CommandQueue│ │ PerfMonitor│  │
-│  └────────┘ └────────────┘ └────────────┘  │
+│  ┌──────────┐ ┌────────────┐ ┌──────────┐  │
+│  │ Sources  │ │   Buses    │ │  Master  │  │
+│  └──────────┘ └────────────┘ └──────────┘  │
+│  ┌────────────┐ ┌──────────────────────┐    │
+│  │CommandQueue│ │    MidiRouter        │    │
+│  └────────────┘ └──────────────────────┘    │
 │  ┌────────────┐ ┌──────────────────────┐    │
 │  │ Transport  │ │  EventScheduler      │    │
 │  └────────────┘ └──────────────────────┘    │
 │  ┌──────────────────┐ ┌────────────────┐    │
-│  │ GraphSnapshot    │ │ GarbageQueue   │    │
+│  │ MixerSnapshot    │ │ GarbageQueue   │    │
 │  └──────────────────┘ └────────────────┘    │
 ├─────────────────────────────────────────────┤
 │  BufferLibrary  │    MidiDeviceManager      │
@@ -54,23 +59,102 @@ Host Language (Python / Rust / Node.js / etc.)
 
 ---
 
+## Primitives
+
+### Processor
+
+The base abstraction. Processes audio **in-place** on a buffer. No ports, no connections.
+
+```cpp
+class Processor {
+public:
+    virtual void prepare(double sampleRate, int blockSize) = 0;
+    virtual void process(AudioBuffer& buffer) = 0;
+    virtual void process(AudioBuffer& buffer, const MidiBuffer& midi) { process(buffer); }
+
+    virtual int getParameterCount() const { return 0; }
+    virtual float getParameter(const std::string& name) const { return 0.0f; }
+    virtual void setParameter(const std::string& name, float value) {}
+    virtual int getLatencySamples() const { return 0; }
+
+    const std::string& getName() const;
+    int getHandle() const;
+};
+```
+
+Concrete types: PluginProcessor, GainProcessor, MeterProcessor, RecordingProcessor.
+
+### Chain
+
+An ordered list of Processors. Sequential in-place processing on the same buffer.
+
+```cpp
+class Chain {
+public:
+    void process(AudioBuffer& buffer, const MidiBuffer& midi);
+    int getLatencySamples() const; // sum of all processor latencies
+
+    void append(Processor* p);
+    void insert(int index, Processor* p);
+    Processor* remove(int index);
+    void move(int from, int to);
+};
+```
+
+This is the **insert rack**. Every Source and Bus owns one.
+
+### Source
+
+A sound generator + insert chain + routing + MIDI.
+
+```
+Source
+├── generator: Processor*          (synth, sampler, audio input)
+├── chain: Chain                   (insert effects)
+├── output_bus: Bus*               (where this source feeds)
+├── sends: [(Bus*, float level)]   (send taps with levels)
+└── midi_input: MidiAssignment     (device + channel + note range)
+```
+
+### Bus
+
+A summing point + insert chain + routing.
+
+```
+Bus
+├── inputs: [buffer references]    (from sources or other buses)
+├── chain: Chain                   (insert effects)
+├── output_bus: Bus*               (downstream bus, or master)
+├── sends: [(Bus*, float level)]   (send taps with levels)
+└── metering: peak, rms            (atomic, always available)
+```
+
+### Master
+
+A special Bus. Always exists. Final output to the audio device.
+
+### Send
+
+Not a separate object — a routing entry: `(destination_bus, level_db)`. Engine copies post-chain buffer (scaled) to the destination bus input.
+
+---
+
 ## Component Architecture
 
 ### Engine (core processing kernel)
 
 Engine is the central coordinator. It owns:
 
-- **All nodes** (`std::unique_ptr<Node>`) and a global **IdAllocator**
-- **Top-level Graph** (topology, connections, cycle detection)
+- **All Sources** and **all Buses** (including Master)
 - **CommandQueue** (lock-free control → audio SPSC bridge)
 - **Transport** (tempo, position, loop state)
 - **EventScheduler** (beat-timed event resolution)
 - **PerfMonitor** (audio thread instrumentation)
-- **Built-in output node** representing the audio device
-- **GraphSnapshot** building and atomic swap
+- **MidiRouter** (MIDI device queue dispatch in processBlock)
+- **MixerSnapshot** building and atomic swap
 - **Garbage collection** (deferred deletion of old snapshots)
 
-Engine's `processBlock()` is called by AudioDevice (or directly in tests via `prepareForTesting()`). It drains commands, advances transport, resolves events, routes buffers, and processes nodes in topological order.
+Engine's `processBlock()` is called by AudioDevice (or directly in tests via `render()`). It drains commands, advances transport, resolves events, processes sources, accumulates bus inputs, processes buses in dependency order, and outputs Master.
 
 Engine does **not** own or know about:
 - Audio device management (AudioDevice)
@@ -81,15 +165,15 @@ Engine does **not** own or know about:
 
 ### AudioDevice
 
-Wraps `juce::AudioDeviceManager`. Implements `juce::AudioIODeviceCallback`, calls `Engine::processBlock()` from the JUCE audio callback. Engine has no dependency on JUCE audio devices — AudioDevice depends on Engine, not the other way around.
+Wraps `juce::AudioDeviceManager`. Implements `juce::AudioIODeviceCallback`, calls `Engine::processBlock()` from the JUCE audio callback. Engine has no dependency on JUCE audio devices.
 
 ### PluginManager
 
-Owns `juce::AudioPluginFormatManager` and a plugin cache. Scans for plugins, instantiates them, returns `std::unique_ptr<Node>` (PluginNode). No Engine dependency — returns nodes that Engine then owns.
+Owns `juce::AudioPluginFormatManager` and a plugin cache. Scans for plugins, instantiates them, returns `std::unique_ptr<Processor>` (PluginProcessor). No Engine dependency.
 
 ### BufferLibrary
 
-Owns loaded audio `Buffer` objects with IDs. Uses `juce::AudioFormatManager` for decoding. No Engine dependency — returns Buffer handles that nodes reference.
+Owns loaded audio `Buffer` objects with IDs. Uses `juce::AudioFormatManager` for decoding. No Engine dependency.
 
 ### MidiDeviceManager
 
@@ -97,111 +181,124 @@ Wraps `MidiRouter`. Handles MIDI device open/close and routing rules. Uses its o
 
 ### Message Pump
 
-`sq_pump()` at the FFI level. Drives the process-global JUCE MessageManager and drains Engine's garbage queue. Not an Engine responsibility — it's a process-level concern exposed through the C ABI.
+`sq_pump()` at the FFI level. Drives the process-global JUCE MessageManager and drains Engine's garbage queue.
 
 ---
 
 ## Component Dependency Order
 
-Build bottom-up, organized into phases. A component may only depend on those above it. The order is optimized for an early proof-of-concept: **load a plugin, open a MIDI keyboard, route, and play.**
+Build bottom-up, organized into phases.
 
 ### Phase 1: Foundations (tiers 0–6)
 
 ```
-0.  Logger                (no dependencies — owns its internal lock-free ring buffer)
-1.  Port                  (no dependencies)
-2.  Node                  (Port)
-3.  Graph                 (Node, Port)
-4.  SPSCQueue             (no dependencies)
-5.  CommandQueue           (SPSCQueue)
-6.  MidiRouter            (SPSCQueue)
+0.  Logger                (no dependencies)
+1.  Processor             (JUCE AudioBuffer, MidiBuffer)
+2.  Chain                 (Processor)
+3.  Source                (Processor, Chain)
+4.  Bus                   (Chain)
+5.  SPSCQueue             (no dependencies)
+6.  CommandQueue          (SPSCQueue)
+    MidiRouter            (SPSCQueue, Source)
 ```
 
 ### Phase 2: Engine + Plugin Playback (tiers 7–11) — POC milestone
 
 ```
-7.  Engine                (Graph, CommandQueue, MidiRouter)
-8.  PluginNode            (Node, JUCE plugin hosting)
-9.  PluginManager          (PluginNode, JUCE AudioPluginFormatManager)
+7.  Engine                (Source, Bus, Chain, CommandQueue, MidiRouter)
+8.  PluginProcessor       (Processor, JUCE plugin hosting)
+9.  PluginManager         (PluginProcessor, JUCE AudioPluginFormatManager)
 10. AudioDevice           (Engine, JUCE AudioDeviceManager)
-11. MidiDeviceManager      (MidiRouter)
+11. MidiDeviceManager     (MidiRouter)
 ```
 
-**★ After tier 11:** load a VST plugin from cache, open a MIDI keyboard, route MIDI to the plugin, hear audio output. The first working end-to-end demo.
+**After tier 11:** Load a VST plugin as a Source, open a MIDI keyboard, route MIDI to the source, hear audio output through Master. First working end-to-end demo.
 
-### Phase 3: Composite Nodes (tier 12)
-
-```
-12. GroupNode             (Node, Graph, Engine)
-```
-
-GroupNode is a core graph primitive — composite node types (mixers, channel strips, kits) are GroupNode configurations, not separate node classes. Built early to ensure the subgraph model is solid before adding more features on top.
-
-### Phase 4: Transport & Scheduling (tiers 13–15)
+### Phase 3: Transport & Scheduling (tiers 12–14)
 
 ```
-13. Transport             (no dependencies)
-14. EventScheduler        (SPSCQueue)
-15. PerfMonitor           (no dependencies)
+12. Transport             (no dependencies)
+13. EventScheduler        (SPSCQueue)
+14. PerfMonitor           (no dependencies)
 ```
 
-After phase 4, Engine's processBlock gains transport advance, beat-timed event resolution, loop boundary splitting, and audio thread instrumentation.
+After phase 3, Engine's processBlock gains transport advance, beat-timed event resolution, and audio thread instrumentation.
 
-### Phase 5: Sample Playback (tiers 16–21)
-
-```
-16. Buffer                (no dependencies)
-17. SamplerVoice          (Buffer)
-18. TimeStretchEngine     (signalsmith-stretch)
-19. VoiceAllocator        (SamplerVoice)
-20. SamplerNode           (Node, VoiceAllocator, TimeStretchEngine, Buffer)
-21. BufferLibrary          (Buffer, JUCE AudioFormatManager)
-```
-
-### Phase 6: Advanced (tiers 22–25)
+### Phase 4: Sample Playback (tiers 15–20)
 
 ```
-22. RecorderNode          (Node, Buffer)
-23. MidiSplitterNode      (Node — graph-level MIDI routing with note-range filtering)
-24. ScopeTap / Metering   (SPSCQueue / SeqLock)
+15. Buffer                (no dependencies)
+16. SamplerVoice          (Buffer)
+17. TimeStretchEngine     (signalsmith-stretch)
+18. VoiceAllocator        (SamplerVoice)
+19. SamplerProcessor      (Processor, VoiceAllocator, TimeStretchEngine, Buffer)
+20. BufferLibrary         (Buffer, JUCE AudioFormatManager)
+```
+
+### Phase 5: Advanced (tiers 21–23)
+
+```
+21. RecordingProcessor    (Processor)
+22. PDC                   (Processor, Chain, Source, Bus, Engine — cross-cutting)
+23. MeterProcessor        (Processor)
 ```
 
 ### Notes
 
-Logger is tier 0 — it has no dependencies and every subsequent component uses it.
+Logger is tier 0 — every subsequent component uses it.
 
-Engine is built at tier 7 with a simplified processBlock: drain commands, dispatch MIDI, process nodes. Transport advance (step 5), event resolution (in processSubBlock), and perf monitoring (steps 1/8) are added when those components land in phase 4.
+Engine is built at tier 7 with a simplified processBlock: drain commands, dispatch MIDI, process sources, sum into buses, process buses, output master. Transport advance, event resolution, and perf monitoring are added when those components land in phase 3.
 
-Peripheral components (AudioDevice, PluginManager, BufferLibrary, MidiDeviceManager) are separate from Engine. They extend the system without bloating the Engine class. The FFI layer orchestrates across them via EngineHandle.
+Peripheral components (AudioDevice, PluginManager, BufferLibrary, MidiDeviceManager) are separate from Engine. The FFI layer orchestrates across them via EngineHandle.
+
+---
+
+## Processing Loop
+
+```
+1. For each source (independent — parallelizable):
+      source.generator.process(buffer, midi)
+      source.chain.process(buffer, midi)
+
+2. Accumulate bus inputs:
+      For each source:  add buffer to source.output_bus
+      For each source:  for each send, add buffer * level to send.bus
+      For each bus:     for each send, add buffer * level to send.bus
+
+3. For each bus (in dependency order — DAG sort over buses):
+      bus.chain.process(buffer)
+
+4. master.chain.process(buffer)
+   output(master.buffer)
+```
+
+The dependency sort is over **buses** (typically 2–8), not individual processors. Trivially cheap.
 
 ---
 
 ## Data Flow Examples
 
-### Adding a node and connecting it
+### Adding a source and routing it
 
 ```
 FFI Caller                        Engine (control thread)
     │                                   │
-    │  sq_add_node(engine, node)        │
+    │  sq_add_source_plugin(...)       │
     │──────────────────────────────────▶│
     │                                   │ lock controlMutex_
     │                                   │ collectGarbage()
-    │                                   │ id = idAllocator_.next()
-    │                                   │ nodes_[id] = std::move(node)
-    │                                   │ graph_.addNode(id, nodes_[id].get())
-    │◀──────────────────────────────────│ return id
+    │                                   │ create Source with PluginProcessor generator
+    │                                   │ source.routeTo(master)   // default
+    │                                   │ buildAndSwapSnapshot()
+    │◀──────────────────────────────────│ return SqSource handle
     │                                   │
-    │  sq_connect(engine, src,          │
-    │    "out", dst, "in", &err)        │
+    │  sq_route(engine, src, bus)       │
     │──────────────────────────────────▶│
     │                                   │ lock controlMutex_
     │                                   │ collectGarbage()
-    │                                   │ connId = graph_.connect(src, dst)
-    │                                   │ buildSnapshot() → new GraphSnapshot*
-    │                                   │ commandQueue_.sendCommand(swapSnapshot)
-    │◀──────────────────────────────────│ return connId
-    │                                   │
+    │                                   │ source.routeTo(bus)
+    │                                   │ buildAndSwapSnapshot()
+    │◀──────────────────────────────────│ return
 ```
 
 ### Processing a block
@@ -209,49 +306,50 @@ FFI Caller                        Engine (control thread)
 ```
 Engine::processBlock(numSamples):
 
-  1. commandQueue_.processPending(handler)
+  1. perfMonitor_.beginBlock()
+
+  2. commandQueue_.processPending(handler)
      — install new snapshot if swapped
      — apply transport commands
      — push old snapshot to garbage queue
 
-  2. transport_.advance(numSamples)
-     — update sample position, beat position
-     — detect loop boundary → split point
+  3. midiRouter_.dispatch(sourceBuffers, numSamples)
+     — drain per-device SPSC queues
+     — route messages to destination source MidiBuffers
 
-  3. If loop wraps mid-block:
-     — process [0, splitSample) with pre-wrap beat range
-     — process [splitSample, numSamples) with post-wrap beat range
-     For each sub-block:
+  4. if no active snapshot → write silence, return
 
-  4. eventScheduler_.retrieve(beatStart, beatEnd, subBlockSamples, ...)
-     — resolve beat-timed events to sample offsets
-     — MIDI events → node MidiBuffers
-     — paramChange events → sub-block split points
+  5. transport_.advance(numSamples)
 
-  5. For each node in snapshot execution order:
-     — sum fan-in audio sources into node's input buffer
-     — merge MIDI sources into node's MIDI input buffer
-     — node->process(context)
+  6. For each source: source.process(buffer, midi)
 
-  6. Copy output node's buffer to device output
+  7. Accumulate into buses (sources + sends)
+
+  8. For each bus in dependency order: bus.process(buffer)
+
+  9. Copy master buffer → outputChannels
+
+  10. perfMonitor_.endBlock()
 ```
 
-### Loop boundary splitting
+---
 
-When Transport detects a loop boundary within the current block, Engine splits processing:
+## What's Eliminated (from v1/graph-based architecture)
 
-```
-Block: 512 samples
-Loop region: beats 4.0 → 8.0
-Current position: beat 7.8
-
-Split at loop boundary (e.g., sample 200):
-  Sub-block 1: samples [0, 200)   → beats [7.8, 8.0)
-  Sub-block 2: samples [200, 512) → beats [4.0, 4.6...)
-
-Each sub-block gets its own retrieve() call with a monotonic beat range.
-Nodes see shorter numSamples — they are unaware of the split.
-```
+| Old Concept | Replacement |
+|---|---|
+| Node (with ports) | Processor (no ports, in-place) |
+| Port / PortDescriptor | Gone — chains pass one buffer, buses sum explicitly |
+| Connection | Gone — routing is source→bus, bus→bus, send→bus |
+| Graph / GraphSnapshot | Gone — MixerSnapshot with bus DAG |
+| GroupNode | Gone — Bus + Chain cover all composition patterns |
+| Dynamic ports | Gone — chains grow/shrink, buses accept any input |
+| Port export/unexport | Gone |
+| Cascading change detection | Gone |
+| Global IdAllocator | Gone — opaque handles |
+| Topology sort over N nodes | Sort over M buses (M << N) |
+| MidiSplitterNode | Gone — MIDI routing table |
+| Doubled `sq_group_*` API | Gone — one API surface |
 
 ---
 
@@ -259,17 +357,17 @@ Nodes see shorter numSamples — they are unaware of the split.
 
 | Thread | Locks controlMutex? | May block? | Responsibilities |
 |--------|---------------------|------------|------------------|
-| Audio (processBlock) | Never | Never | Drain commands, advance transport, resolve events, process nodes |
+| Audio (processBlock) | Never | Never | Drain commands, advance transport, process sources/buses |
 | FFI caller (host language) | Yes | Yes | All control-plane operations via `sq_*` functions |
 | AudioDevice callback | Never | Never | Calls Engine::processBlock() |
 | MIDI callback | Never | No | Writes to MidiRouter SPSC queue |
 | GUI / message thread | Never | Yes | Plugin editor windows, JUCE MessageManager |
 
 **Communication:**
-- Control → Audio: lock-free SPSC queue (CommandQueue). Engine's `controlMutex_` ensures the SPSC single-producer invariant when multiple FFI callers exist.
+- Control → Audio: lock-free SPSC queue (CommandQueue)
 - Audio → Control: lock-free SPSC queue (garbage items, meter data)
-- Beat-timed events: SPSC queue (EventScheduler — control → audio)
-- MIDI device input: SPSC queue (MidiRouter — MIDI callback → audio)
+- Beat-timed events: SPSC queue (EventScheduler)
+- MIDI device input: SPSC queue (MidiRouter)
 
 **Lock ordering:** `controlMutex_` must never be held when acquiring `MessageManagerLock`.
 
@@ -291,54 +389,35 @@ All code on the audio thread must be RT-safe.
 - Atomic operations
 - `std::array`, pre-allocated buffers
 - Arithmetic, DSP, SIMD
-- Calling `Node::process()` (nodes must also be RT-safe)
+- Calling `Processor::process()` (processors must also be RT-safe)
 
 ### Deferred deletion pattern
-Old graph snapshots and buffers are pushed to the garbage queue by the audio thread and freed later by the control thread (via `CommandQueue::collectGarbage()`).
+Old snapshots and removed processors are pushed to the garbage queue by the audio thread and freed later by the control thread (via `CommandQueue::collectGarbage()`).
 
 ---
 
 ## Key Design Patterns
 
-### Graph snapshot swap
-The control thread builds a `GraphSnapshot` (execution order, pre-allocated buffers per node), then atomically swaps it in via the CommandQueue. The audio thread never modifies the graph — it reads an immutable snapshot.
+### Mixer snapshot swap
+The control thread builds a `MixerSnapshot` (source arrays, bus arrays in dependency order, pre-allocated buffers, routing tables), then atomically swaps it in via the CommandQueue. The audio thread reads the immutable snapshot.
 
-### Topology is derived
-Users declare data flow between nodes; the engine computes execution order automatically via Kahn's algorithm in `Graph::getExecutionOrder()`.
+### Bus dependency sort
+Buses form a DAG through their `routeTo` relationships and sends. The Engine sorts buses in dependency order at snapshot build time. With ~4-8 buses, this is trivially cheap.
+
+### In-place processing
+Processors read and write the same buffer. Chains call processors sequentially on a single buffer. No separate input/output buffers, no port declarations, no channel routing.
 
 ### Sub-block parameter splitting
-When parameter changes arrive mid-block (from EventScheduler), the engine splits processing into sub-blocks at each change point. Nodes are unaware — they just see shorter `numSamples`.
+When parameter changes arrive mid-block (from EventScheduler), the engine splits processing into sub-blocks at each change point. Processors are unaware — they just see shorter `numSamples`.
 
 ### Error reporting
-Internal C++ functions return `bool`/`int` with `std::string& errorMessage` out-params. The C ABI returns error codes (`SqResult`) and provides `sq_error_message()` for the last error string.
-
-### Connections as API
-Topology is derived from explicit `connect()` calls. Connections validate: matching signal types, no cycles (BFS detection). Both audio and MIDI allow fan-in — the Engine sums multiple audio sources into the input buffer before calling `process()`.
-
-### Explicit output routing
-No auto-summing anywhere. Audio goes where you connect it, nowhere else. Engine provides a built-in output node representing the audio device. All audio chains must explicitly connect to it:
-
-```python
-engine.connect(synth, "out", engine.output, "in")
-```
-
-Nodes with unconnected audio outputs are warned about at info level ("node 'Diva' output 'out' is unconnected") but produce no sound. This applies uniformly to Engine and GroupNode — all routing is explicit at every level.
-
-### GroupNode (composite subgraph)
-A `GroupNode` owns an internal `Graph` and implements the `Node` interface. It exports selected internal ports as group-level ports via `exportInput()` / `exportOutput()`. From the parent graph's perspective, it's just another node. Composite node types like mixers, channel strips, and kits are GroupNode configurations, not separate classes.
-
-### Dynamic ports
-Most nodes declare fixed ports at construction. GroupNode supports dynamic port export/unexport on the control thread — adding an input to a mixer bus or inserting an FX slot does not require tearing down and rebuilding the node. Port changes are graph mutations: modify ports, reconnect, rebuild snapshot, atomic swap. Removing a port auto-disconnects any connections referencing it.
-
-### Scope / meter taps
-Audio thread publishes metering data via SeqLock (like PerfMonitor). Scope taps use SPSC ring buffers. FFI callers read the latest values — no IPC, no shared memory, just in-process lock-free reads.
+Internal C++ functions return `bool`/`int` with `std::string& errorMessage` out-params. The C ABI returns error codes and provides `sq_free_string()` for error strings.
 
 ### C ABI conventions
-- Opaque handles: `SqEngine`, `SqNode`, `SqScope`, etc. (pointers to internal C++ objects)
+- Opaque handles: `SqEngine`, `SqSource`, `SqBus`, `SqProc`
 - All functions prefixed `sq_`
-- Error returns via `SqResult` enum
 - No C++ types in the public header — plain C, `extern "C"`
-- Caller manages handle lifetime via `sq_*_create` / `sq_*_destroy` pairs
+- Caller manages handle lifetime
 
 ---
 
@@ -346,11 +425,11 @@ Audio thread publishes metering data via SeqLock (like PerfMonitor). Scope taps 
 
 | Date | Decision | Rationale |
 |------|----------|-----------|
-| 2026-02-07 | Engine control-plane mutex | Each gateway calls Engine directly; Engine serializes with `std::mutex`. Simpler than a shared command queue. |
-| 2026-02-16 | Split Engine into core + peripherals | v1 Engine was a god class. AudioDevice, PluginManager, BufferLibrary, MidiDeviceManager are separate components. Engine is a focused processing kernel. |
-| 2026-02-16 | AudioDevice depends on Engine, not vice versa | Engine doesn't know about JUCE audio devices. AudioDevice wraps DeviceManager and calls processBlock(). Enables headless testing via prepareForTesting(). |
-| 2026-02-16 | PluginManager: cache + instantiation in one class | Replaces v1's separate PluginCache. Owns AudioPluginFormatManager, loads XML cache, creates PluginNode instances. No Engine dependency — returns nodes. |
-| 2026-02-16 | BufferLibrary: separate component with ID registry | Owns AudioFormatManager and buffer ID map. Monotonic IDs (never reused). removeBuffer() returns unique_ptr for deferred deletion. No Engine dependency. |
-| 2026-02-16 | MidiDeviceManager / MidiRouter two-class split | MidiRouter (tier 6) handles routing table + audio-thread dispatch. MidiDeviceManager (tier 11) adds JUCE device open/close. Router works standalone (programmatic MIDI via EventScheduler). |
-| 2026-02-16 | EngineHandle holds all top-level components | FFI layer orchestrates across Engine, AudioDevice, PluginManager, BufferLibrary, MidiDeviceManager. Engine never knows about peripheral components. |
-| 2026-02-16 | Reorder tiers for plugin+MIDI POC | First milestone is "load plugin, open MIDI keyboard, play." Moved SPSCQueue/CommandQueue/MidiRouter to phase 1, PluginNode/PluginManager/AudioDevice/MidiDeviceManager to phase 2. Transport/EventScheduler/PerfMonitor deferred to phase 3. GroupNode deferred to phase 5. |
+| 2026-02-07 | Engine control-plane mutex | Serializes FFI callers. Simpler than a shared command queue. |
+| 2026-02-16 | Split Engine into core + peripherals | AudioDevice, PluginManager, BufferLibrary, MidiDeviceManager are separate components. |
+| 2026-02-16 | AudioDevice depends on Engine, not vice versa | Enables headless testing. |
+| 2026-02-16 | EngineHandle holds all top-level components | FFI layer orchestrates across Engine, AudioDevice, PluginManager, etc. |
+| 2026-02-17 | Mixer-centric architecture | Requirements describe a mixer, not an arbitrary signal graph. Purpose-built primitives (Source, Bus, Chain, Processor) replace general-purpose graph (Node, Port, Connection, Graph, GroupNode). Dramatically simpler, fewer concepts, better performance, API reads like a mixer. |
+| 2026-02-17 | In-place processing model | Processors process audio in-place on a single buffer. Chains are zero-copy sequential. Eliminates separate input/output buffers, port channel routing, and fan-in summation at the processor level. |
+| 2026-02-17 | Bus DAG replaces node graph | Routing is source→bus, bus→bus, send→bus. The dependency sort is over ~4-8 buses, not hundreds of nodes. Topological sort is trivially cheap. |
+| 2026-02-17 | Opaque handles replace node IDs | Processors, Sources, and Buses are identified by opaque handles. No global IdAllocator needed. |

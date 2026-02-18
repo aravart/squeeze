@@ -148,16 +148,15 @@ sq_engine_destroy(engine);
 ### Python
 
 ```python
-from squeeze import Engine
+from squeeze import Squeeze
 
-engine = Engine()
-engine.start(sample_rate=44100.0, block_size=512)
+s = Squeeze()
+s.start()
 
-print(f"Running: {engine.is_running}")
-print(f"SR: {engine.sample_rate}, BS: {engine.block_size}")
+print(f"SR: {s.sample_rate}, BS: {s.block_size}")
 
-engine.stop()
-engine.close()
+s.stop()
+s.close()
 ```
 
 ### Headless testing (no AudioDevice)

@@ -2,27 +2,32 @@
 
 ## Responsibilities
 
-- Own all nodes (`std::unique_ptr<Node>`) and provide a global `IdAllocator`
-- Own the top-level `Graph` (topology, connections, cycle detection)
+- Own all Sources and Buses (including the Master bus)
 - Own `CommandQueue` (lock-free control → audio SPSC bridge)
 - Own `Transport` (tempo, position, loop state)
 - Own `EventScheduler` (beat-timed event resolution)
 - Own `PerfMonitor` (audio thread instrumentation)
 - Own `MidiRouter` (MIDI device queue dispatch in processBlock)
-- Provide a built-in **output node** representing the audio device
-- Build and swap `GraphSnapshot` (execution order + pre-allocated buffers)
-- Execute `processBlock()`: drain commands, advance transport, resolve events, route buffers, process nodes
-- Manage garbage collection (deferred deletion of old snapshots via `CommandQueue::collectGarbage()`)
-- Detect and handle cascading topology changes from GroupNode port mutations
-- Warn at info level when a node's audio output has no consumers
+- Provide the **Master bus** — the always-present final output destination
+- Build and swap lightweight snapshots (source/bus arrays, routing tables, processor arrays)
+- Execute `processBlock()`: drain commands, advance transport, resolve events, process sources, accumulate bus inputs, process buses in dependency order, output master
+- Manage garbage collection (deferred deletion of old snapshots)
+- Detect and reject routing changes that would create bus DAG cycles
 - Accept `sampleRate` and `blockSize` as constructor parameters (immutable for the engine's lifetime)
+- Assign opaque handles to processors, sources, and buses
 - Report the engine version string
 
 ## Overview
 
-Engine is the core processing kernel of Squeeze v2. It coordinates graph topology, audio processing, transport, and event scheduling. It is a focused component — peripheral concerns (audio device, plugin management, buffer library, MIDI devices, message pump) are handled by separate components that interact with Engine through its public interface.
+Engine is the core processing kernel of Squeeze v2. It coordinates a mixer-centric architecture: Sources generate audio through insert chains, Buses sum and process audio through their own insert chains, and the Master bus outputs to the audio device. There is no general-purpose node graph, no ports, no connections, and no topological sort over individual processors.
 
-The control thread acquires `controlMutex_` for all mutations. The audio thread calls `processBlock()` without locking — it reads an immutable `GraphSnapshot` and drains lock-free queues.
+The processing loop is:
+1. Process all sources independently (generator → chain)
+2. Accumulate source outputs + sends into bus input buffers
+3. Process buses in dependency order (bus DAG — typically 2-8 buses)
+4. Process Master bus, output to audio device
+
+The control thread acquires `controlMutex_` for all mutations. The audio thread calls `processBlock()` without locking — it reads an immutable snapshot and drains lock-free queues.
 
 ## Interface
 
@@ -36,27 +41,61 @@ public:
     Engine(double sampleRate, int blockSize);
     ~Engine();
 
-    std::string getVersion() const;  // Returns "0.2.0"
+    std::string getVersion() const;  // Returns "0.3.0"
 
-    // --- Node management (control thread) ---
-    int addNode(std::unique_ptr<Node> node, const std::string& name);
-    bool removeNode(int nodeId);
-    Node* getNode(int nodeId) const;
-    std::string getNodeName(int nodeId) const;
-    int getOutputNodeId() const;  // built-in output node
+    // --- Source management (control thread) ---
+    Source* addSource(const std::string& name, std::unique_ptr<Processor> generator);
+    bool removeSource(Source* src);
+    Source* getSource(int handle) const;
+    std::vector<Source*> getSources() const;
 
-    // --- Connections (control thread) ---
-    int connect(int srcNode, const std::string& srcPort,
-                int dstNode, const std::string& dstPort,
-                std::string& error);
-    bool disconnect(int connectionId);
-    std::vector<Connection> getConnections() const;
+    // --- Bus management (control thread) ---
+    Bus* addBus(const std::string& name);
+    bool removeBus(Bus* bus);
+    Bus* getBus(int handle) const;
+    std::vector<Bus*> getBuses() const;
+    Bus* getMaster() const;
+
+    // --- Routing (control thread) ---
+    void route(Source* src, Bus* bus);
+    int  sendFrom(Source* src, Bus* bus, float levelDb);
+    void removeSend(Source* src, int sendId);
+    void setSendLevel(Source* src, int sendId, float levelDb);
+
+    void busRoute(Bus* from, Bus* to);
+    int  busSend(Bus* from, Bus* to, float levelDb);
+    void busRemoveSend(Bus* bus, int sendId);
+    void busSendLevel(Bus* bus, int sendId, float levelDb);
+
+    // --- Insert chains (control thread) ---
+    // Source chain operations
+    Processor* sourceAppend(Source* src, std::unique_ptr<Processor> p);
+    Processor* sourceInsert(Source* src, int index, std::unique_ptr<Processor> p);
+    void sourceRemove(Source* src, int index);
+
+    // Bus chain operations
+    Processor* busAppend(Bus* bus, std::unique_ptr<Processor> p);
+    Processor* busInsert(Bus* bus, int index, std::unique_ptr<Processor> p);
+    void busRemove(Bus* bus, int index);
 
     // --- Parameters (control thread) ---
-    float getParameter(int nodeId, const std::string& name) const;
-    bool setParameter(int nodeId, const std::string& name, float value);
-    std::string getParameterText(int nodeId, const std::string& name) const;
-    std::vector<ParameterDescriptor> getParameterDescriptors(int nodeId) const;
+    float getParameter(int procHandle, const std::string& name) const;
+    bool setParameter(int procHandle, const std::string& name, float value);
+    std::string getParameterText(int procHandle, const std::string& name) const;
+    std::vector<ParamDescriptor> getParameterDescriptors(int procHandle) const;
+
+    // --- MIDI (control thread) ---
+    void midiAssign(Source* src, const std::string& device, int channel);
+    void midiNoteRange(Source* src, int low, int high);
+    void midiCCMap(int procHandle, const std::string& paramName, int ccNumber);
+
+    // --- Mute (control thread) ---
+    void setSourceMuted(Source* src, bool muted);
+    void setBusMuted(Bus* bus, bool muted);
+
+    // --- Metering (any thread) ---
+    float busPeak(Bus* bus) const;
+    float busRMS(Bus* bus) const;
 
     // --- Transport forwarding (control thread → CommandQueue) ---
     void transportPlay();
@@ -75,37 +114,44 @@ public:
     bool isTransportPlaying() const;
 
     // --- Event scheduling (control thread → EventScheduler) ---
-    bool scheduleNoteOn(int nodeId, double beatTime, int channel, int note, float velocity);
-    bool scheduleNoteOff(int nodeId, double beatTime, int channel, int note);
-    bool scheduleCC(int nodeId, double beatTime, int channel, int ccNum, int ccVal);
-    bool scheduleParamChange(int nodeId, double beatTime, const std::string& paramName, float value);
+    bool scheduleNoteOn(Source* src, double beatTime, int channel, int note, float velocity);
+    bool scheduleNoteOff(Source* src, double beatTime, int channel, int note);
+    bool scheduleCC(Source* src, double beatTime, int channel, int ccNum, int ccVal);
+    bool scheduleParamChange(int procHandle, double beatTime, const std::string& paramName, float value);
+
+    // --- PDC (control thread) ---
+    void setPDCEnabled(bool enabled);
+    bool isPDCEnabled() const;
+    int getProcessorLatency(int procHandle) const;
+    int getTotalLatency() const;
 
     // --- Audio processing (audio thread) ---
     void processBlock(float** outputChannels, int numChannels, int numSamples);
 
     // --- Testing ---
-    void render(int numSamples);  // process one block in test mode (allocates output buffer internally)
+    void render(int numSamples);  // process one block in test mode
 
     // --- Query ---
-    std::vector<std::pair<int, std::string>> getNodes() const;
-    std::vector<int> getExecutionOrder() const;
-    int getNodeCount() const;
+    int getSourceCount() const;
+    int getBusCount() const;
 
 private:
     mutable std::mutex controlMutex_;
 
-    // Node storage
-    struct NodeEntry {
-        std::unique_ptr<Node> node;
-        std::string name;
-    };
-    std::unordered_map<int, NodeEntry> nodes_;
-    IdAllocator idAllocator_;
-    int outputNodeId_ = -1;
+    // Sources and Buses
+    std::vector<std::unique_ptr<Source>> sources_;
+    std::vector<std::unique_ptr<Bus>> buses_;
+    Bus* master_ = nullptr;  // always the first bus, never removed
 
-    // Graph and snapshot
-    Graph graph_;
-    GraphSnapshot* activeSnapshot_ = nullptr;
+    // Handle allocation
+    int nextHandle_ = 1;
+
+    // Processor handle registry (all processors across all sources and buses)
+    std::unordered_map<int, Processor*> processorRegistry_;
+
+    // Snapshot
+    struct MixerSnapshot;
+    MixerSnapshot* activeSnapshot_ = nullptr;
 
     // Sub-components
     CommandQueue commandQueue_;
@@ -114,10 +160,13 @@ private:
     PerfMonitor perfMonitor_;
     MidiRouter midiRouter_;
 
+    bool pdcEnabled_ = true;
+
     // Internal
     void buildAndSwapSnapshot();
-    void handleCommand(const Command& cmd);  // audio thread command handler
-    void checkForCascadingChanges();          // after GroupNode mutations
+    void handleCommand(const Command& cmd);
+    bool wouldCreateCycle(Bus* from, Bus* to) const;
+    int assignHandle();
 };
 
 } // namespace squeeze
@@ -127,87 +176,116 @@ private:
 
 ```c
 typedef void* SqEngine;
+typedef void* SqSource;
+typedef void* SqBus;
+typedef void* SqProc;
 
 // Lifecycle
-SqEngine sq_engine_create(double sample_rate, int block_size, char** error);
-void     sq_engine_destroy(SqEngine engine);
+SqEngine sq_create(double sample_rate, int block_size, char** error);
+void     sq_destroy(SqEngine engine);
 char*    sq_version(SqEngine engine);
 void     sq_free_string(char* s);
 
-// Node management
-// No generic sq_add_node — node creation is type-specific at the FFI level:
-//   sq_add_plugin(engine, name, &error)  → PluginManager creates, Engine owns
-//   sq_add_gain(engine, &error)          → built-in test/utility nodes
-// Each creator returns a node ID (or -1 on failure).
-bool sq_remove_node(SqEngine engine, int node_id);
-int  sq_output_node(SqEngine engine);
-char* sq_node_name(SqEngine engine, int node_id);
-int  sq_node_count(SqEngine engine);
-SqIdNameList sq_nodes(SqEngine engine);
+// Sources
+SqSource sq_add_source_plugin(SqEngine engine, const char* name,
+                               const char* plugin_path, char** error);
+SqSource sq_add_source_input(SqEngine engine, const char* name, int hw_channel);
+void     sq_remove_source(SqEngine engine, SqSource src);
+int      sq_source_count(SqEngine engine);
 
-// Connections
-int  sq_connect(SqEngine engine, int src_node, const char* src_port,
-                int dst_node, const char* dst_port, char** error);
-bool sq_disconnect(SqEngine engine, int conn_id);
-SqConnectionList sq_connections(SqEngine engine);
+// Buses
+SqBus    sq_add_bus(SqEngine engine, const char* name);
+void     sq_remove_bus(SqEngine engine, SqBus bus);
+SqBus    sq_master(SqEngine engine);
+int      sq_bus_count(SqEngine engine);
 
-// Parameters
-float sq_get_param(SqEngine engine, int node_id, const char* name);
-bool  sq_set_param(SqEngine engine, int node_id, const char* name, float value);
-char* sq_param_text(SqEngine engine, int node_id, const char* name);
-SqParamDescriptorList sq_param_descriptors(SqEngine engine, int node_id);
+// Routing
+void     sq_route(SqEngine engine, SqSource src, SqBus bus);
+int      sq_send(SqEngine engine, SqSource src, SqBus bus, float level_db);
+void     sq_remove_send(SqEngine engine, SqSource src, int send_id);
+void     sq_set_send_level(SqEngine engine, SqSource src, int send_id, float level_db);
+void     sq_bus_route(SqEngine engine, SqBus from, SqBus to);
+int      sq_bus_send(SqEngine engine, SqBus from, SqBus to, float level_db);
+void     sq_bus_remove_send(SqEngine engine, SqBus bus, int send_id);
+void     sq_bus_set_send_level(SqEngine engine, SqBus bus, int send_id, float level_db);
+
+// Insert chains
+SqProc   sq_source_append(SqEngine engine, SqSource src, const char* plugin_path);
+SqProc   sq_source_insert(SqEngine engine, SqSource src, int index, const char* plugin_path);
+void     sq_source_remove_proc(SqEngine engine, SqSource src, int index);
+int      sq_source_chain_size(SqEngine engine, SqSource src);
+
+SqProc   sq_bus_append(SqEngine engine, SqBus bus, const char* plugin_path);
+SqProc   sq_bus_insert(SqEngine engine, SqBus bus, int index, const char* plugin_path);
+void     sq_bus_remove_proc(SqEngine engine, SqBus bus, int index);
+int      sq_bus_chain_size(SqEngine engine, SqBus bus);
+
+// Parameters (by processor handle)
+float    sq_get_param(SqEngine engine, SqProc proc, const char* name);
+void     sq_set_param(SqEngine engine, SqProc proc, const char* name, float value);
+char*    sq_param_text(SqEngine engine, SqProc proc, const char* name);
+int      sq_param_count(SqEngine engine, SqProc proc);
+SqParamDescriptorList sq_param_descriptors(SqEngine engine, SqProc proc);
+
+// MIDI
+void     sq_midi_assign(SqEngine engine, SqSource src, const char* device, int channel);
+void     sq_midi_note_range(SqEngine engine, SqSource src, int low, int high);
+void     sq_midi_cc_map(SqEngine engine, SqProc proc, const char* param, int cc_number);
+
+// Mute
+void     sq_source_set_muted(SqEngine engine, SqSource src, bool muted);
+bool     sq_source_is_muted(SqEngine engine, SqSource src);
+void     sq_bus_set_muted(SqEngine engine, SqBus bus, bool muted);
+bool     sq_bus_is_muted(SqEngine engine, SqBus bus);
+
+// Metering
+float    sq_bus_peak(SqEngine engine, SqBus bus);
+float    sq_bus_rms(SqEngine engine, SqBus bus);
+
+// PDC
+void     sq_set_pdc_enabled(SqEngine engine, bool enabled);
+bool     sq_pdc_enabled(SqEngine engine);
+int      sq_proc_latency(SqEngine engine, SqProc proc);
+int      sq_total_latency(SqEngine engine);
+
+// Plugin editor
+void     sq_editor_open(SqEngine engine, SqProc proc);
+void     sq_editor_close(SqEngine engine, SqProc proc);
 
 // Transport
-void sq_transport_play(SqEngine engine);
-void sq_transport_stop(SqEngine engine);
-void sq_transport_pause(SqEngine engine);
-void sq_transport_set_tempo(SqEngine engine, double bpm);
-void sq_transport_set_time_signature(SqEngine engine, int numerator, int denominator);
-void sq_transport_seek_samples(SqEngine engine, int64_t samples);
-void sq_transport_seek_beats(SqEngine engine, double beats);
-void sq_transport_set_loop_points(SqEngine engine, double start_beats, double end_beats);
-void sq_transport_set_looping(SqEngine engine, bool enabled);
-double sq_transport_position(SqEngine engine);
-double sq_transport_tempo(SqEngine engine);
-bool sq_transport_is_playing(SqEngine engine);
+void     sq_transport_play(SqEngine engine);
+void     sq_transport_stop(SqEngine engine);
+void     sq_transport_pause(SqEngine engine);
+void     sq_transport_set_tempo(SqEngine engine, double bpm);
+void     sq_transport_set_time_signature(SqEngine engine, int numerator, int denominator);
+void     sq_transport_seek_samples(SqEngine engine, int64_t samples);
+void     sq_transport_seek_beats(SqEngine engine, double beats);
+void     sq_transport_set_loop_points(SqEngine engine, double start_beats, double end_beats);
+void     sq_transport_set_looping(SqEngine engine, bool enabled);
+double   sq_transport_position(SqEngine engine);
+double   sq_transport_tempo(SqEngine engine);
+bool     sq_transport_is_playing(SqEngine engine);
 
 // Event scheduling
-bool sq_schedule_note_on(SqEngine engine, int node_id, double beat_time,
-                         int channel, int note, float velocity);
-bool sq_schedule_note_off(SqEngine engine, int node_id, double beat_time,
-                          int channel, int note);
-bool sq_schedule_cc(SqEngine engine, int node_id, double beat_time,
-                    int channel, int cc_num, int cc_val);
-bool sq_schedule_param_change(SqEngine engine, int node_id, double beat_time,
-                              const char* param_name, float value);
+bool     sq_schedule_note_on(SqEngine engine, SqSource src, double beat_time,
+                              int channel, int note, float velocity);
+bool     sq_schedule_note_off(SqEngine engine, SqSource src, double beat_time,
+                               int channel, int note);
+bool     sq_schedule_cc(SqEngine engine, SqSource src, double beat_time,
+                         int channel, int cc_num, int cc_val);
+bool     sq_schedule_param_change(SqEngine engine, SqProc proc, double beat_time,
+                                   const char* param_name, float value);
 
 // Testing
-void sq_render(SqEngine engine, int num_samples);
+void     sq_render(SqEngine engine, int num_samples);
 
-// Message pump (process-global, not Engine-specific)
-void sq_pump(void);
+// Message pump
+void     sq_pump(void);
 ```
 
 ### FFI List Types
 
-Shared return types for functions that return variable-length lists. The caller frees each with its corresponding `sq_free_*` function.
-
 ```c
-typedef struct {
-    int* ids;
-    char** names;
-    int count;
-} SqIdNameList;
-
-typedef struct {
-    int* ids;
-    int* src_nodes;
-    char** src_ports;
-    int* dst_nodes;
-    char** dst_ports;
-    int count;
-} SqConnectionList;
-
 typedef struct {
     char** names;
     float* min_values;
@@ -221,8 +299,6 @@ typedef struct {
     int count;
 } SqStringList;
 
-void sq_free_id_name_list(SqIdNameList list);
-void sq_free_connection_list(SqConnectionList list);
 void sq_free_param_descriptor_list(SqParamDescriptorList list);
 void sq_free_string_list(SqStringList list);
 ```
@@ -239,24 +315,9 @@ struct EngineHandle {
 };
 ```
 
-`sq_engine_create(sr, bs)` allocates an `EngineHandle` on the heap. The returned opaque `SqEngine` pointer is the only handle the caller needs. Peripheral components (AudioDevice, PluginManager, BufferLibrary, MidiDeviceManager) are peers of Engine within the handle — Engine never knows about them.
+`sq_create(sr, bs)` allocates an `EngineHandle` on the heap. The returned opaque `SqEngine` pointer is the only handle the caller needs. Peripheral components (AudioDevice, PluginManager, BufferLibrary, MidiDeviceManager) are peers of Engine within the handle — Engine never knows about them.
 
-**FFI orchestration:** Some `sq_*` functions span multiple components. For example, `sq_add_plugin(handle, "Diva", &err)` calls `handle->pluginManager.createNode("Diva", ...)` then `handle->engine.addNode(std::move(node), "Diva")`. Similarly, `sq_load_buffer` uses BufferLibrary, and buffer assignment to nodes is orchestrated through both BufferLibrary and Engine. These are FFI-layer concerns, not Engine methods.
-
-## Built-in Output Node
-
-Engine creates a built-in output node at construction. This node represents the audio device and is the only path to audible output.
-
-- The output node has a well-known ID accessible via `getOutputNodeId()` / `sq_output_node()` / `engine.output`
-- It has a stereo audio input port `"in"` (channel count may be configurable later)
-- It cannot be removed
-- Audio chains must explicitly connect to it: `sq_connect(engine, synth, "out", SQ_OUTPUT, "in", &error)`
-- Nodes with unconnected audio outputs are warned about at info level during snapshot rebuild
-
-```python
-synth = engine.add_plugin("Diva")
-engine.connect(synth, "out", engine.output, "in")  # explicit — no sound without this
-```
+**FFI orchestration:** Some `sq_*` functions span multiple components. For example, `sq_add_source_plugin(handle, "Lead", "Diva.vst3", &err)` calls `handle->pluginManager.createProcessor("Diva.vst3", ...)` then `handle->engine.addSource("Lead", std::move(processor))`. Similarly, `sq_source_append(handle, src, "EQ.vst3")` creates a processor via PluginManager, then appends it to the source's chain.
 
 ## processBlock Sequence
 
@@ -270,26 +331,21 @@ processBlock(outputChannels, numChannels, numSamples):
   2. commandQueue_.processPending([this](cmd) { handleCommand(cmd); })
      — swapSnapshot: install new, push old to garbage
      — transport commands: forward to transport_
-     — transport stop/seek: also clear eventScheduler_
 
-  3. midiRouter_.dispatch(snapshot nodeBuffers, numSamples)
-     — drain per-device SPSC queues
-     — route messages to destination node MidiBuffers per routing table
+  3. if no active snapshot → write silence, return
 
-  4. if no active snapshot → write silence, return
-
-  5. transport_.advance(numSamples)
+  4. transport_.advance(numSamples)
      — detect loop boundary → compute splitSample
 
-  6. if loop wraps mid-block:
+  5. if loop wraps mid-block:
        processSubBlock(0, splitSample, prewrapBeats)
        processSubBlock(splitSample, numSamples, postwrapBeats)
      else:
        processSubBlock(0, numSamples, blockBeats)
 
-  7. copy output node's buffer → outputChannels
+  6. copy master bus buffer → outputChannels
 
-  8. perfMonitor_.endBlock()
+  7. perfMonitor_.endBlock()
 ```
 
 ### processSubBlock
@@ -300,87 +356,111 @@ processSubBlock(startSample, endSample, beatRange):
   1. eventScheduler_.retrieve(beatStart, beatEnd, subSamples, tempo, sr, ...)
      — resolve beat-timed events to sample offsets
 
-  2. collect paramChange events → sub-block split points
-     dispatch MIDI events → target node MidiBuffers
+  2. dispatch MIDI events → source MidiBuffers (via MidiRouter + assignments)
+     collect paramChange events → sub-block split points
 
-  3. for each sub-block between parameter split points:
-       for each node in snapshot execution order:
-         — sum fan-in audio into input buffer
-         — merge MIDI into input MIDI buffer
-         — node->process(context)
-         — apply parameter changes at sub-block boundaries
+  3. For each source (independent — future: parallelizable):
+       source.process(buffer, midiBuffer)
+
+  4. Accumulate bus inputs:
+       For each source:
+         add source buffer to source.outputBus input accumulator
+       For each source:
+         for each send, add buffer * db_to_linear(level) to send.bus accumulator
+       For each bus (in dependency order):
+         for each send, add buffer * db_to_linear(level) to send.bus accumulator
+
+  5. For each bus in dependency order:
+       bus.process(buffer)    // sum + chain + metering
+
+  6. Master: bus.process(buffer) // always last
 ```
 
-## GraphSnapshot (internal)
+## MixerSnapshot (internal)
 
-`GraphSnapshot` is an immutable, pre-computed structure built by the control thread and swapped into the audio thread atomically via CommandQueue. The audio thread reads the active snapshot — it never modifies Graph directly.
+`MixerSnapshot` is a lightweight, immutable structure built by the control thread and swapped into the audio thread atomically via CommandQueue. Much simpler than the graph-based `GraphSnapshot`.
 
 ```cpp
-struct GraphSnapshot {
-    // Execution order (topologically sorted node IDs)
-    std::vector<int> executionOrder;
-
-    // Per-node pre-allocated buffers
-    struct NodeBuffers {
-        juce::AudioBuffer<float> audio;   // pre-sized to max channels × block size
-        juce::MidiBuffer midi;
+struct MixerSnapshot {
+    // Source processing arrays
+    struct SourceEntry {
+        Source* source;
+        std::vector<Processor*> chainProcessors;  // snapshot of chain state
+        juce::AudioBuffer<float> buffer;           // pre-allocated
+        juce::MidiBuffer midiBuffer;               // pre-allocated
+        Bus* outputBus;
+        std::vector<Send> sends;
     };
-    std::unordered_map<int, NodeBuffers> nodeBuffers;
+    std::vector<SourceEntry> sources;
 
-    // Fan-in connection lists (which sources feed each node's input)
-    struct FanIn {
-        int sourceNodeId;
-        std::string sourcePort;
-        std::string destPort;
+    // Bus processing arrays (in dependency order)
+    struct BusEntry {
+        Bus* bus;
+        std::vector<Processor*> chainProcessors;   // snapshot of chain state
+        juce::AudioBuffer<float> buffer;            // pre-allocated
+        std::vector<Send> sends;
+        int compensationDelay;                      // PDC: max input path delay
     };
-    std::unordered_map<int, std::vector<FanIn>> audioFanIn;
-    std::unordered_map<int, std::vector<FanIn>> midiFanIn;
+    std::vector<BusEntry> buses;  // sorted in dependency order, master last
+
+    // PDC compensation delay lines (per bus input)
+    // Only allocated where compensationDelay > 0
+    struct DelayLine { /* same as before */ };
+    std::unordered_map<Bus*, std::vector<DelayLine>> compensationDelays;
+
+    int totalLatency;
 };
 ```
 
-**Lifecycle:** Built by `buildAndSwapSnapshot()` on the control thread → sent via CommandQueue → installed on the audio thread → old snapshot pushed to garbage queue → freed on control thread by `collectGarbage()`.
-
 **Key property:** All buffers are pre-allocated at snapshot build time. The audio thread never allocates — it writes into existing buffers.
+
+**Lifecycle:** Built by `buildAndSwapSnapshot()` on the control thread → sent via CommandQueue → installed on the audio thread → old snapshot pushed to garbage queue → freed on control thread by `collectGarbage()`.
 
 ## Garbage Collection
 
 Engine calls `commandQueue_.collectGarbage()` at the top of every control-thread method that acquires `controlMutex_`. This ensures old snapshots and other deferred-deletion items are freed regularly on the control thread, without requiring an external timer or caller discipline.
 
-## Cascading Topology Changes
+## Bus DAG Cycle Detection
 
-When a GroupNode's external ports change (via `unexportPort()` or removal of an internal node with exported ports), Engine must detect this and auto-disconnect any parent-graph connections that reference removed ports. This cascade is checked after every structural mutation that involves a GroupNode.
+When routing is changed (`route()`, `busRoute()`, `sendFrom()`, `busSend()`), the Engine checks whether the new routing would create a cycle in the bus DAG. The check is a simple BFS/DFS from the destination bus following downstream routing and sends — if it reaches the source bus, a cycle would be created.
+
+With ~4-8 buses, this check is trivially cheap.
 
 ## Invariants
 
-- `sq_engine_create` returns a non-NULL handle on success
-- `sq_engine_create` returns NULL and sets `*error` on failure
-- `sq_engine_destroy(NULL)` is a no-op
+- `sq_create` returns a non-NULL handle on success
+- `sq_create` returns NULL and sets `*error` on failure
+- `sq_destroy(NULL)` is a no-op
 - `sq_free_string(NULL)` is a no-op
 - `sq_version` returns a non-NULL string that the caller must free with `sq_free_string`
 - Multiple engines can be created and destroyed independently
-- JUCE MessageManager is initialized exactly once, on the first `sq_engine_create` call
+- JUCE MessageManager is initialized exactly once, on the first `sq_create` call
 - `processBlock()` is fully RT-safe: no allocation, no blocking, no unbounded work
-- The audio thread never touches Graph directly — it reads the immutable GraphSnapshot
-- All node IDs are globally unique (across Engine and all nested GroupNodes)
-- The output node cannot be removed
-- Every structural mutation (add/remove node, connect/disconnect) triggers a snapshot rebuild
+- The audio thread never modifies sources, buses, or chains — it reads the immutable MixerSnapshot
+- The Master bus always exists and cannot be removed
+- Newly created Sources default to routing to Master
+- Newly created Buses default to routing to Master
+- Bus routing forms a DAG — cycles are rejected
+- Every structural mutation triggers a snapshot rebuild
 - `controlMutex_` serializes all control-thread operations
 - Garbage is collected at the top of every control-thread operation
 - Sample rate and block size are immutable — set at construction, never changed
 - The engine is always prepared from birth — no separate preparation step needed
 - `render()` allocates the output buffer internally — it is a testing convenience, not RT-safe
+- Processor handles are globally unique, monotonically increasing, never reused
 
 ## Error Conditions
 
-- `sq_engine_create`: allocation failure or JUCE init failure → returns NULL, sets `*error`
-- `sq_engine_create`: NULL `error` pointer is safe — error message is discarded
-- `addNode()` with null node: returns -1
-- `removeNode()` with output node ID: returns false (cannot remove)
-- `removeNode()` with unknown ID: returns false
-- `connect()` with nonexistent node or port: returns -1, sets error
-- `connect()` that would create a cycle: returns -1, sets error
-- `getNode()` with unknown ID: returns nullptr
-- `setParameter()` with unknown node ID: returns false
+- `sq_create`: allocation failure or JUCE init failure → returns NULL, sets `*error`
+- `sq_create`: NULL `error` pointer is safe — error message is discarded
+- `addSource()` with null generator: returns nullptr
+- `removeSource()` with unknown source: returns false
+- `removeBus()` with Master: returns false (cannot remove Master)
+- `removeBus()` with unknown bus: returns false
+- `route()` / `busRoute()` that would create a cycle: rejected, returns error
+- `sendFrom()` / `busSend()` that would create a cycle: returns -1
+- `getParameter()` with unknown handle: returns 0.0f
+- `setParameter()` with unknown handle: returns false
 - `scheduleNoteOn()` with full EventScheduler queue: returns false
 - `commandQueue_.sendCommand()` full: snapshot deleted by caller, logged at warn
 
@@ -388,17 +468,17 @@ When a GroupNode's external ports change (via `unexportPort()` or removal of an 
 
 - **Audio device management** — AudioDevice wraps JUCE AudioDeviceManager, calls processBlock()
 - **JUCE MessageManager / message pump** — FFI-level `sq_pump()`, not Engine
-- **Plugin scanning and instantiation** — PluginManager returns `unique_ptr<Node>`, Engine just owns nodes
+- **Plugin scanning and instantiation** — PluginManager returns `unique_ptr<Processor>`, Engine just owns them
 - **Buffer/sample loading and management** — BufferLibrary owns Buffers with IDs
 - **MIDI device open/close and routing rules** — MidiDeviceManager wraps MidiRouter
-- **Type-specific node creation** — nodes are created by their respective managers and passed to Engine
-- **Type-specific node configuration** — nodes expose through the generic parameter system
+- **Processor creation** — PluginManager creates PluginProcessors, Engine receives them
 
 ## Dependencies
 
-- Graph (topology, connections, cycle detection)
-- Node (the abstract interface Engine owns and processes)
-- Port (PortDescriptor, PortAddress, Connection)
+- Source (sound generators with chains and routing)
+- Bus (summing points with chains)
+- Chain (ordered processor lists)
+- Processor (the abstract processing interface)
 - CommandQueue (lock-free control → audio bridge)
 - Transport (tempo, position, loop)
 - EventScheduler (beat-timed event resolution)
@@ -411,47 +491,19 @@ When a GroupNode's external ports change (via `unexportPort()` or removal of an 
 
 | Method | Thread | Notes |
 |--------|--------|-------|
-| `sq_engine_create` / `sq_engine_destroy` | Control | Not concurrent with other calls |
-| `addNode()` / `removeNode()` | Control | Acquires `controlMutex_` |
-| `connect()` / `disconnect()` | Control | Acquires `controlMutex_`, triggers snapshot rebuild |
+| `sq_create` / `sq_destroy` | Control | Not concurrent with other calls |
+| `addSource()` / `removeSource()` | Control | Acquires `controlMutex_` |
+| `addBus()` / `removeBus()` | Control | Acquires `controlMutex_` |
+| `route()` / `sendFrom()` / routing | Control | Acquires `controlMutex_`, triggers snapshot rebuild |
+| `sourceAppend()` / chain ops | Control | Acquires `controlMutex_`, triggers snapshot rebuild |
 | `getParameter()` / `setParameter()` | Control | Acquires `controlMutex_` |
-| `transportPlay()` / `transportStop()` / etc. | Control | Acquires `controlMutex_`, sends command |
+| `transportPlay()` / etc. | Control | Acquires `controlMutex_`, sends command |
 | `scheduleNoteOn()` / etc. | Control | Acquires `controlMutex_`, writes to EventScheduler |
 | `processBlock()` | Audio | Never locks, reads snapshot, drains queues |
-| `getNode()` / `getNodes()` / queries | Control | Acquires `controlMutex_` |
+| `busPeak()` / `busRMS()` | Any | Atomic reads |
 | `render()` | Control | Acquires `controlMutex_`, calls processBlock internally |
 
 JUCE init is guarded by a static flag (single-threaded assumption for first create call).
-
-## Python API
-
-```python
-from squeeze import Engine
-
-engine = Engine(44100.0, 512)
-print(engine.version)       # "0.2.0"
-
-# Node management
-synth = engine.add_plugin("Diva")
-engine.connect(synth, "out", engine.output, "in")
-
-# Parameters
-engine.set_param(synth, "cutoff", 0.5)
-print(engine.get_param(synth, "cutoff"))
-
-# Transport
-engine.transport_set_tempo(120.0)
-engine.transport_play()
-
-# Event scheduling
-engine.schedule_note_on(synth, beat_time=1.0, channel=1, note=60, velocity=0.8)
-
-# Headless testing (no audio device)
-engine.render(512)  # process one block
-
-# Cleanup
-engine.close()
-```
 
 ## Example Usage
 
@@ -459,31 +511,71 @@ engine.close()
 
 ```c
 #include "squeeze_ffi.h"
-#include <stdio.h>
 
 int main() {
     char* error = NULL;
-    SqEngine engine = sq_engine_create(44100.0, 512, &error);
+    SqEngine engine = sq_create(44100.0, 512, &error);
     if (!engine) {
         fprintf(stderr, "Failed: %s\n", error);
         sq_free_string(error);
         return 1;
     }
 
-    char* version = sq_version(engine);
-    printf("Squeeze %s\n", version);
-    sq_free_string(version);
+    // Create a source with a plugin
+    SqSource synth = sq_add_source_plugin(engine, "Lead", "Diva.vst3", &error);
 
-    // Get output node
-    int output = sq_output_node(engine);
+    // Create a bus and route
+    SqBus drum_bus = sq_add_bus(engine, "Drums");
+    sq_bus_route(engine, drum_bus, sq_master(engine));
 
-    // Connect a node to the output
-    // int synth = sq_add_plugin(engine, "Diva", &error);
-    // sq_connect(engine, synth, "out", output, "in", &error);
+    // Insert effects
+    SqProc eq = sq_bus_append(engine, drum_bus, "EQ.vst3");
+    sq_set_param(engine, eq, "high_gain", -3.0f);
 
-    sq_engine_destroy(engine);
+    // MIDI
+    sq_midi_assign(engine, synth, "Keylab", 1);
+
+    // Transport
+    sq_transport_set_tempo(engine, 120.0);
+    sq_transport_play(engine);
+
+    // Metering
+    printf("Master peak: %f\n", sq_bus_peak(engine, sq_master(engine)));
+
+    sq_destroy(engine);
     return 0;
 }
+```
+
+### Python
+
+```python
+from squeeze import Squeeze
+
+s = Squeeze()
+
+synth = s.add_source("Lead", plugin="Diva.vst3")
+drums = s.add_source("Drums", sampler=True)
+
+drum_bus = s.add_bus("Drum Bus")
+reverb_bus = s.add_bus("Reverb")
+
+drums.route_to(drum_bus)
+drum_bus.chain.append("SSL_Channel.vst3")
+drum_bus.route_to(s.master)
+
+synth.route_to(s.master)
+synth.send(reverb_bus, level=-6.0)
+
+reverb_bus.chain.append("ValhallaRoom.vst3")
+reverb_bus.route_to(s.master)
+
+synth.midi_assign(device="Keylab", channel=1)
+
+s.transport.tempo = 128
+s.transport.playing = True
+
+s.start()
 ```
 
 ### Headless testing (C++)
@@ -491,28 +583,11 @@ int main() {
 ```cpp
 Engine engine(44100.0, 512);
 
-auto gain = std::make_unique<GainNode>();
-int gainId = engine.addNode(std::move(gain), "gain");
+auto gen = std::make_unique<TestSynthProcessor>();
+auto* src = engine.addSource("synth", std::move(gen));
+// Source defaults to routing to Master
 
-std::string error;
-int connId = engine.connect(gainId, "out", engine.getOutputNodeId(), "in", error);
-assert(connId >= 0);
+engine.render(512);  // process one block
 
-// Option 1: render() convenience (allocates output buffer internally)
-engine.render(512);
-
-// Option 2: processBlock() with caller-supplied buffers
-float* outputs[2] = { leftBuf, rightBuf };
-engine.processBlock(outputs, 2, 512);
-```
-
-### Headless testing (C ABI)
-
-```c
-SqEngine engine = sq_engine_create(44100.0, 512, &error);
-
-// ... add nodes, connect ...
-
-sq_render(engine, 512);  // process one block
-sq_engine_destroy(engine);
+float peak = engine.busPeak(engine.getMaster());
 ```

@@ -52,22 +52,10 @@ bool sq_has_editor(SqEngine engine, int node_id);
 void sq_process_events(int timeout_ms);
 ```
 
-### Low-level Python (`_low_level.py`)
+### Python (`processor.py`, `squeeze.py`)
 
 ```python
-class Squeeze:
-    def open_editor(self, node_id: int) -> None:        # raises SqueezeError
-    def close_editor(self, node_id: int) -> None:       # raises SqueezeError
-    def has_editor(self, node_id: int) -> bool:
-
-    @staticmethod
-    def process_events(timeout_ms: int = 0) -> None:
-```
-
-### High-level Python (`node.py`, `engine.py`)
-
-```python
-class Node:
+class Processor:
     def open_editor(self) -> None:
     def close_editor(self) -> None:
     @property
@@ -122,19 +110,19 @@ class Engine:
 ## Example Usage
 
 ```python
-from squeeze import Engine, set_log_level
+from squeeze import Squeeze, set_log_level
 
-with Engine() as engine:
-    engine.load_plugin_cache("plugin-cache.xml")
-    synth = engine.add_plugin("Dexed")
-    synth >> engine.output
+with Squeeze() as s:
+    s.load_plugin_cache("plugin-cache.xml")
+    synth = s.add_source("Dexed", plugin="Dexed")
+    synth.route_to(s.master)
 
-    engine.start()
-    synth.open_editor()
+    s.start()
+    synth.generator.open_editor()
 
     # Main loop — pump GUI events
-    while synth.editor_open:
-        Engine.process_events(timeout_ms=50)
+    while True:
+        Squeeze.process_events(timeout_ms=50)
 
-    engine.stop()
+    s.stop()
 ```

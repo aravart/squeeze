@@ -164,21 +164,21 @@ sq_engine_destroy(engine);
 ### Python
 
 ```python
-from squeeze import Engine
+from squeeze import Squeeze
 
-engine = Engine()
-engine.load_plugin_cache("/path/to/plugin-cache.xml")
+s = Squeeze()
+s.load_plugin_cache("/path/to/plugin-cache.xml")
 
 # Enumerate and open
-print(engine.midi_devices)
-engine.midi_open("Launchpad Pro")
+print(s.midi.devices)
+dev = s.midi.devices[0]
+dev.open()
 
-# Route to a synth
-synth = engine.add_plugin("Diva")
-route_id = engine.midi_route("Launchpad Pro", synth, channel=0, note=-1)
+# Create a source and assign MIDI
+synth = s.add_source("Diva", plugin="Diva.vst3")
+synth.midi_assign(device=dev.name, channel=1)
 
 # Cleanup
-engine.midi_unroute(route_id)
-engine.midi_close("Launchpad Pro")
-engine.close()
+dev.close()
+s.close()
 ```

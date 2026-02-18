@@ -5,12 +5,12 @@
 - Own `juce::AudioPluginFormatManager` (with `addDefaultFormats()`)
 - Load plugin descriptions from a JUCE `KnownPluginList` XML file (plugin-cache.xml)
 - Look up plugins by name (case-sensitive, exact match)
-- Instantiate plugins as `PluginNode` (returns `std::unique_ptr<Node>`)
+- Instantiate plugins as `PluginProcessor` (returns `std::unique_ptr<Processor>`)
 - List available plugin names
 
 ## Overview
 
-PluginManager handles plugin cache loading and plugin instantiation. It replaces v1's `PluginCache` class with a single component that both reads the cache and creates plugin instances. It has no Engine dependency — it returns `std::unique_ptr<Node>` instances that the FFI layer passes to Engine. Plugin scanning is out of scope; only pre-built XML caches are supported.
+PluginManager handles plugin cache loading and plugin instantiation. It has no Engine dependency — it returns `std::unique_ptr<Processor>` instances that the FFI layer passes to Engine (as Source generators or Chain inserts). Plugin scanning is out of scope; only pre-built XML caches are supported.
 
 ## Interface
 
@@ -38,9 +38,9 @@ public:
     int getNumPlugins() const;
 
     // --- Instantiation ---
-    std::unique_ptr<Node> createNode(const std::string& name,
-                                     double sampleRate, int blockSize,
-                                     std::string& error);
+    std::unique_ptr<Processor> createProcessor(const std::string& name,
+                                                double sampleRate, int blockSize,
+                                                std::string& error);
 
 private:
     juce::AudioPluginFormatManager formatManager_;
@@ -56,33 +56,47 @@ private:
 // Plugin cache
 bool sq_load_plugin_cache(SqEngine engine, const char* path, char** error);
 
-// Plugin instantiation (FFI orchestration: PluginManager creates, Engine owns)
-int sq_add_plugin(SqEngine engine, const char* name, char** error);
-
 // Plugin listing
 SqStringList sq_available_plugins(SqEngine engine);
 int sq_num_plugins(SqEngine engine);
 ```
 
+Plugin instantiation is embedded in source/bus chain operations:
+- `sq_add_source_plugin(engine, name, plugin_path, &error)` — creates a PluginProcessor as the source generator
+- `sq_source_append(engine, src, plugin_path)` — creates a PluginProcessor and appends to the source chain
+- `sq_bus_append(engine, bus, plugin_path)` — creates a PluginProcessor and appends to the bus chain
+
 ### Python API
 
 ```python
 engine.load_plugin_cache("/path/to/plugin-cache.xml")
-synth_id = engine.add_plugin("Diva")
-plugins = engine.available_plugins    # property, list of strings
+plugins = engine.available_plugins    # list of strings
+
+synth = engine.add_source("Lead", plugin="Diva.vst3")
+eq = vocal.chain.append("EQ.vst3")
 ```
 
 ### FFI Orchestration
 
-`sq_add_plugin` is not a method on Engine or PluginManager alone — it is orchestrated by the FFI layer:
+Plugin creation is orchestrated at the FFI level:
 
 ```cpp
-int sq_add_plugin(SqEngine handle, const char* name, char** error) {
-    auto node = handle->pluginManager.createNode(
-        name, handle->audioDevice.getSampleRate(),
-        handle->audioDevice.getBlockSize(), errorStr);
-    if (!node) { /* set error, return -1 */ }
-    return handle->engine.addNode(std::move(node), name);
+SqSource sq_add_source_plugin(SqEngine handle, const char* name,
+                               const char* plugin_path, char** error) {
+    auto proc = handle->pluginManager.createProcessor(
+        plugin_path, handle->engine.getSampleRate(),
+        handle->engine.getBlockSize(), errorStr);
+    if (!proc) { /* set error, return NULL */ }
+    return handle->engine.addSource(name, std::move(proc));
+}
+
+SqProc sq_source_append(SqEngine handle, SqSource src,
+                         const char* plugin_path) {
+    auto proc = handle->pluginManager.createProcessor(
+        plugin_path, handle->engine.getSampleRate(),
+        handle->engine.getBlockSize(), errorStr);
+    if (!proc) { /* return NULL */ }
+    return handle->engine.sourceAppend(src, std::move(proc));
 }
 ```
 
@@ -93,8 +107,8 @@ int sq_add_plugin(SqEngine handle, const char* name, char** error) {
 - `loadCache()` / `loadCacheFromString()` can be called multiple times — each call replaces the previous list entirely
 - `findByName()` returns a stable pointer valid until the next `loadCache()` call
 - `getAvailablePlugins()` returns names sorted alphabetically
-- `createNode()` for a name not in the cache returns nullptr and sets error
-- `createNode()` blocks (loads .vst3/.component from disk) — control thread only
+- `createProcessor()` for a name not in the cache returns nullptr and sets error
+- `createProcessor()` blocks (loads .vst3/.component from disk) — control thread only
 
 ## Error Conditions
 
@@ -102,25 +116,24 @@ int sq_add_plugin(SqEngine handle, const char* name, char** error) {
 - `loadCache()` with malformed XML: returns false, sets error, list is empty
 - `loadCacheFromString()` with invalid XML: returns false, sets error, list is empty
 - `findByName()` with unknown name: returns nullptr
-- `createNode()` with unknown name: returns nullptr, sets error
-- `createNode()` with plugin that fails to load (corrupt binary, missing dependency): returns nullptr, sets error
-- `createNode()` with sampleRate 0 or blockSize 0: returns nullptr, sets error
+- `createProcessor()` with unknown name: returns nullptr, sets error
+- `createProcessor()` with plugin that fails to load: returns nullptr, sets error
+- `createProcessor()` with sampleRate 0 or blockSize 0: returns nullptr, sets error
 
 ## Does NOT Handle
 
 - **Plugin scanning / discovery** — future (only loads pre-built XML caches)
-- **Plugin state / preset management** — PluginNode concern
-- **Node ownership** — Engine owns nodes after `addNode()`
-- **Plugin GUI** — PluginNode concern
-- **Plugin parameter access** — Engine's generic parameter system via Node interface
-- **Sample rate / block size changes after creation** — future (Engine would need to re-prepare nodes)
+- **Plugin state / preset management** — PluginProcessor concern
+- **Processor ownership** — Engine owns processors after they are added
+- **Plugin GUI** — PluginEditorWindow concern
+- **Plugin parameter access** — Engine's generic parameter system via Processor interface
+- **Sample rate / block size changes after creation** — future
 
 ## Dependencies
 
-- Node (the interface returned by `createNode()`)
-- PluginNode (concrete type created by `createNode()`)
+- Processor (the interface returned by `createProcessor()`)
+- PluginProcessor (concrete type created by `createProcessor()`)
 - JUCE (`juce_audio_processors`: AudioPluginFormatManager, KnownPluginList, PluginDescription)
-- JUCE (`juce_audio_formats`: for plugin loading)
 
 ## Thread Safety
 
@@ -129,7 +142,7 @@ int sq_add_plugin(SqEngine handle, const char* name, char** error) {
 | `loadCache()` / `loadCacheFromString()` | Control | Replaces internal list — not concurrent with other calls |
 | `findByName()` | Control | Read-only, safe concurrent with other reads |
 | `getAvailablePlugins()` / `getNumPlugins()` | Control | Read-only |
-| `createNode()` | Control | Blocks (disk I/O) — never call from audio thread |
+| `createProcessor()` | Control | Blocks (disk I/O) — never call from audio thread |
 
 All PluginManager methods are called from the control thread. The FFI layer serializes access through `controlMutex_`.
 
@@ -139,47 +152,40 @@ All PluginManager methods are called from the control thread. The FFI layer seri
 
 ```c
 char* error = NULL;
-SqEngine engine = sq_engine_create(&error);
+SqEngine engine = sq_create(44100.0, 512, &error);
 
-// Load plugin cache
 if (!sq_load_plugin_cache(engine, "/path/to/plugin-cache.xml", &error)) {
     fprintf(stderr, "Cache load failed: %s\n", error);
     sq_free_string(error);
 }
 
-// List available plugins
 SqStringList plugins = sq_available_plugins(engine);
-for (int i = 0; i < plugins.count; i++) {
+for (int i = 0; i < plugins.count; i++)
     printf("Plugin: %s\n", plugins.items[i]);
-}
 sq_free_string_list(plugins);
 
-// Create a plugin node (FFI orchestrates PluginManager + Engine)
-int synth = sq_add_plugin(engine, "Diva", &error);
-if (synth < 0) {
-    fprintf(stderr, "Plugin load failed: %s\n", error);
-    sq_free_string(error);
-}
+// Create a source with a plugin generator
+SqSource synth = sq_add_source_plugin(engine, "Lead", "Diva.vst3", &error);
 
-// Connect to output
-int output = sq_output_node(engine);
-sq_connect(engine, synth, "out", output, "in", &error);
+// Add a plugin to a bus chain
+SqBus master = sq_master(engine);
+SqProc limiter = sq_bus_append(engine, master, "Limiter.vst3");
 
-sq_engine_destroy(engine);
+sq_destroy(engine);
 ```
 
 ### Python
 
 ```python
-from squeeze import Engine
+from squeeze import Squeeze
 
-engine = Engine()
-engine.load_plugin_cache("/path/to/plugin-cache.xml")
+s = Squeeze()
+s.load_plugin_cache("/path/to/plugin-cache.xml")
 
-print(f"Available: {engine.available_plugins}")
+print(f"Available: {s.available_plugins}")
 
-synth = engine.add_plugin("Diva")
-engine.connect(synth, "out", engine.output, "in")
+synth = s.add_source("Lead", plugin="Diva.vst3")
+s.master.chain.append("Limiter.vst3")
 
-engine.close()
+s.close()
 ```

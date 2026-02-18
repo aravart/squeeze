@@ -17,7 +17,7 @@ CommandQueue is a pure transport layer. It does not interpret commands — the E
 
 | Command | Payload | When |
 |---------|---------|------|
-| `swapSnapshot` | `GraphSnapshot*` | After any structural graph change |
+| `swapSnapshot` | `MixerSnapshot*` | After any structural or routing change |
 | `transportPlay` | — | User hits play |
 | `transportStop` | — | User hits stop |
 | `transportPause` | — | User hits pause |
@@ -30,9 +30,9 @@ CommandQueue is a pure transport layer. It does not interpret commands — the E
 
 ### What does NOT flow through CommandQueue
 
-- **Parameter changes (immediate):** `setParameter()` is called directly on the control thread. Nodes use atomic storage internally; the audio thread reads updated values on the next `process()` call. No queue hop needed.
-- **Parameter changes (beat-synced):** Routed through EventScheduler, which handles time resolution.
-- **MIDI device input:** Routed through MidiRouter, which has its own SPSC queue from the MIDI callback thread.
+- **Parameter changes (immediate):** `setParameter()` is called directly on the control thread. Processors use atomic storage internally; the audio thread reads updated values on the next `process()` call.
+- **Parameter changes (beat-synced):** Routed through EventScheduler.
+- **MIDI device input:** Routed through MidiRouter's own SPSC queues.
 - **Musical events (noteOn, noteOff, CC):** Routed through EventScheduler.
 
 ## Interface
@@ -57,7 +57,7 @@ struct Command {
     Type type;
 
     // Payload — which fields are valid depends on `type`
-    void* ptr = nullptr;          // swapSnapshot: GraphSnapshot* (ownership transferred)
+    void* ptr = nullptr;          // swapSnapshot: MixerSnapshot* (ownership transferred)
     double doubleValue1 = 0.0;    // setTempo: bpm, seekBeats: beats, setLoopPoints: startBeats
     double doubleValue2 = 0.0;    // setLoopPoints: endBeats
     int64_t int64Value = 0;       // seekSamples: sample position
@@ -69,10 +69,10 @@ struct GarbageItem {
     void* ptr = nullptr;
     void (*deleter)(void*) = nullptr;
 
-    void destroy();   // calls deleter(ptr) if both non-null, then nulls ptr
+    void destroy();
 
     template<typename T>
-    static GarbageItem wrap(T* p);  // type-erasing wrap — no heap alloc
+    static GarbageItem wrap(T* p);
 };
 
 class CommandQueue {
@@ -80,7 +80,6 @@ public:
     CommandQueue() = default;
     ~CommandQueue() = default;
 
-    // Non-copyable
     CommandQueue(const CommandQueue&) = delete;
     CommandQueue& operator=(const CommandQueue&) = delete;
 
@@ -111,19 +110,17 @@ private:
 
 `Command` is a trivially copyable POD struct sized to fit in a cache line. All fields are plain types — no `std::string`, no `std::function`, no heap allocation.
 
-The `type` field determines which payload fields are valid. Invalid fields are ignored. This is a deliberate trade-off: a flat struct with documented field usage is less type-safe than `std::variant` but is trivially copyable, RT-safe, and cache-friendly.
+The `type` field determines which payload fields are valid. This is a deliberate trade-off: a flat struct is trivially copyable, RT-safe, and cache-friendly.
 
 ### `swapSnapshot`
 
-Transfers ownership of a heap-allocated `GraphSnapshot*` from the control thread to the audio thread. The audio thread installs the new snapshot and pushes the old one to the garbage queue via `sendGarbage(GarbageItem::wrap(oldSnapshot))`.
+Transfers ownership of a heap-allocated `MixerSnapshot*` from the control thread to the audio thread. The audio thread installs the new snapshot and pushes the old one to the garbage queue via `sendGarbage(GarbageItem::wrap(oldSnapshot))`.
 
 ## GarbageItem
 
 Type-erasing wrapper for deferred deletion. Stores a `void*` and a plain function pointer — no `std::function`, no heap allocation.
 
 ### `GarbageItem::wrap<T>(T* p)`
-
-Creates a `GarbageItem` with a type-erasing deleter:
 
 ```cpp
 template<typename T>
@@ -132,47 +129,35 @@ GarbageItem GarbageItem::wrap(T* p) {
 }
 ```
 
-The lambda is stateless and decays to a plain function pointer — no allocation.
-
 ### `GarbageItem::destroy()`
 
-Calls `deleter(ptr)` if both are non-null, then sets `ptr = nullptr`. Safe to call multiple times or with a default-constructed item.
+Calls `deleter(ptr)` if both are non-null, then sets `ptr = nullptr`. Safe to call multiple times.
 
 ## Control Thread API
 
 ### `sendCommand(cmd)`
 
 Pushes a command onto the command queue.
-
 - Returns `true` on success
 - Returns `false` if the queue is full — the command is **dropped**
-- The caller is responsible for handling the failure (e.g., deleting a snapshot that couldn't be sent)
-- Logs at warn level on failure: `SQ_WARN("CommandQueue: command queue full, dropping %s", typeName)`
+- The caller is responsible for handling the failure
+- Logs at warn level on failure
 
 ### `collectGarbage()`
 
 Drains the garbage queue and calls `destroy()` on each item. Returns the number of items destroyed.
 
-**Engine must call this.** Unlike v1 (where `collectGarbage` was never called from Engine), v2 Engine calls `collectGarbage()` at the top of every control-thread operation that acquires `controlMutex_`. This ensures garbage is drained regularly without requiring an external timer or caller discipline.
+Engine calls `collectGarbage()` at the top of every control-thread operation that acquires `controlMutex_`.
 
 ## Audio Thread API
 
 ### `processPending(handler)`
 
-Drains the command queue and calls `handler(cmd)` for each command in FIFO order. Returns the number of commands processed. The handler is a callable (typically a lambda) provided by Engine.
-
-- RT-safe: the method itself does no allocation. The handler must also be RT-safe.
-- Returns `0` if no commands are pending (no-op)
-- The handler is called inline — no deferred execution
+Drains the command queue and calls `handler(cmd)` for each command in FIFO order. Returns the number of commands processed. RT-safe.
 
 ### `sendGarbage(item)`
 
-Pushes a garbage item onto the garbage queue for the control thread to delete later.
-
-- Returns `true` on success
-- Returns `false` if the garbage queue is full — the item is **not enqueued**
-- On failure, logs at warn level: `SQ_WARN_RT("CommandQueue: garbage queue full, item leaked")`
-- The audio thread must **never** call `delete` directly — leaking is preferable to blocking
+Pushes a garbage item onto the garbage queue. Returns `true` on success, `false` if full (item leaked — preferable to blocking on the audio thread).
 
 ## Invariants
 
@@ -182,24 +167,24 @@ Pushes a garbage item onto the garbage queue for the control thread to delete la
 - `processPending()` is called only from the audio thread (single consumer)
 - `sendGarbage()` is called only from the audio thread (single producer)
 - `collectGarbage()` is called only from the control thread (single consumer)
-- The audio thread never calls `delete` or `free` — it uses `sendGarbage()` instead
+- The audio thread never calls `delete` or `free`
 - Queue capacities are fixed at compile time
-- `Command` is trivially copyable — no heap allocation in the queue path
-- Engine's `controlMutex_` ensures the SPSC single-producer invariant for `sendCommand()` when multiple control threads exist
+- `Command` is trivially copyable
+- Engine's `controlMutex_` ensures the SPSC single-producer invariant for `sendCommand()`
 
 ## Error Conditions
 
 - `sendCommand()` with full queue: returns `false`, command dropped, logged at warn
 - `sendGarbage()` with full queue: returns `false`, item leaked, logged at warn (RT-safe)
-- `processPending()` with no pending commands: returns `0` (no-op)
-- `collectGarbage()` with no garbage: returns `0` (no-op)
+- `processPending()` with no pending commands: returns `0`
+- `collectGarbage()` with no garbage: returns `0`
 - `GarbageItem::destroy()` with null ptr or deleter: no-op
 
 ## Does NOT Handle
 
 - What commands mean (Engine interprets them via the handler callback)
-- Graph topology, node management, or buffer allocation (Engine)
-- Parameter changes — immediate params set directly on control thread, beat-synced params via EventScheduler
+- Source/Bus/Chain topology or management (Engine)
+- Parameter changes (direct or via EventScheduler)
 - Musical events or beat-timed scheduling (EventScheduler)
 - MIDI device input (MidiRouter)
 - Deciding when to collect garbage (Engine calls `collectGarbage()`)
@@ -208,7 +193,7 @@ Pushes a garbage item onto the garbage queue for the control thread to delete la
 
 - SPSCQueue (lock-free ring buffer)
 
-No dependency on Node, Graph, or Engine. CommandQueue is a generic transport layer.
+No dependency on Processor, Source, Bus, or Engine.
 
 ## Thread Safety
 
@@ -216,25 +201,21 @@ No dependency on Node, Graph, or Engine. CommandQueue is a generic transport lay
 |--------|--------|---------------|
 | `sendCommand()` | Control | Engine's `controlMutex_` ensures single producer |
 | `collectGarbage()` | Control | Engine's `controlMutex_` (or any single consumer) |
-| `processPending()` | Audio | Single consumer by design (one audio callback) |
-| `sendGarbage()` | Audio | Single producer by design (one audio callback) |
-
-CommandQueue itself has no mutexes. Thread safety relies on the SPSC contract: one producer, one consumer per queue. Engine's `controlMutex_` ensures the control-thread side is single-threaded.
+| `processPending()` | Audio | Single consumer by design |
+| `sendGarbage()` | Audio | Single producer by design |
 
 ## C ABI
 
 CommandQueue has no direct C ABI surface. It is an internal Engine component. Commands are sent implicitly through Engine-level C functions:
 
 ```c
-// These Engine functions internally send commands via CommandQueue
-void sq_transport_play(SqEngine engine);
+void sq_transport_play(SqEngine engine);    // internally sends transportPlay command
 void sq_transport_stop(SqEngine engine);
 void sq_transport_set_tempo(SqEngine engine, double bpm);
-// ... etc.
 
-// Graph mutations trigger swapSnapshot internally
-int sq_connect(SqEngine engine, int src, const char* src_port,
-               int dst, const char* dst_port, char** error);
+// Structural changes trigger swapSnapshot internally
+SqProc sq_source_append(SqEngine engine, SqSource src, const char* plugin_path);
+void   sq_route(SqEngine engine, SqSource src, SqBus bus);
 ```
 
 ## Example Usage
@@ -246,7 +227,7 @@ cmd.type = Command::Type::swapSnapshot;
 cmd.ptr = newSnapshot;  // ownership transferred
 if (!commandQueue_.sendCommand(cmd)) {
     SQ_WARN("CommandQueue full, dropping snapshot");
-    delete newSnapshot;  // caller must clean up on failure
+    delete newSnapshot;
 }
 
 // Audio thread processes commands
@@ -254,7 +235,7 @@ commandQueue_.processPending([this](const Command& cmd) {
     switch (cmd.type) {
         case Command::Type::swapSnapshot: {
             auto* old = activeSnapshot_;
-            activeSnapshot_ = static_cast<GraphSnapshot*>(cmd.ptr);
+            activeSnapshot_ = static_cast<MixerSnapshot*>(cmd.ptr);
             if (old)
                 commandQueue_.sendGarbage(GarbageItem::wrap(old));
             break;
@@ -264,15 +245,14 @@ commandQueue_.processPending([this](const Command& cmd) {
             break;
         case Command::Type::transportStop:
             transport_.stop();
-            eventScheduler_.clear();  // clear staged events on stop
+            eventScheduler_.clear();
             break;
         case Command::Type::setTempo:
             transport_.setTempo(cmd.doubleValue1);
             break;
-        // ... etc.
     }
 });
 
-// Control thread drains garbage (called at top of every controlMutex_ acquisition)
+// Control thread drains garbage
 commandQueue_.collectGarbage();
 ```
