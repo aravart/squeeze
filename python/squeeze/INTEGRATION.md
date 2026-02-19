@@ -240,6 +240,7 @@ In your project's `CLAUDE.md`:
 
 ```markdown
 ## Dependencies
-- squeeze-audio: Audio engine for plugin hosting and mixing.
-  API ref: <path-to-squeeze>/python/INTEGRATION.md
+- squeeze-audio: Audio engine (installed via pip).
+  API reference: run `python -c "import squeeze; print(squeeze.INTEGRATION_GUIDE)"`
+  and read that file before writing any Squeeze code.
 ```

@@ -40,7 +40,7 @@ with Squeeze() as s:
 | `Midi` | MIDI device listing, routing, and management. |
 | `Clock` | Beat-driven callbacks for generative music. |
 
-See [INTEGRATION.md](INTEGRATION.md) for the full API reference.
+See [INTEGRATION.md](squeeze/INTEGRATION.md) for the full API reference.
 
 ## Requirements
 

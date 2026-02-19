@@ -23,7 +23,7 @@ dev = ["pytest>=7.0"]
 include = ["squeeze*"]
 
 [tool.setuptools.package-data]
-squeeze = ["py.typed", "*.dylib", "*.so", "*.dll"]
+squeeze = ["py.typed", "INTEGRATION.md", "*.dylib", "*.so", "*.dll"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
