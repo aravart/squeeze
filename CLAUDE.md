@@ -102,19 +102,21 @@ Before any code, create or update a specification document in `docs/specs/{Compo
 
 ### Step 3: Implement to Pass Tests
 
-This includes the C++ component, its `sq_` functions in `squeeze_ffi.h`/`.cpp`, and the Python wrappers in `python/squeeze/` (squeeze, source, bus, chain, processor, transport, midi, types as appropriate).
+This includes the C++ component, its `sq_` functions in `squeeze_ffi.h`/`.cpp`, and the Python wrappers in `python/squeeze/` (squeeze, source, bus, chain, processor, transport, midi, types as appropriate). All Python code must have complete type annotations (see Type Annotations section).
 
 ### Step 4: Review
 
 **Review checklist for generated implementation:**
 
-- [ ] All tests pass
+- [ ] All tests pass (Catch2 + pytest)
 - [ ] Public interface matches spec exactly (C++, C ABI, and Python)
 - [ ] No functionality beyond what's specified
 - [ ] Realtime safety (if applicable): no allocation, no blocking, no unbounded loops
 - [ ] Thread safety
 - [ ] No obvious performance issues
 - [ ] Audit for code duplication, dead code, overly large source code files, and opportunities for refactoring
+- [ ] Python type annotations complete — `cd python && mypy --strict squeeze/` passes
+- [ ] Consumer docs updated — if the Python API surface changed, update `python/README.md` (API table) and `python/INTEGRATION.md` (method signatures, patterns)
 
 ### Step 5: Integration Check
 
@@ -164,8 +166,11 @@ The `python/` directory is a proper Python package, buildable and eventually pub
 ```
 python/
 ├── pyproject.toml          # Package metadata, dependencies, build config
+├── README.md               # Consumer-facing README (PyPI page, LLM quick-start)
+├── INTEGRATION.md          # Compact API reference for LLM consumption
 ├── squeeze/
 │   ├── __init__.py         # Re-exports: Squeeze, Source, Bus, Chain, Processor, etc.
+│   ├── py.typed            # PEP 561 marker — signals type annotations are available
 │   ├── _ffi.py             # ctypes declarations (internal, mechanical)
 │   ├── _helpers.py         # Error checking, string/list conversion (internal)
 │   ├── squeeze.py          # Squeeze — the public entry point
@@ -190,6 +195,24 @@ python/
 - **One set of Python tests.** No separate low-level/high-level test files. Each `sq_*` function is tested through the public Python API.
 - **`_ffi.py` and `_helpers.py` are internal.** Users import `Squeeze`, `Source`, `Bus`, etc. — never `_ffi` or `_helpers`.
 
+### Type Annotations
+
+All Python code must be fully typed. This is not optional.
+
+- **`py.typed`:** The PEP 561 marker file `python/squeeze/py.typed` must exist. It signals to type checkers and Claude Code that annotations are available.
+- **Every public method** must have typed parameters and a `-> ReturnType`. Properties must have `-> Type`.
+- **Type style:** Use `str`, `int`, `float`, `bool`, `list[X]`, `dict[K, V]`, `tuple[X, Y]`, `X | None`. Use `from __future__ import annotations` for forward references. Callback types use `typing.Callable[[ArgTypes], ReturnType]`.
+- **Validation:** `cd python && mypy --strict squeeze/` must report no errors on public method signatures. Run this as part of the review step.
+
+### Consumer Documentation (`python/README.md`, `python/INTEGRATION.md`)
+
+The `python/` directory contains two consumer-facing documents that other projects (and their Claude Code sessions) use to understand and integrate with Squeeze. These are the external API contract — **doc drift is a bug**, same as spec drift.
+
+- **`python/README.md`** — Package README shown on PyPI and read first by LLMs. Contains: install command, quick-start code, API-at-a-glance table. Must have install + quick-start + class table in the first 50 lines.
+- **`python/INTEGRATION.md`** — Compact (~200 line) API reference optimized for LLM consumption. Lists every public class, method signature, and common usage patterns. No internal details (no SPSC, snapshots, FFI internals).
+
+**When to update:** Any change that adds, removes, or modifies a public Python method, class, or parameter must be reflected in both documents. This includes new `sq_` functions that get Python wrappers.
+
 ### Build & Install
 
 ```bash
@@ -204,9 +227,12 @@ The existing rule — **every tier ships a working FFI and Python client** — e
 
 1. Add the `sq_` C ABI functions
 2. Add the ctypes declaration to `squeeze/_ffi.py`
-3. Add the Python wrapper to the appropriate module (`squeeze.py`, `source.py`, `bus.py`, `chain.py`, `processor.py`, `transport.py`, `midi.py`, `types.py`)
+3. Add the Python wrapper to the appropriate module (`squeeze.py`, `source.py`, `bus.py`, `chain.py`, `processor.py`, `transport.py`, `midi.py`, `types.py`) — **with full type annotations**
 4. Add Python tests in `python/tests/`
-5. All three (C++ Catch2 tests, C FFI Catch2 tests, Python tests) must pass before the tier is complete
+5. Update `python/INTEGRATION.md` with new class/method signatures
+6. Update `python/README.md` API table if a new class was added
+7. All three (C++ Catch2 tests, C FFI Catch2 tests, Python tests) must pass before the tier is complete
+8. `cd python && mypy --strict squeeze/` must pass
 
 ---
 
