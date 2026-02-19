@@ -68,6 +68,32 @@ class SqMidiRouteList(ctypes.Structure):
     ]
 
 
+class SqPerfSnapshot(ctypes.Structure):
+    _fields_ = [
+        ("callback_avg_us", ctypes.c_double),
+        ("callback_peak_us", ctypes.c_double),
+        ("cpu_load_percent", ctypes.c_double),
+        ("xrun_count", ctypes.c_int),
+        ("callback_count", ctypes.c_int64),
+        ("sample_rate", ctypes.c_double),
+        ("block_size", ctypes.c_int),
+        ("buffer_duration_us", ctypes.c_double),
+    ]
+
+class SqSlotPerf(ctypes.Structure):
+    _fields_ = [
+        ("handle", ctypes.c_int),
+        ("avg_us", ctypes.c_double),
+        ("peak_us", ctypes.c_double),
+    ]
+
+class SqSlotPerfList(ctypes.Structure):
+    _fields_ = [
+        ("items", ctypes.POINTER(SqSlotPerf)),
+        ("count", ctypes.c_int),
+    ]
+
+
 LogCallbackType = ctypes.CFUNCTYPE(None, ctypes.c_int, ctypes.c_char_p, ctypes.c_void_p)
 SqClockCallbackType = ctypes.CFUNCTYPE(None, ctypes.c_uint32, ctypes.c_double, ctypes.c_void_p)
 
@@ -228,6 +254,18 @@ def _load_lib():
     _sig("sq_clock_destroy", None, [_V])
     _sig("sq_clock_get_resolution", _D, [_V])
     _sig("sq_clock_get_latency", _D, [_V])
+
+    # --- Performance monitoring ---
+    _sig("sq_perf_snapshot", SqPerfSnapshot, [_V])
+    _sig("sq_perf_enable", None, [_V, _I])
+    _sig("sq_perf_is_enabled", _I, [_V])
+    _sig("sq_perf_enable_slots", None, [_V, _I])
+    _sig("sq_perf_is_slot_profiling_enabled", _I, [_V])
+    _sig("sq_perf_set_xrun_threshold", None, [_V, _D])
+    _sig("sq_perf_get_xrun_threshold", _D, [_V])
+    _sig("sq_perf_reset", None, [_V])
+    _sig("sq_perf_slots", SqSlotPerfList, [_V])
+    _sig("sq_free_slot_perf_list", None, [SqSlotPerfList])
 
     # --- Testing ---
     _sig("sq_render", None, [_V, _I])

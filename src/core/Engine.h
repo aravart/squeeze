@@ -5,6 +5,7 @@
 #include "core/CommandQueue.h"
 #include "core/EventScheduler.h"
 #include "core/MidiRouter.h"
+#include "core/PerfMonitor.h"
 #include "core/Processor.h"
 #include "core/Source.h"
 #include "core/Transport.h"
@@ -140,6 +141,7 @@ public:
 
     // --- Accessors ---
     MidiRouter& getMidiRouter();
+    PerfMonitor& getPerfMonitor();
 
     // --- Testing ---
     void render(int numSamples);
@@ -161,6 +163,7 @@ private:
     Transport transport_;
     EventScheduler eventScheduler_;
     ClockDispatch clockDispatch_;
+    PerfMonitor perfMonitor_;
 
     // Event scheduling: resolved events buffer (audio thread)
     static constexpr int kMaxResolvedEvents = 256;

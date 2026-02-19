@@ -963,6 +963,102 @@ double sq_clock_get_latency(SqClock clock)
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// Performance monitoring
+// ═══════════════════════════════════════════════════════════════════
+
+SqPerfSnapshot sq_perf_snapshot(SqEngine engine)
+{
+    SqPerfSnapshot result = {};
+    if (!engine) return result;
+
+    auto snap = eng(engine).getPerfMonitor().getSnapshot();
+    result.callback_avg_us = snap.callbackAvgUs;
+    result.callback_peak_us = snap.callbackPeakUs;
+    result.cpu_load_percent = snap.cpuLoadPercent;
+    result.xrun_count = snap.xrunCount;
+    result.callback_count = snap.callbackCount;
+    result.sample_rate = snap.sampleRate;
+    result.block_size = snap.blockSize;
+    result.buffer_duration_us = snap.bufferDurationUs;
+    return result;
+}
+
+void sq_perf_enable(SqEngine engine, int enabled)
+{
+    if (!engine) return;
+    if (enabled)
+        eng(engine).getPerfMonitor().enable();
+    else
+        eng(engine).getPerfMonitor().disable();
+}
+
+int sq_perf_is_enabled(SqEngine engine)
+{
+    if (!engine) return 0;
+    return eng(engine).getPerfMonitor().isEnabled() ? 1 : 0;
+}
+
+void sq_perf_enable_slots(SqEngine engine, int enabled)
+{
+    if (!engine) return;
+    if (enabled)
+        eng(engine).getPerfMonitor().enableSlotProfiling();
+    else
+        eng(engine).getPerfMonitor().disableSlotProfiling();
+}
+
+int sq_perf_is_slot_profiling_enabled(SqEngine engine)
+{
+    if (!engine) return 0;
+    return eng(engine).getPerfMonitor().isSlotProfilingEnabled() ? 1 : 0;
+}
+
+void sq_perf_set_xrun_threshold(SqEngine engine, double factor)
+{
+    if (!engine) return;
+    eng(engine).getPerfMonitor().setXrunThreshold(factor);
+}
+
+double sq_perf_get_xrun_threshold(SqEngine engine)
+{
+    if (!engine) return 0.0;
+    return eng(engine).getPerfMonitor().getXrunThreshold();
+}
+
+void sq_perf_reset(SqEngine engine)
+{
+    if (!engine) return;
+    eng(engine).getPerfMonitor().resetCounters();
+}
+
+SqSlotPerfList sq_perf_slots(SqEngine engine)
+{
+    SqSlotPerfList result = {nullptr, 0};
+    if (!engine) return result;
+
+    auto snap = eng(engine).getPerfMonitor().getSnapshot();
+    if (snap.slots.empty()) return result;
+
+    result.count = static_cast<int>(snap.slots.size());
+    result.items = static_cast<SqSlotPerf*>(
+        malloc(sizeof(SqSlotPerf) * snap.slots.size()));
+
+    for (int i = 0; i < result.count; ++i)
+    {
+        result.items[i].handle = snap.slots[i].handle;
+        result.items[i].avg_us = snap.slots[i].avgUs;
+        result.items[i].peak_us = snap.slots[i].peakUs;
+    }
+
+    return result;
+}
+
+void sq_free_slot_perf_list(SqSlotPerfList list)
+{
+    free(list.items);
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // Testing
 // ═══════════════════════════════════════════════════════════════════
 

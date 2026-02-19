@@ -45,6 +45,7 @@ Engine::Engine(double sampleRate, int blockSize)
     buses_.push_back(std::move(master));
 
     transport_.prepare(sampleRate_, blockSize_);
+    perfMonitor_.prepare(sampleRate_, blockSize_);
     paramTokenNames_.reserve(kMaxParamTokens);
 
     buildAndSwapSnapshot();
@@ -1168,6 +1169,8 @@ void Engine::handleCommand(const Command& cmd)
 
 void Engine::processBlock(float* const* outputChannels, int numChannels, int numSamples)
 {
+    perfMonitor_.beginBlock();
+
     // 1. Drain pending commands
     commandQueue_.processPending([this](const Command& cmd) { handleCommand(cmd); });
 
@@ -1255,6 +1258,7 @@ void Engine::processBlock(float* const* outputChannels, int numChannels, int num
     {
         for (int ch = 0; ch < numChannels; ++ch)
             std::memset(outputChannels[ch], 0, sizeof(float) * static_cast<size_t>(numSamples));
+        perfMonitor_.endBlock();
         return;
     }
 
@@ -1361,8 +1365,10 @@ void Engine::processBlock(float* const* outputChannels, int numChannels, int num
     }
 
     // 5. Process sources
+    int perfSlot = 0;
     for (auto& srcEntry : activeSnapshot_->sources)
     {
+        perfMonitor_.beginSlot(perfSlot, srcEntry.source->getHandle());
         auto& buffer = srcEntry.buffer;
         buffer.clear();
 
@@ -1438,11 +1444,15 @@ void Engine::processBlock(float* const* outputChannels, int numChannels, int num
                 }
             }
         }
+
+        perfMonitor_.endSlot(perfSlot);
+        ++perfSlot;
     }
 
     // 6. Process buses in dependency order
     for (auto& busEntry : activeSnapshot_->buses)
     {
+        perfMonitor_.beginSlot(perfSlot, busEntry.bus->getHandle());
         auto& buffer = busEntry.buffer;
 
         // Chain processors
@@ -1515,6 +1525,9 @@ void Engine::processBlock(float* const* outputChannels, int numChannels, int num
                 }
             }
         }
+
+        perfMonitor_.endSlot(perfSlot);
+        ++perfSlot;
     }
 
     // 7. Copy master bus buffer to output
@@ -1531,6 +1544,7 @@ void Engine::processBlock(float* const* outputChannels, int numChannels, int num
             // Zero any extra output channels
             for (int ch = channels; ch < numChannels; ++ch)
                 std::memset(outputChannels[ch], 0, sizeof(float) * static_cast<size_t>(numSamples));
+            perfMonitor_.endBlock();
             return;
         }
     }
@@ -1538,6 +1552,8 @@ void Engine::processBlock(float* const* outputChannels, int numChannels, int num
     // Fallback: silence
     for (int ch = 0; ch < numChannels; ++ch)
         std::memset(outputChannels[ch], 0, sizeof(float) * static_cast<size_t>(numSamples));
+
+    perfMonitor_.endBlock();
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1557,6 +1573,11 @@ int Engine::getBlockSize() const
 MidiRouter& Engine::getMidiRouter()
 {
     return midiRouter_;
+}
+
+PerfMonitor& Engine::getPerfMonitor()
+{
+    return perfMonitor_;
 }
 
 // ═══════════════════════════════════════════════════════════════════

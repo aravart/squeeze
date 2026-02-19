@@ -424,8 +424,7 @@ class TestTransport:
 
     def test_tempo_set(self, s):
         s.transport.tempo = 140.0
-        # Transport stubs don't persist — returns default 120.0
-        assert s.transport.tempo == 120.0
+        assert s.transport.tempo == 140.0
 
     def test_position(self, s):
         assert s.transport.position == 0.0
@@ -435,7 +434,6 @@ class TestTransport:
 
     def test_playing_setter(self, s):
         s.transport.playing = True
-        # Transport stubs don't persist — is_playing returns false
         s.transport.playing = False
 
     def test_seek_beats(self, s):
@@ -633,6 +631,108 @@ class TestRender:
 class TestProcessEvents:
     def test_process_events(self, s):
         Squeeze.process_events(0)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Performance monitoring
+# ═══════════════════════════════════════════════════════════════════
+
+class TestPerfMonitor:
+    def test_disabled_by_default(self, s):
+        assert not s.perf_is_enabled()
+
+    def test_enable_disable(self, s):
+        s.perf_enable(True)
+        assert s.perf_is_enabled()
+        s.perf_enable(False)
+        assert not s.perf_is_enabled()
+
+    def test_slot_profiling_disabled_by_default(self, s):
+        assert not s.perf_is_slot_profiling_enabled()
+
+    def test_enable_disable_slot_profiling(self, s):
+        s.perf_enable_slots(True)
+        assert s.perf_is_slot_profiling_enabled()
+        s.perf_enable_slots(False)
+        assert not s.perf_is_slot_profiling_enabled()
+
+    def test_xrun_threshold_default(self, s):
+        assert abs(s.perf_get_xrun_threshold() - 1.0) < 1e-6
+
+    def test_xrun_threshold_roundtrip(self, s):
+        s.perf_set_xrun_threshold(0.5)
+        assert abs(s.perf_get_xrun_threshold() - 0.5) < 1e-6
+
+    def test_xrun_threshold_clamped(self, s):
+        s.perf_set_xrun_threshold(0.01)
+        assert s.perf_get_xrun_threshold() >= 0.1
+        s.perf_set_xrun_threshold(10.0)
+        assert s.perf_get_xrun_threshold() <= 2.0
+
+    def test_snapshot_when_disabled(self, s):
+        snap = s.perf_snapshot()
+        assert isinstance(snap, dict)
+        assert snap["callback_avg_us"] == 0.0
+        assert snap["xrun_count"] == 0
+        assert snap["callback_count"] == 0
+
+    def test_snapshot_fields(self, s):
+        snap = s.perf_snapshot()
+        expected_keys = {
+            "callback_avg_us", "callback_peak_us", "cpu_load_percent",
+            "xrun_count", "callback_count", "sample_rate", "block_size",
+            "buffer_duration_us",
+        }
+        assert set(snap.keys()) == expected_keys
+
+    def test_snapshot_after_render(self, s):
+        s.perf_enable(True)
+        src = s.add_source("Synth")
+        src.route_to(s.master)
+        for _ in range(20):
+            s.render(512)
+        snap = s.perf_snapshot()
+        assert snap["callback_count"] >= 1
+        assert snap["sample_rate"] == 44100.0
+        assert snap["block_size"] == 512
+
+    def test_reset(self, s):
+        s.perf_enable(True)
+        for _ in range(20):
+            s.render(512)
+        snap = s.perf_snapshot()
+        assert snap["callback_count"] >= 1
+        s.perf_reset()
+        snap2 = s.perf_snapshot()
+        assert snap2["xrun_count"] == 0
+        assert snap2["callback_count"] == 0
+
+    def test_slots_empty_when_disabled(self, s):
+        slots = s.perf_slots()
+        assert isinstance(slots, list)
+        assert len(slots) == 0
+
+    def test_slots_with_profiling(self, s):
+        s.perf_enable(True)
+        s.perf_enable_slots(True)
+        src = s.add_source("Synth")
+        src.route_to(s.master)
+        for _ in range(20):
+            s.render(512)
+        slots = s.perf_slots()
+        assert len(slots) >= 1
+        for slot in slots:
+            assert "handle" in slot
+            assert "avg_us" in slot
+            assert "peak_us" in slot
+
+    def test_callback_count_increments(self, s):
+        s.perf_enable(True)
+        s.render(512)
+        s.render(512)
+        s.render(512)
+        snap = s.perf_snapshot()
+        assert snap["callback_count"] >= 3
 
 
 # ═══════════════════════════════════════════════════════════════════

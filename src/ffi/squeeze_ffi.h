@@ -360,6 +360,60 @@ double sq_clock_get_resolution(SqClock clock);
 /// Get clock latency in ms.
 double sq_clock_get_latency(SqClock clock);
 
+/* ── Performance monitoring ────────────────────────────────────── */
+
+typedef struct {
+    double callback_avg_us;
+    double callback_peak_us;
+    double cpu_load_percent;
+    int    xrun_count;
+    int64_t callback_count;
+    double sample_rate;
+    int    block_size;
+    double buffer_duration_us;
+} SqPerfSnapshot;
+
+typedef struct {
+    int    handle;
+    double avg_us;
+    double peak_us;
+} SqSlotPerf;
+
+typedef struct {
+    SqSlotPerf* items;
+    int count;
+} SqSlotPerfList;
+
+/// Get the latest performance snapshot. Returns zeroed struct on NULL engine.
+SqPerfSnapshot sq_perf_snapshot(SqEngine engine);
+
+/// Enable (1) or disable (0) performance monitoring.
+void sq_perf_enable(SqEngine engine, int enabled);
+
+/// Returns 1 if monitoring is enabled, 0 otherwise.
+int sq_perf_is_enabled(SqEngine engine);
+
+/// Enable (1) or disable (0) per-slot profiling.
+void sq_perf_enable_slots(SqEngine engine, int enabled);
+
+/// Returns 1 if slot profiling is enabled, 0 otherwise.
+int sq_perf_is_slot_profiling_enabled(SqEngine engine);
+
+/// Set xrun threshold as fraction of budget. Clamped to [0.1, 2.0].
+void sq_perf_set_xrun_threshold(SqEngine engine, double factor);
+
+/// Get current xrun threshold.
+double sq_perf_get_xrun_threshold(SqEngine engine);
+
+/// Reset cumulative counters (xrun_count, callback_count).
+void sq_perf_reset(SqEngine engine);
+
+/// Get per-slot timing. Caller must free with sq_free_slot_perf_list().
+SqSlotPerfList sq_perf_slots(SqEngine engine);
+
+/// Free a slot perf list. NULL items is safe.
+void sq_free_slot_perf_list(SqSlotPerfList list);
+
 /* ── Testing ──────────────────────────────────────────────────── */
 
 void sq_render(SqEngine engine, int num_samples);
