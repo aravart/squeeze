@@ -248,6 +248,19 @@ After phase 3, Engine's processBlock gains transport advance, beat-timed event r
 24. MeterProcessor        (Processor)
 ```
 
+### Phase 6: Modulation (tier 25)
+
+```
+25. Modulation            (Processor, Engine, MixerSnapshot, Transport)
+    — ModSource base class + LfoSource
+    — ModConnection routing, depth atomics
+    — Sub-block dispatch in processBlock (kModSubBlockSize = 16)
+    — ParamDescriptor.modulatable flag
+    — Base value management for modulated parameters
+```
+
+After phase 6, Engine can route LFO outputs to any continuous processor parameter. Processing is sub-blocked at 3 kHz (16 samples @ 48 kHz) for modulated sources/buses. Unmodulated paths have zero overhead.
+
 ### Notes
 
 Logger is tier 0 — every subsequent component uses it.
