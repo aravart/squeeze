@@ -29,6 +29,7 @@ add_library(squeeze_core STATIC
     src/core/Source.cpp
     src/core/Transport.cpp
     src/core/EventScheduler.cpp
+    src/core/ClockDispatch.cpp
 )
 
 target_include_directories(squeeze_core PUBLIC src)
@@ -85,6 +86,7 @@ add_executable(squeeze_unit_tests
     tests/core/BusTests.cpp
     tests/core/TransportTests.cpp
     tests/core/EventSchedulerTests.cpp
+    tests/core/ClockDispatchTests.cpp
 )
 
 target_link_libraries(squeeze_unit_tests PRIVATE
@@ -102,6 +104,7 @@ add_executable(squeeze_ffi_tests
     tests/ffi/EditorFFITests.cpp
     tests/ffi/TransportFFITests.cpp
     tests/ffi/EventSchedulerFFITests.cpp
+    tests/ffi/ClockDispatchFFITests.cpp
 )
 
 target_link_libraries(squeeze_ffi_tests PRIVATE

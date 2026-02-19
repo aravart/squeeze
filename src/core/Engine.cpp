@@ -700,6 +700,18 @@ void Engine::transportPlay()
     Command cmd;
     cmd.type = Command::Type::transportPlay;
     commandQueue_.sendCommand(cmd);
+
+    // Prime clock dispatch: compute current beat from published position
+    double beats = 0.0;
+    if (sampleRate_ > 0.0 && shadowTempo_ > 0.0)
+    {
+        int64_t samples = publishedPositionSamples_.load(std::memory_order_relaxed);
+        double seconds = static_cast<double>(samples) / sampleRate_;
+        beats = seconds * (shadowTempo_ / 60.0);
+    }
+    clockDispatch_.prime(beats, shadowTempo_, shadowLooping_,
+                         shadowLoopStartBeats_, shadowLoopEndBeats_);
+
     SQ_DEBUG("Engine::transportPlay");
 }
 
@@ -710,6 +722,7 @@ void Engine::transportStop()
     Command cmd;
     cmd.type = Command::Type::transportStop;
     commandQueue_.sendCommand(cmd);
+    clockDispatch_.onTransportStop();
     SQ_DEBUG("Engine::transportStop");
 }
 
@@ -755,6 +768,15 @@ void Engine::transportSeekSamples(int64_t samples)
     cmd.type = Command::Type::seekSamples;
     cmd.int64Value = samples;
     commandQueue_.sendCommand(cmd);
+
+    if (isTransportPlaying() && sampleRate_ > 0.0 && shadowTempo_ > 0.0)
+    {
+        double seconds = static_cast<double>(samples) / sampleRate_;
+        double beats = seconds * (shadowTempo_ / 60.0);
+        clockDispatch_.prime(beats, shadowTempo_, shadowLooping_,
+                             shadowLoopStartBeats_, shadowLoopEndBeats_);
+    }
+
     SQ_DEBUG("Engine::transportSeekSamples: %lld", (long long)samples);
 }
 
@@ -766,6 +788,11 @@ void Engine::transportSeekBeats(double beats)
     cmd.type = Command::Type::seekBeats;
     cmd.doubleValue1 = beats;
     commandQueue_.sendCommand(cmd);
+
+    if (isTransportPlaying())
+        clockDispatch_.prime(beats, shadowTempo_, shadowLooping_,
+                             shadowLoopStartBeats_, shadowLoopEndBeats_);
+
     SQ_DEBUG("Engine::transportSeekBeats: %f", beats);
 }
 
@@ -830,6 +857,21 @@ bool Engine::isTransportLooping() const
 {
     std::lock_guard<std::mutex> lock(controlMutex_);
     return shadowLooping_;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Clock dispatch (control thread, no controlMutex_ needed)
+// ═══════════════════════════════════════════════════════════════════
+
+uint32_t Engine::addClock(double resolution, double latencyMs,
+                           SqClockCallback callback, void* userData)
+{
+    return clockDispatch_.addClock(resolution, latencyMs, callback, userData);
+}
+
+void Engine::removeClock(uint32_t clockId)
+{
+    clockDispatch_.removeClock(clockId);
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1173,6 +1215,34 @@ void Engine::processBlock(float* const* outputChannels, int numChannels, int num
                 numSamples,
                 transport_.getTempo(), sampleRate_,
                 resolvedEvents_, kMaxResolvedEvents);
+        }
+    }
+
+    // 2c. Push beat range to ClockDispatch
+    if (transport_.isPlaying() && sampleRate_ > 0.0 && transport_.getTempo() > 0.0)
+    {
+        if (transport_.didLoopWrap())
+        {
+            double blockStart = transport_.getBlockStartBeats();
+            double loopEnd    = transport_.getLoopEndBeats();
+            double loopStart  = transport_.getLoopStartBeats();
+            double blockEnd   = transport_.getBlockEndBeats();
+            double tempo      = transport_.getTempo();
+            bool   looping    = transport_.isLooping();
+
+            clockDispatch_.pushBeatRange({blockStart, loopEnd, tempo, looping, loopStart, loopEnd});
+            clockDispatch_.pushBeatRange({loopStart, blockEnd, tempo, looping, loopStart, loopEnd});
+        }
+        else
+        {
+            clockDispatch_.pushBeatRange({
+                transport_.getBlockStartBeats(),
+                transport_.getBlockEndBeats(),
+                transport_.getTempo(),
+                transport_.isLooping(),
+                transport_.getLoopStartBeats(),
+                transport_.getLoopEndBeats()
+            });
         }
     }
 

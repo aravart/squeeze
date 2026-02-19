@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/Bus.h"
+#include "core/ClockDispatch.h"
 #include "core/CommandQueue.h"
 #include "core/EventScheduler.h"
 #include "core/MidiRouter.h"
@@ -122,6 +123,11 @@ public:
     bool isTransportPlaying() const;
     bool isTransportLooping() const;
 
+    // --- Clock dispatch (control thread, no controlMutex_ needed) ---
+    uint32_t addClock(double resolution, double latencyMs,
+                      SqClockCallback callback, void* userData);
+    void removeClock(uint32_t clockId);
+
     // --- Event scheduling (control thread) ---
     bool scheduleNoteOn(int sourceHandle, double beatTime, int channel, int note, float velocity);
     bool scheduleNoteOff(int sourceHandle, double beatTime, int channel, int note);
@@ -154,6 +160,7 @@ private:
     MidiRouter midiRouter_;
     Transport transport_;
     EventScheduler eventScheduler_;
+    ClockDispatch clockDispatch_;
 
     // Event scheduling: resolved events buffer (audio thread)
     static constexpr int kMaxResolvedEvents = 256;

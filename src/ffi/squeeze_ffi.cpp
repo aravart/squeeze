@@ -903,6 +903,51 @@ void sq_process_events(int timeout_ms)
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// Clock dispatch
+// ═══════════════════════════════════════════════════════════════════
+
+struct ClockHandle {
+    EngineHandle* engine;
+    uint32_t clockId;
+    double resolution;
+    double latencyMs;
+};
+
+SqClock sq_clock_create(SqEngine engine, double resolution_beats,
+                         double latency_ms, SqClockCallback callback, void* user_data)
+{
+    if (!engine || !callback || resolution_beats <= 0.0 || latency_ms < 0.0)
+        return nullptr;
+
+    uint32_t id = eng(engine).addClock(resolution_beats, latency_ms, callback, user_data);
+    if (id == 0)
+        return nullptr;
+
+    auto* h = new ClockHandle{cast(engine), id, resolution_beats, latency_ms};
+    return static_cast<SqClock>(h);
+}
+
+void sq_clock_destroy(SqClock clock)
+{
+    if (!clock) return;
+    auto* h = static_cast<ClockHandle*>(clock);
+    h->engine->engine.removeClock(h->clockId);
+    delete h;
+}
+
+double sq_clock_get_resolution(SqClock clock)
+{
+    if (!clock) return 0.0;
+    return static_cast<ClockHandle*>(clock)->resolution;
+}
+
+double sq_clock_get_latency(SqClock clock)
+{
+    if (!clock) return 0.0;
+    return static_cast<ClockHandle*>(clock)->latencyMs;
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // Testing
 // ═══════════════════════════════════════════════════════════════════
 

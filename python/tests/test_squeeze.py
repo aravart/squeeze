@@ -1,8 +1,11 @@
 """Comprehensive Python API tests for the mixer-centric Squeeze engine."""
 
 import pytest
+import threading
+import time
+
 from squeeze import (
-    Squeeze, Source, Bus, Chain, Processor, Transport, Midi, MidiDevice,
+    Squeeze, Source, Bus, Chain, Clock, Processor, Transport, Midi, MidiDevice,
     ParamDescriptor, SqueezeError, set_log_level, set_log_callback,
 )
 
@@ -494,6 +497,75 @@ class TestEventScheduling:
 
 
 # ═══════════════════════════════════════════════════════════════════
+# Clock dispatch
+# ═══════════════════════════════════════════════════════════════════
+
+class TestClock:
+    def test_create_and_destroy(self, s):
+        beats = []
+        clk = s.clock(1.0, 0.0, lambda beat: beats.append(beat))
+        assert isinstance(clk, Clock)
+        clk.destroy()
+
+    def test_resolution_property(self, s):
+        clk = s.clock(0.25, 50.0, lambda beat: None)
+        assert abs(clk.resolution - 0.25) < 1e-9
+        clk.destroy()
+
+    def test_latency_ms_property(self, s):
+        clk = s.clock(0.25, 50.0, lambda beat: None)
+        assert abs(clk.latency_ms - 50.0) < 1e-9
+        clk.destroy()
+
+    def test_invalid_resolution_raises(self, s):
+        with pytest.raises(ValueError):
+            s.clock(0.0, 0.0, lambda beat: None)
+
+    def test_invalid_latency_raises(self, s):
+        with pytest.raises(ValueError):
+            s.clock(1.0, -1.0, lambda beat: None)
+
+    def test_callback_fires_during_render(self, s):
+        beats = []
+        lock = threading.Lock()
+        event = threading.Event()
+
+        def on_beat(beat):
+            with lock:
+                beats.append(beat)
+                if len(beats) >= 1:
+                    event.set()
+
+        clk = s.clock(1.0, 0.0, on_beat)
+        s.transport.play()
+        s.render(512)  # process play command
+
+        # Render enough blocks to cross beat 1.0
+        for _ in range(50):
+            s.render(512)
+
+        event.wait(timeout=1.0)
+
+        with lock:
+            assert len(beats) >= 1
+            assert abs(beats[0] - 1.0) < 1e-9
+
+        clk.destroy()
+
+    def test_double_destroy_is_safe(self, s):
+        clk = s.clock(1.0, 0.0, lambda beat: None)
+        clk.destroy()
+        clk.destroy()
+
+    def test_repr(self, s):
+        clk = s.clock(0.25, 50.0, lambda beat: None)
+        r = repr(clk)
+        assert "0.25" in r
+        assert "50.0" in r
+        clk.destroy()
+
+
+# ═══════════════════════════════════════════════════════════════════
 # Plugin manager
 # ═══════════════════════════════════════════════════════════════════
 
@@ -574,6 +646,7 @@ class TestImports:
         assert hasattr(squeeze, 'Source')
         assert hasattr(squeeze, 'Bus')
         assert hasattr(squeeze, 'Chain')
+        assert hasattr(squeeze, 'Clock')
         assert hasattr(squeeze, 'Processor')
         assert hasattr(squeeze, 'Transport')
         assert hasattr(squeeze, 'Midi')

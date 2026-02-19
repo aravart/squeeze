@@ -11,6 +11,7 @@ from squeeze._helpers import (
     decode_string, string_list_to_python, encode,
 )
 from squeeze.bus import Bus
+from squeeze.clock import Clock
 from squeeze.midi import Midi
 from squeeze.source import Source
 from squeeze.transport import Transport
@@ -106,6 +107,21 @@ class Squeeze:
     def master(self) -> Bus:
         """The master bus (always exists)."""
         return Bus(self, lib.sq_master(self._ptr))
+
+    # --- Clock dispatch ---
+
+    def clock(self, resolution: float, latency_ms: float,
+              callback) -> Clock:
+        """Create a clock that calls ``callback(beat)`` at the given resolution.
+
+        Args:
+            resolution: Beat interval (e.g., 1/4 for quarter notes).
+            latency_ms: How far ahead (in ms) the callback fires before the
+                beat is actually rendered. 0 = notify after the fact.
+            callback: Called with the beat position (float) on the clock
+                dispatch thread.
+        """
+        return Clock(self, resolution, latency_ms, callback)
 
     # --- Batching ---
 

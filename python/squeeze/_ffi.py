@@ -68,6 +68,7 @@ class SqMidiRouteList(ctypes.Structure):
 
 
 LogCallbackType = ctypes.CFUNCTYPE(None, ctypes.c_int, ctypes.c_char_p, ctypes.c_void_p)
+SqClockCallbackType = ctypes.CFUNCTYPE(None, ctypes.c_uint32, ctypes.c_double, ctypes.c_void_p)
 
 _V = ctypes.c_void_p   # SqEngine
 _I = ctypes.c_int
@@ -220,6 +221,12 @@ def _load_lib():
     _sig("sq_close_editor", _B, [_V, _I, _EP])
     _sig("sq_has_editor", _B, [_V, _I])
     _sig("sq_process_events", None, [_I])
+
+    # --- Clock dispatch ---
+    _sig("sq_clock_create", _V, [_V, _D, _D, SqClockCallbackType, ctypes.c_void_p])
+    _sig("sq_clock_destroy", None, [_V])
+    _sig("sq_clock_get_resolution", _D, [_V])
+    _sig("sq_clock_get_latency", _D, [_V])
 
     # --- Testing ---
     _sig("sq_render", None, [_V, _I])

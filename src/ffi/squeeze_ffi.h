@@ -344,6 +344,24 @@ bool sq_has_editor(SqEngine engine, int proc_handle);
 /// Process JUCE GUI events.
 void sq_process_events(int timeout_ms);
 
+/* ── Clock dispatch ───────────────────────────────────────────── */
+
+typedef void* SqClock;
+typedef void (*SqClockCallback)(uint32_t clock_id, double beat, void* user_data);
+
+/// Create a clock subscription. Returns NULL on invalid params.
+SqClock sq_clock_create(SqEngine engine, double resolution_beats,
+                         double latency_ms, SqClockCallback callback, void* user_data);
+
+/// Destroy a clock subscription. NULL is a no-op.
+void sq_clock_destroy(SqClock clock);
+
+/// Get clock resolution in beats.
+double sq_clock_get_resolution(SqClock clock);
+
+/// Get clock latency in ms.
+double sq_clock_get_latency(SqClock clock);
+
 /* ── Testing ──────────────────────────────────────────────────── */
 
 void sq_render(SqEngine engine, int num_samples);
