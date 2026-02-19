@@ -33,6 +33,22 @@ The sidechain source audio is **read-only** — it is copied into the processor'
 
 ## Interface
 
+### C++ — Processor base additions
+
+Sidechain queries are virtual methods on Processor with defaults that return false/0. This allows Engine and the FFI to call them on any Processor without `dynamic_cast`. PluginProcessor overrides with the real implementation.
+
+```cpp
+class Processor {
+public:
+    // ... existing interface ...
+
+    // --- Sidechain (base defaults — no sidechain support) ---
+    virtual bool supportsSidechain() const { return false; }
+    virtual int getSidechainChannels() const { return 0; }
+    virtual void setSidechainAudio(const juce::AudioBuffer<float>*) {}
+};
+```
+
 ### C++ — PluginProcessor additions
 
 ```cpp
@@ -40,13 +56,13 @@ class PluginProcessor : public Processor {
 public:
     // ... existing interface ...
 
-    // --- Sidechain queries ---
-    bool supportsSidechain() const;     // true if plugin declares a sidechain input bus
-    int getSidechainChannels() const;   // 0 if no sidechain support
+    // --- Sidechain overrides ---
+    bool supportsSidechain() const override;     // true if plugin declares a sidechain input bus
+    int getSidechainChannels() const override;   // 0 if no sidechain support
 
-    // --- Sidechain audio (called by Engine before process(), audio thread) ---
+    // Called by Engine before process() each block (audio thread).
     // Pointer is read-only, valid only for the current block. nullptr = no sidechain this block.
-    void setSidechainAudio(const juce::AudioBuffer<float>* buffer);
+    void setSidechainAudio(const juce::AudioBuffer<float>* buffer) override;
 
 private:
     // Wide buffer: main channels + sidechain channels, pre-allocated in prepare()
@@ -91,6 +107,8 @@ int      sq_sidechain_channels(SqEngine engine, SqProc proc);
 
 `sq_get_sidechain_source()` and `sq_get_sidechain_bus()` return the current assignment. Exactly one returns non-NULL when `sq_has_sidechain()` is true. The Python getter calls both and wraps the non-NULL result.
 
+`sq_sidechain_source()` and `sq_sidechain_bus()` follow the standard `sq_*` error pattern: on failure, `*error` is set to a heap-allocated string that the caller must free with `sq_free_string()`. A NULL `error` pointer is safe — the error message is discarded.
+
 ### Python
 
 ```python
@@ -126,10 +144,14 @@ bass = s.add_source("Bass", plugin="Diva.vst3")
 compressor = bass.chain.append("Compressor.vst3")
 compressor.sidechain = kick       # sidechain from kick source
 
-# Sidechain from a bus
+# Sidechain from a bus: gate on reverb bus, keyed from drum bus
 drum_bus = s.add_bus("Drums")
+kick.route_to(drum_bus)
+
+reverb_bus = s.add_bus("Reverb")
+reverb_bus.chain.append("ValhallaRoom.vst3")
 gate = reverb_bus.chain.append("Gate.vst3")
-gate.sidechain = drum_bus         # sidechain from bus
+gate.sidechain = drum_bus         # gate opens when drums hit
 
 # Remove sidechain
 compressor.sidechain = None
@@ -150,12 +172,13 @@ This query happens once at construction, not at runtime. The result is immutable
 auto* plugin = processor_.get();
 if (plugin->getBusCount(true) > 1) {
     auto layout = plugin->getBusesLayout();
-    auto scBus = layout.getChannelSet(true, 1);
-    if (!scBus.isDisabled()) {
-        sidechainChannels_ = scBus.size();
+    auto scChannelSet = layout.getChannelSet(true, 1);
+    if (!scChannelSet.isDisabled()) {
+        sidechainChannels_ = scChannelSet.size();
     } else {
-        // Try enabling it
-        layout.getChannelSet(true, 1) = juce::AudioChannelSet::mono();
+        // Try enabling the sidechain bus.
+        // getChannelSet() returns by value — must modify via inputBuses reference.
+        layout.inputBuses.getReference(1) = juce::AudioChannelSet::mono();
         if (plugin->setBusesLayout(layout)) {
             sidechainChannels_ = 1;
         }
@@ -175,7 +198,8 @@ void PluginProcessor::prepare(double sampleRate, int blockSize) {
     // ... existing prepare ...
 
     if (sidechainChannels_ > 0) {
-        wideBuffer_.setSize(outputChannels_ + sidechainChannels_, blockSize);
+        int mainChannels = std::max(inputChannels_, outputChannels_);
+        wideBuffer_.setSize(mainChannels + sidechainChannels_, blockSize);
     }
 }
 ```
@@ -184,19 +208,24 @@ void PluginProcessor::prepare(double sampleRate, int blockSize) {
 
 ```
 process(buffer, midi):
-    if sidechainAudio_ != nullptr && sidechainChannels_ > 0:
-        // 1. Copy main audio into wideBuffer_ channels 0..outputChannels_-1
-        for ch in 0..outputChannels_-1:
-            wideBuffer_.copyFrom(ch, 0, buffer, ch, 0, numSamples)
+    mainChannels = max(inputChannels_, outputChannels_)
 
-        // 2. Copy sidechain audio into wideBuffer_ channels outputChannels_..end
+    if sidechainAudio_ != nullptr && sidechainChannels_ > 0:
+        // 1. Copy main audio into wideBuffer_ channels 0..mainChannels-1
+        for ch in 0..buffer.getNumChannels()-1:
+            wideBuffer_.copyFrom(ch, 0, buffer, ch, 0, numSamples)
+        // Zero any main channels beyond what buffer provides
+        for ch in buffer.getNumChannels()..mainChannels-1:
+            wideBuffer_.clear(ch, 0, numSamples)
+
+        // 2. Copy sidechain audio into wideBuffer_ channels mainChannels..end
         scChannels = min(sidechainAudio_->getNumChannels(), sidechainChannels_)
         for ch in 0..scChannels-1:
-            wideBuffer_.copyFrom(outputChannels_ + ch, 0,
+            wideBuffer_.copyFrom(mainChannels + ch, 0,
                                  *sidechainAudio_, ch, 0, numSamples)
         // Zero any remaining sidechain channels (if plugin expects stereo but source is mono)
         for ch in scChannels..sidechainChannels_-1:
-            wideBuffer_.clear(outputChannels_ + ch, 0, numSamples)
+            wideBuffer_.clear(mainChannels + ch, 0, numSamples)
 
         // 3. Process
         processor_->processBlock(wideBuffer_, tempMidi_)
@@ -216,7 +245,7 @@ The extra copy is negligible — sidechain buffers are small (1–2 channels, on
 
 ## Engine — Sidechain Dependency Tracking
 
-Engine maintains a sidechain assignment map on the control thread:
+Engine maintains a sidechain assignment map and a processor owner map on the control thread:
 
 ```cpp
 // In Engine private:
@@ -227,7 +256,24 @@ struct SidechainAssignment {
     Bus* bus = nullptr;        // if kind == bus
 };
 std::unordered_map<Processor*, SidechainAssignment> sidechainMap_;
+
+// Reverse lookup: processor → owning source or bus.
+// Updated by sourceAppend/Insert/Remove and busAppend/Insert/Remove.
+// Used by sidechain() for cycle detection and snapshot building,
+// and by "proc is not in any chain" validation.
+struct ProcessorOwner {
+    enum class Kind { source, bus };
+    Kind kind;
+    Source* source = nullptr;
+    Bus* bus = nullptr;
+};
+std::unordered_map<Processor*, ProcessorOwner> processorOwnerMap_;
 ```
+
+The `processorOwnerMap_` is maintained alongside the existing `processorRegistry_`. When a processor is added to a source or bus chain, an entry is inserted. When removed, the entry is erased. This map enables:
+- Determining which source or bus a processor belongs to (for cycle detection — "does this sidechain create a dependency between source A and source B?")
+- Validating that a processor is actually in a chain before accepting a sidechain assignment
+- Cleanup when sources or buses are removed (iterate the map to find affected processors)
 
 ### Assignment
 
@@ -311,6 +357,10 @@ for each proc in snapshot.chainProcessors:
                   (already computed earlier in this block, guaranteed by ordering)
                 - if sidechain from bus: use that bus's snapshot buffer
                   (already computed — sources before buses, buses in dependency order)
+            // Note: for self-sidechain, the resolved buffer IS the same buffer being
+            // processed in-place. This is safe because setSidechainAudio stores only
+            // a pointer — the actual copy into wideBuffer_ (process() step 1) happens
+            // before processBlock() modifies the main channels.
             proc->setSidechainAudio(&sidechainBuffer)
         proc->process(buffer, midiBuffer)
 
@@ -387,6 +437,8 @@ Self-sidechain introduces no ordering constraints — a source cannot depend on 
 - Source processing order respects sidechain dependencies (source-to-source edges)
 - Bus processing order respects sidechain dependencies (sidechain edges added to bus DAG alongside routeTo and send edges)
 - Circular sidechain dependencies are rejected (source-to-source and bus-to-bus)
+- In the snapshot, `sidechainRefs.size() == chainProcessors.size()` for every SourceEntry and BusEntry — the two vectors are parallel and must be kept aligned by `buildAndSwapSnapshot()`
+- Snapshot `SidechainRef.sourceIndex` and `busIndex` refer to post-sort positions in the snapshot arrays (computed after topological sort, not before)
 - Sidechain assignments trigger a snapshot rebuild
 - A processor can have at most one sidechain assignment
 - Removing a processor from a chain also removes its sidechain assignment
@@ -415,7 +467,7 @@ Self-sidechain introduces no ordering constraints — a source cannot depend on 
 ## Dependencies
 
 - **PluginProcessor** — `supportsSidechain()`, `getSidechainChannels()`, `setSidechainAudio()`, wide buffer management
-- **Processor** — base class (sidechain is PluginProcessor-specific but the assignment is tracked by handle)
+- **Processor** — base class with virtual `supportsSidechain()`, `getSidechainChannels()`, `setSidechainAudio()` (defaults: false/0/no-op)
 - **Engine** — `sidechain()`, `removeSidechain()`, dependency tracking, source ordering, buffer passing in `processSubBlock`
 - **Source** — sidechain source (audio buffer provider)
 - **Bus** — sidechain source (audio buffer provider)
@@ -428,7 +480,8 @@ This feature is cross-cutting. The following existing specs must be updated when
 
 - **PluginProcessor** — Remove "Sidechain — future" from "Does NOT Handle" (line 167). Add `supportsSidechain()`, `getSidechainChannels()`, `setSidechainAudio()`, `wideBuffer_`, and the modified `process()` path to the interface and processing sections.
 - **Engine** — Add `sidechain()`, `removeSidechain()`, `hasSidechain()`, `getSidechainSource()`, `getSidechainBus()` to the C++ interface. Add `sq_sidechain_source`, `sq_sidechain_bus`, `sq_remove_sidechain`, `sq_has_sidechain`, `sq_get_sidechain_source`, `sq_get_sidechain_bus`, `sq_supports_sidechain`, `sq_sidechain_channels` to the C ABI. Update `processSubBlock` pseudocode to include sidechain buffer passing. Add sidechain cleanup to `removeSource()`, `removeBus()`, `sourceRemove()`, `busRemove()`. Add sidechain edges to bus DAG sort in `buildAndSwapSnapshot()`.
-- **Architecture** — The processing loop's source iteration note ("independent — future: parallelizable") needs a caveat: sources with sidechain dependencies are ordered and cannot be parallelized with their dependencies.
+- **Architecture** — The processing loop's source iteration note ("independent — future: parallelizable") needs a caveat: sources with sidechain dependencies are ordered and cannot be parallelized with their dependencies. The processing loop pseudocode (`for each source: source.process(buffer, midi)`) should note that source iteration order may be constrained by sidechain.
+- **Processor** — Add virtual `supportsSidechain()` (returns false), `getSidechainChannels()` (returns 0), and `setSidechainAudio()` (no-op) to the base class interface.
 - **PythonAPI** — Add `processor.sidechain`, `processor.supports_sidechain`, and `processor.sidechain_channels` properties.
 
 ## Thread Safety
@@ -482,20 +535,29 @@ s = Squeeze()
 kick = s.add_source("Kick", sampler="kick.wav")
 bass = s.add_source("Bass", plugin="Diva.vst3")
 
+# Ducking compressor: bass ducks when kick hits
 comp = bass.chain.append("Compressor.vst3")
 
 if comp.supports_sidechain:
-    comp.sidechain = kick       # duck bass when kick hits
+    comp.sidechain = kick
 
 # Gated reverb: gate on reverb bus, sidechained from snare
 snare = s.add_source("Snare", sampler="snare.wav")
+
 reverb_bus = s.add_bus("Reverb")
+snare.send(reverb_bus, level=-6.0)
 reverb_bus.chain.append("ValhallaRoom.vst3")
 gate = reverb_bus.chain.append("Gate.vst3")
-gate.sidechain = snare
+gate.sidechain = snare          # reverb opens on snare hits
+reverb_bus.route_to(s.master)
+
+# Query
+print(comp.sidechain)           # <Source "Kick">
+print(gate.sidechain)           # <Source "Snare">
 
 # Remove
 comp.sidechain = None
+print(comp.sidechain)           # None
 ```
 
 ### C++ headless test
