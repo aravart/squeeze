@@ -235,9 +235,8 @@ class Squeeze:
             "buffer_duration_us": snap.buffer_duration_us,
         }
 
-    def perf_slots(self) -> list:
+    def perf_slots(self) -> list[dict]:
         """Return per-slot timing as a list of dicts."""
-        from ._ffi import SqSlotPerfList
         slot_list = lib.sq_perf_slots(self._ptr)
         result = []
         for i in range(slot_list.count):

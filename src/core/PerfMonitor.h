@@ -3,7 +3,6 @@
 #include <array>
 #include <atomic>
 #include <chrono>
-#include <cstring>
 #include <vector>
 
 namespace squeeze {

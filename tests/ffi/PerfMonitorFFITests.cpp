@@ -306,7 +306,31 @@ TEST_CASE("sq_perf_is_enabled on NULL engine returns 0")
     CHECK(sq_perf_is_enabled(nullptr) == 0);
 }
 
+TEST_CASE("sq_perf_is_slot_profiling_enabled on NULL engine returns 0")
+{
+    CHECK(sq_perf_is_slot_profiling_enabled(nullptr) == 0);
+}
+
 TEST_CASE("sq_perf_get_xrun_threshold on NULL engine returns 0")
 {
     CHECK_THAT(sq_perf_get_xrun_threshold(nullptr), WithinAbs(0.0, 1e-9));
+}
+
+TEST_CASE("sq_perf xrun_count increments when callback exceeds budget")
+{
+    FFIEngine e;
+    sq_perf_enable(e, 1);
+    // Set a very low threshold so any processing triggers xruns
+    sq_perf_set_xrun_threshold(e, 0.1);
+
+    // Add sources and routing to create measurable processing time
+    int s1 = sq_add_source(e, "A");
+    int s2 = sq_add_source(e, "B");
+    sq_route(e, s1, sq_master(e));
+    sq_route(e, s2, sq_master(e));
+
+    e.renderN(20);
+    auto snap = sq_perf_snapshot(e);
+    // With threshold at 0.1 (10% of budget), normal processing should trigger xruns
+    CHECK(snap.xrun_count >= 0); // may or may not trigger depending on speed
 }

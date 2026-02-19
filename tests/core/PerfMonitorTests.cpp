@@ -524,6 +524,28 @@ TEST_CASE("beginSlot with slotIndex >= kMaxSlots is ignored")
     CHECK(snap.slots[0].handle == 100);
 }
 
+TEST_CASE("beginSlot with negative slotIndex is ignored")
+{
+    PerfMonitor pm;
+    pm.prepare(kSampleRate, kBlockSize);
+    pm.enable();
+    pm.enableSlotProfiling();
+
+    for (int i = 0; i < kWindowLength + 5; ++i)
+    {
+        pm.beginBlock();
+        pm.beginSlot(0, 100);
+        pm.endSlot(0);
+        pm.beginSlot(-1, 999); // negative index
+        pm.endSlot(-1);
+        pm.endBlock();
+    }
+
+    auto snap = pm.getSnapshot();
+    CHECK(snap.slots.size() == 1);
+    CHECK(snap.slots[0].handle == 100);
+}
+
 TEST_CASE("zero slots when slot profiling enabled but no beginSlot calls")
 {
     PerfMonitor pm;
