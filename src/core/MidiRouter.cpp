@@ -47,7 +47,8 @@ bool MidiRouter::hasDeviceQueue(const std::string& deviceName) const
 // --- Routing ---
 
 int MidiRouter::addRoute(const std::string& deviceName, int nodeId,
-                         int channelFilter, int noteFilter, std::string& error)
+                         int channelFilter, int noteLow, int noteHigh,
+                         std::string& error)
 {
     if (!devices_.count(deviceName)) {
         error = "device not registered: " + deviceName;
@@ -59,16 +60,16 @@ int MidiRouter::addRoute(const std::string& deviceName, int nodeId,
         SQ_WARN("MidiRouter: addRoute failed — %s", error.c_str());
         return -1;
     }
-    if (noteFilter < -1 || noteFilter > 127) {
-        error = "invalid note filter: " + std::to_string(noteFilter);
+    if (noteLow < 0 || noteLow > 127 || noteHigh < 0 || noteHigh > 127 || noteLow > noteHigh) {
+        error = "invalid note range: " + std::to_string(noteLow) + "-" + std::to_string(noteHigh);
         SQ_WARN("MidiRouter: addRoute failed — %s", error.c_str());
         return -1;
     }
 
     int id = nextRouteId_++;
-    stagedRoutes_.push_back({id, deviceName, nodeId, channelFilter, noteFilter});
-    SQ_DEBUG("MidiRouter: added route %d: %s -> node %d (ch=%d, note=%d)",
-             id, deviceName.c_str(), nodeId, channelFilter, noteFilter);
+    stagedRoutes_.push_back({id, deviceName, nodeId, channelFilter, noteLow, noteHigh});
+    SQ_DEBUG("MidiRouter: added route %d: %s -> node %d (ch=%d, notes=%d-%d)",
+             id, deviceName.c_str(), nodeId, channelFilter, noteLow, noteHigh);
     return id;
 }
 
@@ -139,7 +140,7 @@ void MidiRouter::commit()
         if (dimIt == deviceIndexMap.end())
             continue;
         newTable->entries.push_back({dimIt->second, route.nodeId,
-                                     route.channelFilter, route.noteFilter});
+                                     route.channelFilter, route.noteLow, route.noteHigh});
     }
 
     // Garbage collect: delete the table from 2 commits ago
@@ -221,13 +222,16 @@ bool MidiRouter::matchesFilter(const MidiEvent& event,
             return false;
     }
 
-    // Note filter — only applies to note-related messages
-    if (route.noteFilter != -1) {
+    // Note range filter — only applies to note-related messages
+    if (!(route.noteLow == 0 && route.noteHigh == 127)) {
         uint8_t type = status & 0xF0;
         // Note Off (0x80), Note On (0x90), Polyphonic Aftertouch (0xA0)
         if (type == 0x80 || type == 0x90 || type == 0xA0) {
-            if (event.size >= 2 && event.data[1] != static_cast<uint8_t>(route.noteFilter))
-                return false;
+            if (event.size >= 2) {
+                int note = event.data[1];
+                if (note < route.noteLow || note > route.noteHigh)
+                    return false;
+            }
         }
         // Non-note messages (CC, program change, pitch bend, etc.) pass through
     }

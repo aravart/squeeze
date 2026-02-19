@@ -169,6 +169,10 @@ bool Engine::removeSource(Source* src)
     for (int i = 0; i < chain.size(); ++i)
         unregisterProcessor(chain.at(i));
 
+    // Remove MIDI routes targeting this source
+    if (midiRouter_.removeRoutesForNode(src->getHandle()))
+        midiRouter_.commit();
+
     SQ_DEBUG("Engine::removeSource: handle=%d name=%s", src->getHandle(), src->getName().c_str());
     sources_.erase(it);
     maybeRebuildSnapshot();

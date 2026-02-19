@@ -244,6 +244,19 @@ void sq_source_midi_assign(SqEngine engine, int source_handle,
     assignment.noteLow = note_low;
     assignment.noteHigh = note_high;
     src->setMidiAssignment(assignment);
+
+    // Wire up MidiRouter: remove old routes for this source, add new one
+    auto& router = eng(engine).getMidiRouter();
+    router.removeRoutesForNode(source_handle);
+
+    if (!assignment.device.empty() && router.hasDeviceQueue(assignment.device))
+    {
+        std::string err;
+        router.addRoute(assignment.device, source_handle, channel,
+                        note_low, note_high, err);
+    }
+
+    router.commit();
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -778,11 +791,12 @@ SqStringList sq_midi_open_devices(SqEngine engine)
 // ═══════════════════════════════════════════════════════════════════
 
 int sq_midi_route(SqEngine engine, const char* device, int source_handle,
-                  int channel_filter, int note_filter, char** error)
+                  int channel_filter, int note_low, int note_high,
+                  char** error)
 {
     auto& router = eng(engine).getMidiRouter();
     std::string err;
-    int id = router.addRoute(device, source_handle, channel_filter, note_filter, err);
+    int id = router.addRoute(device, source_handle, channel_filter, note_low, note_high, err);
     if (id < 0)
     {
         set_error(error, err);
@@ -818,7 +832,8 @@ SqMidiRouteList sq_midi_routes(SqEngine engine)
         result.routes[i].device = strdup(routes[static_cast<size_t>(i)].deviceName.c_str());
         result.routes[i].target_handle = routes[static_cast<size_t>(i)].nodeId;
         result.routes[i].channel_filter = routes[static_cast<size_t>(i)].channelFilter;
-        result.routes[i].note_filter = routes[static_cast<size_t>(i)].noteFilter;
+        result.routes[i].note_low = routes[static_cast<size_t>(i)].noteLow;
+        result.routes[i].note_high = routes[static_cast<size_t>(i)].noteHigh;
     }
     return result;
 }

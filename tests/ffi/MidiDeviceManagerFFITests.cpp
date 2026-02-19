@@ -83,7 +83,7 @@ TEST_CASE("sq_midi_route with unregistered device returns -1 and sets error")
     REQUIRE(engine != nullptr);
 
     char* error = nullptr;
-    int id = sq_midi_route(engine, "no_such_device", 1, 0, -1, &error);
+    int id = sq_midi_route(engine, "no_such_device", 1, 0, 0, 127, &error);
     CHECK(id == -1);
     REQUIRE(error != nullptr);
     sq_free_string(error);

@@ -70,6 +70,11 @@ class Processor:
 
     # --- Plugin editor ---
 
+    @property
+    def has_editor(self) -> bool:
+        """True if this processor has a native editor window."""
+        return lib.sq_has_editor(self._engine._ptr, self._handle)
+
     def open_editor(self) -> None:
         """Open the native plugin editor window."""
         err = make_error_ptr()

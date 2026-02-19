@@ -53,10 +53,6 @@ int sq_engine_block_size(SqEngine engine);
 /// Returns the source handle (>0), or -1 on failure.
 int sq_add_source(SqEngine engine, const char* name);
 
-/// Add a source with a custom generator (used internally by sq_add_source_plugin).
-/// Returns the source handle, or -1 on failure.
-int sq_add_source_with_generator(SqEngine engine, const char* name, int gen_proc_handle);
-
 /// Remove a source by handle. Returns false if not found.
 bool sq_remove_source(SqEngine engine, int source_handle);
 
@@ -298,7 +294,8 @@ typedef struct {
     char* device;
     int   target_handle;    /* source handle */
     int   channel_filter;
-    int   note_filter;
+    int   note_low;
+    int   note_high;
 } SqMidiRoute;
 
 typedef struct {
@@ -318,7 +315,8 @@ SqStringList sq_midi_open_devices(SqEngine engine);
 /* ── MIDI routing ─────────────────────────────────────────────── */
 
 int sq_midi_route(SqEngine engine, const char* device, int source_handle,
-                  int channel_filter, int note_filter, char** error);
+                  int channel_filter, int note_low, int note_high,
+                  char** error);
 bool sq_midi_unroute(SqEngine engine, int route_id);
 SqMidiRouteList sq_midi_routes(SqEngine engine);
 

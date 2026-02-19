@@ -87,6 +87,9 @@ bool MidiDeviceManager::openDevice(const std::string& name, std::string& error)
     midiInput->start();
     openDevices_.push_back({std::move(midiInput), name});
 
+    // Publish device queue to audio thread routing table
+    router_.commit();
+
     SQ_INFO("MidiDeviceManager: opened device: %s", name.c_str());
     return true;
 }

@@ -173,6 +173,21 @@ class Squeeze:
         """Stop the audio device."""
         lib.sq_stop(self._ptr)
 
+    @property
+    def is_running(self) -> bool:
+        """True if the audio device is running."""
+        return lib.sq_is_running(self._ptr)
+
+    @property
+    def sample_rate(self) -> float:
+        """Audio device sample rate (0.0 if not running)."""
+        return lib.sq_sample_rate(self._ptr)
+
+    @property
+    def block_size(self) -> int:
+        """Audio device block size (0 if not running)."""
+        return lib.sq_block_size(self._ptr)
+
     # --- Plugin editor ---
 
     @staticmethod

@@ -21,7 +21,8 @@ struct MidiRoute {
     std::string deviceName;
     int nodeId;
     int channelFilter; // 0 = all channels, 1-16 = specific
-    int noteFilter;    // -1 = all notes, 0-127 = specific
+    int noteLow;       // note range low (0-127), noteLow=0 + noteHigh=127 = all
+    int noteHigh;      // note range high (0-127)
 };
 
 class MidiRouter {
@@ -39,7 +40,8 @@ public:
 
     // --- Routing (control thread) ---
     int addRoute(const std::string& deviceName, int nodeId,
-                 int channelFilter, int noteFilter, std::string& error);
+                 int channelFilter, int noteLow, int noteHigh,
+                 std::string& error);
     bool removeRoute(int routeId);
     bool removeRoutesForNode(int nodeId);
     bool removeRoutesForDevice(const std::string& deviceName);
@@ -79,7 +81,8 @@ private:
             int deviceIndex;
             int nodeId;
             int channelFilter;
-            int noteFilter;
+            int noteLow;
+            int noteHigh;
         };
         std::vector<DeviceRef> deviceRefs;
         std::vector<RouteEntry> entries;

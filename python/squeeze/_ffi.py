@@ -57,7 +57,8 @@ class SqMidiRoute(ctypes.Structure):
         ("device", ctypes.c_char_p),
         ("target_handle", ctypes.c_int),
         ("channel_filter", ctypes.c_int),
-        ("note_filter", ctypes.c_int),
+        ("note_low", ctypes.c_int),
+        ("note_high", ctypes.c_int),
     ]
 
 class SqMidiRouteList(ctypes.Structure):
@@ -205,7 +206,7 @@ def _load_lib():
     _sig("sq_midi_open_devices", SqStringList, [_V])
 
     # --- MIDI routing ---
-    _sig("sq_midi_route", _I, [_V, _S, _I, _I, _I, _EP])
+    _sig("sq_midi_route", _I, [_V, _S, _I, _I, _I, _I, _EP])
     _sig("sq_midi_unroute", _B, [_V, _I])
     _sig("sq_midi_routes", SqMidiRouteList, [_V])
 

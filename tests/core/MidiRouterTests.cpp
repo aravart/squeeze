@@ -104,7 +104,7 @@ TEST_CASE("MidiRouter: addRoute succeeds with valid parameters")
     MidiRouter router;
     std::string error;
     router.createDeviceQueue("KeyStep", error);
-    int id = router.addRoute("KeyStep", 5, 0, -1, error);
+    int id = router.addRoute("KeyStep", 5, 0, 0, 127, error);
     REQUIRE(id > 0);
 }
 
@@ -112,7 +112,7 @@ TEST_CASE("MidiRouter: addRoute fails without device queue")
 {
     MidiRouter router;
     std::string error;
-    int id = router.addRoute("Ghost", 5, 0, -1, error);
+    int id = router.addRoute("Ghost", 5, 0, 0, 127, error);
     REQUIRE(id == -1);
     REQUIRE_FALSE(error.empty());
 }
@@ -123,18 +123,19 @@ TEST_CASE("MidiRouter: addRoute fails with invalid channel filter")
     std::string error;
     router.createDeviceQueue("KeyStep", error);
 
-    REQUIRE(router.addRoute("KeyStep", 5, -1, -1, error) == -1);
-    REQUIRE(router.addRoute("KeyStep", 5, 17, -1, error) == -1);
+    REQUIRE(router.addRoute("KeyStep", 5, -1, 0, 127, error) == -1);
+    REQUIRE(router.addRoute("KeyStep", 5, 17, 0, 127, error) == -1);
 }
 
-TEST_CASE("MidiRouter: addRoute fails with invalid note filter")
+TEST_CASE("MidiRouter: addRoute fails with invalid note range")
 {
     MidiRouter router;
     std::string error;
     router.createDeviceQueue("KeyStep", error);
 
-    REQUIRE(router.addRoute("KeyStep", 5, 0, -2, error) == -1);
-    REQUIRE(router.addRoute("KeyStep", 5, 0, 128, error) == -1);
+    REQUIRE(router.addRoute("KeyStep", 5, 0, -1, 127, error) == -1);
+    REQUIRE(router.addRoute("KeyStep", 5, 0, 0, 128, error) == -1);
+    REQUIRE(router.addRoute("KeyStep", 5, 0, 72, 36, error) == -1); // low > high
 }
 
 TEST_CASE("MidiRouter: removeRoute returns true for existing, false for unknown")
@@ -142,7 +143,7 @@ TEST_CASE("MidiRouter: removeRoute returns true for existing, false for unknown"
     MidiRouter router;
     std::string error;
     router.createDeviceQueue("KeyStep", error);
-    int id = router.addRoute("KeyStep", 5, 0, -1, error);
+    int id = router.addRoute("KeyStep", 5, 0, 0, 127, error);
 
     REQUIRE(router.removeRoute(id));
     REQUIRE_FALSE(router.removeRoute(id));
@@ -154,9 +155,9 @@ TEST_CASE("MidiRouter: removeRoutesForNode removes matching routes")
     MidiRouter router;
     std::string error;
     router.createDeviceQueue("KeyStep", error);
-    router.addRoute("KeyStep", 5, 0, -1, error);
-    router.addRoute("KeyStep", 5, 1, -1, error);
-    router.addRoute("KeyStep", 8, 0, -1, error);
+    router.addRoute("KeyStep", 5, 0, 0, 127, error);
+    router.addRoute("KeyStep", 5, 1, 0, 127, error);
+    router.addRoute("KeyStep", 8, 0, 0, 127, error);
 
     REQUIRE(router.removeRoutesForNode(5));
     auto routes = router.getRoutes();
@@ -170,8 +171,8 @@ TEST_CASE("MidiRouter: removeRoutesForDevice removes matching routes")
     std::string error;
     router.createDeviceQueue("KeyStep", error);
     router.createDeviceQueue("Launchpad", error);
-    router.addRoute("KeyStep", 5, 0, -1, error);
-    router.addRoute("Launchpad", 8, 0, -1, error);
+    router.addRoute("KeyStep", 5, 0, 0, 127, error);
+    router.addRoute("Launchpad", 8, 0, 0, 127, error);
 
     REQUIRE(router.removeRoutesForDevice("KeyStep"));
     auto routes = router.getRoutes();
@@ -184,8 +185,8 @@ TEST_CASE("MidiRouter: removeDeviceQueue also removes routes for that device")
     MidiRouter router;
     std::string error;
     router.createDeviceQueue("KeyStep", error);
-    router.addRoute("KeyStep", 5, 0, -1, error);
-    router.addRoute("KeyStep", 8, 0, -1, error);
+    router.addRoute("KeyStep", 5, 0, 0, 127, error);
+    router.addRoute("KeyStep", 8, 0, 0, 127, error);
 
     router.removeDeviceQueue("KeyStep");
     REQUIRE(router.getRoutes().empty());
@@ -196,8 +197,8 @@ TEST_CASE("MidiRouter: getRoutes returns staged routes")
     MidiRouter router;
     std::string error;
     router.createDeviceQueue("KeyStep", error);
-    router.addRoute("KeyStep", 5, 0, -1, error);
-    router.addRoute("KeyStep", 8, 2, 36, error);
+    router.addRoute("KeyStep", 5, 0, 0, 127, error);
+    router.addRoute("KeyStep", 8, 2, 36, 36, error);
 
     auto routes = router.getRoutes();
     REQUIRE(routes.size() == 2);
@@ -205,7 +206,8 @@ TEST_CASE("MidiRouter: getRoutes returns staged routes")
     REQUIRE(routes[0].channelFilter == 0);
     REQUIRE(routes[1].nodeId == 8);
     REQUIRE(routes[1].channelFilter == 2);
-    REQUIRE(routes[1].noteFilter == 36);
+    REQUIRE(routes[1].noteLow == 36);
+    REQUIRE(routes[1].noteHigh == 36);
 }
 
 TEST_CASE("MidiRouter: route IDs monotonically increase and are never reused")
@@ -213,10 +215,10 @@ TEST_CASE("MidiRouter: route IDs monotonically increase and are never reused")
     MidiRouter router;
     std::string error;
     router.createDeviceQueue("KeyStep", error);
-    int id1 = router.addRoute("KeyStep", 5, 0, -1, error);
-    int id2 = router.addRoute("KeyStep", 8, 0, -1, error);
+    int id1 = router.addRoute("KeyStep", 5, 0, 0, 127, error);
+    int id2 = router.addRoute("KeyStep", 8, 0, 0, 127, error);
     router.removeRoute(id1);
-    int id3 = router.addRoute("KeyStep", 9, 0, -1, error);
+    int id3 = router.addRoute("KeyStep", 9, 0, 0, 127, error);
 
     REQUIRE(id1 == 1);
     REQUIRE(id2 == 2);
@@ -232,7 +234,7 @@ TEST_CASE("MidiRouter: dispatch with no commit is no-op")
     MidiRouter router;
     std::string error;
     router.createDeviceQueue("KeyStep", error);
-    router.addRoute("KeyStep", 5, 0, -1, error);
+    router.addRoute("KeyStep", 5, 0, 0, 127, error);
 
     juce::MidiBuffer buf;
     std::unordered_map<int, juce::MidiBuffer*> nodeBuffers = {{5, &buf}};
@@ -247,7 +249,7 @@ TEST_CASE("MidiRouter: push and dispatch delivers event to destination MidiBuffe
     MidiRouter router;
     std::string error;
     router.createDeviceQueue("KeyStep", error);
-    router.addRoute("KeyStep", 5, 0, -1, error);
+    router.addRoute("KeyStep", 5, 0, 0, 127, error);
     router.commit();
 
     juce::MidiBuffer buf;
@@ -264,7 +266,7 @@ TEST_CASE("MidiRouter: dispatch preserves MIDI data bytes")
     MidiRouter router;
     std::string error;
     router.createDeviceQueue("KeyStep", error);
-    router.addRoute("KeyStep", 5, 0, -1, error);
+    router.addRoute("KeyStep", 5, 0, 0, 127, error);
     router.commit();
 
     juce::MidiBuffer buf;
@@ -289,8 +291,8 @@ TEST_CASE("MidiRouter: multiple routes fan-out from one device")
     MidiRouter router;
     std::string error;
     router.createDeviceQueue("KeyStep", error);
-    router.addRoute("KeyStep", 5, 0, -1, error);
-    router.addRoute("KeyStep", 8, 0, -1, error);
+    router.addRoute("KeyStep", 5, 0, 0, 127, error);
+    router.addRoute("KeyStep", 8, 0, 0, 127, error);
     router.commit();
 
     juce::MidiBuffer buf5, buf8;
@@ -309,8 +311,8 @@ TEST_CASE("MidiRouter: multiple routes fan-in to one node")
     std::string error;
     router.createDeviceQueue("KeyStep", error);
     router.createDeviceQueue("Launchpad", error);
-    router.addRoute("KeyStep", 5, 0, -1, error);
-    router.addRoute("Launchpad", 5, 0, -1, error);
+    router.addRoute("KeyStep", 5, 0, 0, 127, error);
+    router.addRoute("Launchpad", 5, 0, 0, 127, error);
     router.commit();
 
     juce::MidiBuffer buf;
@@ -328,7 +330,7 @@ TEST_CASE("MidiRouter: dispatch with no events is no-op")
     MidiRouter router;
     std::string error;
     router.createDeviceQueue("KeyStep", error);
-    router.addRoute("KeyStep", 5, 0, -1, error);
+    router.addRoute("KeyStep", 5, 0, 0, 127, error);
     router.commit();
 
     juce::MidiBuffer buf;
@@ -347,7 +349,7 @@ TEST_CASE("MidiRouter: channel filter 0 passes all channels")
     MidiRouter router;
     std::string error;
     router.createDeviceQueue("KeyStep", error);
-    router.addRoute("KeyStep", 5, 0, -1, error); // channel 0 = all
+    router.addRoute("KeyStep", 5, 0, 0, 127, error); // channel 0 = all
     router.commit();
 
     juce::MidiBuffer buf;
@@ -365,7 +367,7 @@ TEST_CASE("MidiRouter: channel filter rejects non-matching channel")
     MidiRouter router;
     std::string error;
     router.createDeviceQueue("KeyStep", error);
-    router.addRoute("KeyStep", 5, 1, -1, error); // channel 1 only
+    router.addRoute("KeyStep", 5, 1, 0, 127, error); // channel 1 only
     router.commit();
 
     juce::MidiBuffer buf;
@@ -380,12 +382,12 @@ TEST_CASE("MidiRouter: channel filter rejects non-matching channel")
     REQUIRE(countEvents(buf) == 1);
 }
 
-TEST_CASE("MidiRouter: note filter -1 passes all notes")
+TEST_CASE("MidiRouter: note range 0-127 passes all notes")
 {
     MidiRouter router;
     std::string error;
     router.createDeviceQueue("KeyStep", error);
-    router.addRoute("KeyStep", 5, 0, -1, error); // note -1 = all
+    router.addRoute("KeyStep", 5, 0, 0, 127, error); // full range = all
     router.commit();
 
     juce::MidiBuffer buf;
@@ -399,12 +401,12 @@ TEST_CASE("MidiRouter: note filter -1 passes all notes")
     REQUIRE(countEvents(buf) == 3);
 }
 
-TEST_CASE("MidiRouter: note filter rejects non-matching note")
+TEST_CASE("MidiRouter: note range rejects non-matching note")
 {
     MidiRouter router;
     std::string error;
     router.createDeviceQueue("KeyStep", error);
-    router.addRoute("KeyStep", 5, 0, 36, error); // note 36 only
+    router.addRoute("KeyStep", 5, 0, 36, 36, error); // note 36 only
     router.commit();
 
     juce::MidiBuffer buf;
@@ -418,12 +420,12 @@ TEST_CASE("MidiRouter: note filter rejects non-matching note")
     REQUIRE(countEvents(buf) == 1);
 }
 
-TEST_CASE("MidiRouter: note filter passes non-note messages")
+TEST_CASE("MidiRouter: note range passes non-note messages")
 {
     MidiRouter router;
     std::string error;
     router.createDeviceQueue("KeyStep", error);
-    router.addRoute("KeyStep", 5, 0, 36, error); // note 36 only
+    router.addRoute("KeyStep", 5, 0, 36, 36, error); // note 36 only
     router.commit();
 
     juce::MidiBuffer buf;

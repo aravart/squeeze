@@ -7,7 +7,7 @@ from squeeze.chain import Chain
 from squeeze.clock import Clock
 from squeeze.processor import Processor
 from squeeze.transport import Transport
-from squeeze.midi import Midi, MidiDevice
+from squeeze.midi import Midi, MidiDevice, MidiRouteInfo
 from squeeze.types import ParamDescriptor
 
 from squeeze._helpers import SqueezeError, set_log_level, set_log_callback
