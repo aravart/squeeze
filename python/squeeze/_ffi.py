@@ -14,13 +14,28 @@ def _find_lib():
         "Windows": "squeeze_ffi.dll",
     }.get(platform.system(), "libsqueeze_ffi.so")
 
+    # Search order:
+    # 1. SQUEEZE_LIB_PATH env var (explicit override)
+    # 2. Bundled alongside this package (installed wheel)
+    # 3. Development build directories
+    env_path = os.environ.get("SQUEEZE_LIB_PATH")
+    if env_path and os.path.exists(env_path):
+        return env_path
+
+    bundled = os.path.join(base, name)
+    if os.path.exists(bundled):
+        return bundled
+
     for subdir in ["../../build", "../../build/Release", "../../build/Debug"]:
         path = os.path.join(base, subdir, name)
         if os.path.exists(path):
             return path
 
     raise FileNotFoundError(
-        f"Cannot find {name}. Build the project first: cmake --build build"
+        f"Cannot find {name}. Either:\n"
+        f"  - Build the project: cmake --build build\n"
+        f"  - Set SQUEEZE_LIB_PATH to the library location\n"
+        f"  - Install a wheel that bundles the library"
     )
 
 

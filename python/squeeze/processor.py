@@ -100,7 +100,7 @@ class Processor:
     def __repr__(self) -> str:
         return f"Processor({self._handle})"
 
-    def __eq__(self, other) -> bool:
+    def __eq__(self, other: object) -> bool:
         if isinstance(other, Processor):
             return self._handle == other._handle
         return NotImplemented

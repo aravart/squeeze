@@ -1,5 +1,7 @@
 """Data types for the Squeeze Python API."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 
 

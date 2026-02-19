@@ -3,11 +3,18 @@ requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "squeeze"
+name = "squeeze-audio"
 version = "0.3.0"
-description = "Python client for the Squeeze audio engine"
+description = "Python client for the Squeeze audio engine — mixer-centric VST/AU plugin hosting"
 requires-python = ">=3.10"
 license = "GPL-3.0-only"
+readme = "README.md"
+keywords = ["audio", "dsp", "vst", "plugin", "mixer", "juce"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Topic :: Multimedia :: Sound/Audio",
+    "Programming Language :: Python :: 3",
+]
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0"]
@@ -15,5 +22,19 @@ dev = ["pytest>=7.0"]
 [tool.setuptools.packages.find]
 include = ["squeeze*"]
 
+[tool.setuptools.package-data]
+squeeze = ["py.typed", "*.dylib", "*.so", "*.dll"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.mypy]
+strict = true
+# ctypes functions return Any — disabling this avoids ~40 false positives
+# on `return lib.sq_*()` calls where .restype is correctly set at runtime.
+warn_return_any = false
+
+[[tool.mypy.overrides]]
+module = "squeeze._ffi"
+# Internal mechanical ctypes declarations — not practical to type fully.
+ignore_errors = true

@@ -54,7 +54,7 @@ class Transport:
         else:
             lib.sq_transport_stop(self._engine._ptr)
 
-    def seek(self, *, beats: float = None, samples: int = None) -> None:
+    def seek(self, *, beats: float | None = None, samples: int | None = None) -> None:
         """Seek to a position. Specify exactly one of beats or samples."""
         if (beats is None) == (samples is None):
             raise ValueError("specify exactly one of beats= or samples=")

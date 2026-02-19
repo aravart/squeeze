@@ -52,7 +52,7 @@ Claude Code (and all type-aware tooling) uses type information to understand API
 ### Acceptance
 
 - `python/squeeze/py.typed` exists
-- `mypy --strict python/squeeze/` reports no missing annotations on public methods
+- `mypy python/squeeze/` reports no missing annotations on public methods
 - All existing tests still pass
 
 ---

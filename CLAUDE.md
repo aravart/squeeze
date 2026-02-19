@@ -115,7 +115,7 @@ This includes the C++ component, its `sq_` functions in `squeeze_ffi.h`/`.cpp`, 
 - [ ] Thread safety
 - [ ] No obvious performance issues
 - [ ] Audit for code duplication, dead code, overly large source code files, and opportunities for refactoring
-- [ ] Python type annotations complete — `cd python && mypy --strict squeeze/` passes
+- [ ] Python type annotations complete — `cd python && mypy squeeze/` passes
 - [ ] Consumer docs updated — if the Python API surface changed, update `python/README.md` (API table) and `python/INTEGRATION.md` (method signatures, patterns)
 
 ### Step 5: Integration Check
@@ -202,7 +202,7 @@ All Python code must be fully typed. This is not optional.
 - **`py.typed`:** The PEP 561 marker file `python/squeeze/py.typed` must exist. It signals to type checkers and Claude Code that annotations are available.
 - **Every public method** must have typed parameters and a `-> ReturnType`. Properties must have `-> Type`.
 - **Type style:** Use `str`, `int`, `float`, `bool`, `list[X]`, `dict[K, V]`, `tuple[X, Y]`, `X | None`. Use `from __future__ import annotations` for forward references. Callback types use `typing.Callable[[ArgTypes], ReturnType]`.
-- **Validation:** `cd python && mypy --strict squeeze/` must report no errors on public method signatures. Run this as part of the review step.
+- **Validation:** `cd python && mypy squeeze/` must report no errors. Strict mode is configured in `pyproject.toml` (with `warn_return_any = false` for ctypes, and `_ffi.py` excluded). Do not pass `--strict` on the CLI — it overrides the config. Run this as part of the review step.
 
 ### Consumer Documentation (`python/README.md`, `python/INTEGRATION.md`)
 
@@ -232,7 +232,7 @@ The existing rule — **every tier ships a working FFI and Python client** — e
 5. Update `python/INTEGRATION.md` with new class/method signatures
 6. Update `python/README.md` API table if a new class was added
 7. All three (C++ Catch2 tests, C FFI Catch2 tests, Python tests) must pass before the tier is complete
-8. `cd python && mypy --strict squeeze/` must pass
+8. `cd python && mypy squeeze/` must pass
 
 ---
 

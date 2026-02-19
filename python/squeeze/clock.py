@@ -54,7 +54,7 @@ class Clock:
             lib.sq_clock_destroy(self._ptr)
             self._ptr = None
 
-    def __del__(self):
+    def __del__(self) -> None:
         self.destroy()
 
     def __repr__(self) -> str:

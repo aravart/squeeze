@@ -113,7 +113,7 @@ class Bus:
     def __repr__(self) -> str:
         return f"Bus({self.name!r})"
 
-    def __eq__(self, other) -> bool:
+    def __eq__(self, other: object) -> bool:
         if isinstance(other, Bus):
             return self._handle == other._handle
         return NotImplemented

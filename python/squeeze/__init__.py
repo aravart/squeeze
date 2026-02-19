@@ -1,5 +1,7 @@
 """Squeeze — Python client for the Squeeze audio engine."""
 
+from __future__ import annotations
+
 from squeeze.squeeze import Squeeze
 from squeeze.source import Source
 from squeeze.bus import Bus

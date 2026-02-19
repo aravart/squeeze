@@ -3,3 +3,9 @@ build
 __pycache__
 *.egg-info
 plugin-cache.xml
+
+# Bundled native libraries (copied for wheel builds, not source)
+python/squeeze/*.dylib
+python/squeeze/*.so
+python/squeeze/*.dll
+python/dist/

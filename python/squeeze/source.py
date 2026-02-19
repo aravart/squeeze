@@ -151,7 +151,7 @@ class Source:
     def __repr__(self) -> str:
         return f"Source({self.name!r})"
 
-    def __eq__(self, other) -> bool:
+    def __eq__(self, other: object) -> bool:
         if isinstance(other, Source):
             return self._handle == other._handle
         return NotImplemented

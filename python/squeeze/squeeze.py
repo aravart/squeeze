@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import ctypes
+from collections.abc import Iterator
 from contextlib import contextmanager
+from types import TracebackType
+from typing import Callable
 
 from squeeze._ffi import lib
 from squeeze._helpers import (
@@ -47,10 +50,15 @@ class Squeeze:
     def __enter__(self) -> Squeeze:
         return self
 
-    def __exit__(self, *args) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         self.close()
 
-    def __del__(self):
+    def __del__(self) -> None:
         self.close()
 
     @property
@@ -76,7 +84,7 @@ class Squeeze:
 
     # --- Sources ---
 
-    def add_source(self, name: str, *, plugin: str = None) -> Source:
+    def add_source(self, name: str, *, plugin: str | None = None) -> Source:
         """Add a source to the engine.
 
         With no keyword args, creates a source with a GainProcessor generator.
@@ -111,7 +119,7 @@ class Squeeze:
     # --- Clock dispatch ---
 
     def clock(self, resolution: float, latency_ms: float,
-              callback) -> Clock:
+              callback: Callable[[float], None]) -> Clock:
         """Create a clock that calls ``callback(beat)`` at the given resolution.
 
         Args:
@@ -126,7 +134,7 @@ class Squeeze:
     # --- Batching ---
 
     @contextmanager
-    def batch(self):
+    def batch(self) -> Iterator[None]:
         """Context manager that defers snapshot rebuilds until exit.
 
         Usage:
@@ -221,7 +229,7 @@ class Squeeze:
         """Return the current xrun threshold factor."""
         return lib.sq_perf_get_xrun_threshold(self._ptr)
 
-    def perf_snapshot(self) -> dict:
+    def perf_snapshot(self) -> dict[str, float | int]:
         """Return the latest performance snapshot as a dict."""
         snap = lib.sq_perf_snapshot(self._ptr)
         return {
@@ -235,7 +243,7 @@ class Squeeze:
             "buffer_duration_us": snap.buffer_duration_us,
         }
 
-    def perf_slots(self) -> list[dict]:
+    def perf_slots(self) -> list[dict[str, int | float]]:
         """Return per-slot timing as a list of dicts."""
         slot_list = lib.sq_perf_slots(self._ptr)
         result = []
