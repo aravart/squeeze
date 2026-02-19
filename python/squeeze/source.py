@@ -134,6 +134,14 @@ class Source:
             self._engine._ptr, self._handle, beat, channel, cc_num, cc_val
         )
 
+    def pitch_bend(self, beat: float, channel: int, value: int) -> bool:
+        """Schedule a pitch bend event at the given beat time.
+        value: 14-bit (0-16383, 8192=center).
+        """
+        return lib.sq_schedule_pitch_bend(
+            self._engine._ptr, self._handle, beat, channel, value
+        )
+
     # --- Lifecycle ---
 
     def remove(self) -> bool:

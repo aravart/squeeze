@@ -28,6 +28,7 @@ add_library(squeeze_core STATIC
     src/core/PluginProcessor.cpp
     src/core/Source.cpp
     src/core/Transport.cpp
+    src/core/EventScheduler.cpp
 )
 
 target_include_directories(squeeze_core PUBLIC src)
@@ -83,6 +84,7 @@ add_executable(squeeze_unit_tests
     tests/core/SourceTests.cpp
     tests/core/BusTests.cpp
     tests/core/TransportTests.cpp
+    tests/core/EventSchedulerTests.cpp
 )
 
 target_link_libraries(squeeze_unit_tests PRIVATE
@@ -99,6 +101,7 @@ add_executable(squeeze_ffi_tests
     tests/ffi/MidiDeviceManagerFFITests.cpp
     tests/ffi/EditorFFITests.cpp
     tests/ffi/TransportFFITests.cpp
+    tests/ffi/EventSchedulerFFITests.cpp
 )
 
 target_link_libraries(squeeze_ffi_tests PRIVATE

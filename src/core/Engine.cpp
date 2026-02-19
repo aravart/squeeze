@@ -45,6 +45,7 @@ Engine::Engine(double sampleRate, int blockSize)
     buses_.push_back(std::move(master));
 
     transport_.prepare(sampleRate_, blockSize_);
+    paramTokenNames_.reserve(kMaxParamTokens);
 
     buildAndSwapSnapshot();
 
@@ -832,35 +833,114 @@ bool Engine::isTransportLooping() const
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// Event scheduling stubs
+// Event scheduling (control thread)
 // ═══════════════════════════════════════════════════════════════════
 
-bool Engine::scheduleNoteOn(int /*sourceHandle*/, double /*beatTime*/,
-                            int /*channel*/, int /*note*/, float /*velocity*/)
+int Engine::resolveParamToken(const std::string& name)
 {
-    SQ_DEBUG("Engine::scheduleNoteOn: stub");
-    return false;
+    // Search existing tokens (linear scan — small N)
+    int count = static_cast<int>(paramTokenNames_.size());
+    for (int i = 0; i < count; ++i)
+    {
+        if (paramTokenNames_[i] == name)
+            return i;
+    }
+    if (count >= kMaxParamTokens)
+    {
+        SQ_WARN("Engine::resolveParamToken: token registry full, cannot resolve '%s'",
+                name.c_str());
+        return -1;
+    }
+    paramTokenNames_.push_back(name);
+    return count;
 }
 
-bool Engine::scheduleNoteOff(int /*sourceHandle*/, double /*beatTime*/,
-                             int /*channel*/, int /*note*/)
+bool Engine::scheduleNoteOn(int sourceHandle, double beatTime,
+                            int channel, int note, float velocity)
 {
-    SQ_DEBUG("Engine::scheduleNoteOff: stub");
-    return false;
+    std::lock_guard<std::mutex> lock(controlMutex_);
+    SQ_DEBUG("Engine::scheduleNoteOn: src=%d beat=%.3f ch=%d note=%d vel=%.2f",
+             sourceHandle, beatTime, channel, note, velocity);
+    ScheduledEvent ev{};
+    ev.beatTime     = beatTime;
+    ev.targetHandle = sourceHandle;
+    ev.type         = ScheduledEvent::Type::noteOn;
+    ev.channel      = channel;
+    ev.data1        = note;
+    ev.data2        = 0;
+    ev.floatValue   = velocity;
+    return eventScheduler_.schedule(ev);
 }
 
-bool Engine::scheduleCC(int /*sourceHandle*/, double /*beatTime*/,
-                        int /*channel*/, int /*ccNum*/, int /*ccVal*/)
+bool Engine::scheduleNoteOff(int sourceHandle, double beatTime,
+                             int channel, int note)
 {
-    SQ_DEBUG("Engine::scheduleCC: stub");
-    return false;
+    std::lock_guard<std::mutex> lock(controlMutex_);
+    SQ_DEBUG("Engine::scheduleNoteOff: src=%d beat=%.3f ch=%d note=%d",
+             sourceHandle, beatTime, channel, note);
+    ScheduledEvent ev{};
+    ev.beatTime     = beatTime;
+    ev.targetHandle = sourceHandle;
+    ev.type         = ScheduledEvent::Type::noteOff;
+    ev.channel      = channel;
+    ev.data1        = note;
+    ev.data2        = 0;
+    ev.floatValue   = 0.0f;
+    return eventScheduler_.schedule(ev);
 }
 
-bool Engine::scheduleParamChange(int /*procHandle*/, double /*beatTime*/,
-                                 const std::string& /*paramName*/, float /*value*/)
+bool Engine::scheduleCC(int sourceHandle, double beatTime,
+                        int channel, int ccNum, int ccVal)
 {
-    SQ_DEBUG("Engine::scheduleParamChange: stub");
-    return false;
+    std::lock_guard<std::mutex> lock(controlMutex_);
+    SQ_DEBUG("Engine::scheduleCC: src=%d beat=%.3f ch=%d cc=%d val=%d",
+             sourceHandle, beatTime, channel, ccNum, ccVal);
+    ScheduledEvent ev{};
+    ev.beatTime     = beatTime;
+    ev.targetHandle = sourceHandle;
+    ev.type         = ScheduledEvent::Type::cc;
+    ev.channel      = channel;
+    ev.data1        = ccNum;
+    ev.data2        = ccVal;
+    ev.floatValue   = 0.0f;
+    return eventScheduler_.schedule(ev);
+}
+
+bool Engine::schedulePitchBend(int sourceHandle, double beatTime,
+                               int channel, int value)
+{
+    std::lock_guard<std::mutex> lock(controlMutex_);
+    SQ_DEBUG("Engine::schedulePitchBend: src=%d beat=%.3f ch=%d val=%d",
+             sourceHandle, beatTime, channel, value);
+    ScheduledEvent ev{};
+    ev.beatTime     = beatTime;
+    ev.targetHandle = sourceHandle;
+    ev.type         = ScheduledEvent::Type::pitchBend;
+    ev.channel      = channel;
+    ev.data1        = value;
+    ev.data2        = 0;
+    ev.floatValue   = 0.0f;
+    return eventScheduler_.schedule(ev);
+}
+
+bool Engine::scheduleParamChange(int procHandle, double beatTime,
+                                 const std::string& paramName, float value)
+{
+    std::lock_guard<std::mutex> lock(controlMutex_);
+    int token = resolveParamToken(paramName);
+    if (token < 0)
+        return false;
+    SQ_DEBUG("Engine::scheduleParamChange: proc=%d beat=%.3f param=%s token=%d val=%.3f",
+             procHandle, beatTime, paramName.c_str(), token, value);
+    ScheduledEvent ev{};
+    ev.beatTime     = beatTime;
+    ev.targetHandle = procHandle;
+    ev.type         = ScheduledEvent::Type::paramChange;
+    ev.channel      = 0;
+    ev.data1        = token;
+    ev.data2        = 0;
+    ev.floatValue   = value;
+    return eventScheduler_.schedule(ev);
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -995,6 +1075,7 @@ void Engine::handleCommand(const Command& cmd)
             break;
         case Command::Type::transportStop:
             transport_.stop();
+            eventScheduler_.clear();
             publishedState_.store(static_cast<int>(transport_.getState()),
                                   std::memory_order_relaxed);
             publishedPositionSamples_.store(0, std::memory_order_relaxed);
@@ -1012,11 +1093,13 @@ void Engine::handleCommand(const Command& cmd)
             break;
         case Command::Type::seekSamples:
             transport_.setPositionInSamples(cmd.int64Value);
+            eventScheduler_.clear();
             publishedPositionSamples_.store(transport_.getPositionInSamples(),
                                             std::memory_order_relaxed);
             break;
         case Command::Type::seekBeats:
             transport_.setPositionInBeats(cmd.doubleValue1);
+            eventScheduler_.clear();
             publishedPositionSamples_.store(transport_.getPositionInSamples(),
                                             std::memory_order_relaxed);
             break;
@@ -1047,6 +1130,52 @@ void Engine::processBlock(float* const* outputChannels, int numChannels, int num
     publishedPositionSamples_.store(transport_.getPositionInSamples(),
                                     std::memory_order_relaxed);
 
+    // 2b. Retrieve scheduled events for this block
+    int resolvedCount = 0;
+    if (transport_.isPlaying() && sampleRate_ > 0.0 && transport_.getTempo() > 0.0)
+    {
+        if (transport_.didLoopWrap())
+        {
+            double blockStart = transport_.getBlockStartBeats();
+            double loopEnd    = transport_.getLoopEndBeats();
+            double loopStart  = transport_.getLoopStartBeats();
+            double blockEnd   = transport_.getBlockEndBeats();
+            double samplesPerBeat = sampleRate_ * 60.0 / transport_.getTempo();
+
+            int preWrapSamples = static_cast<int>(
+                std::round((loopEnd - blockStart) * samplesPerBeat));
+            preWrapSamples = std::clamp(preWrapSamples, 0, numSamples);
+
+            resolvedCount = eventScheduler_.retrieve(
+                blockStart, loopEnd, preWrapSamples,
+                transport_.getTempo(), sampleRate_,
+                resolvedEvents_, kMaxResolvedEvents);
+
+            int postWrapSamples = numSamples - preWrapSamples;
+            if (postWrapSamples > 0 && resolvedCount < kMaxResolvedEvents)
+            {
+                int more = eventScheduler_.retrieve(
+                    loopStart, blockEnd, postWrapSamples,
+                    transport_.getTempo(), sampleRate_,
+                    resolvedEvents_ + resolvedCount,
+                    kMaxResolvedEvents - resolvedCount);
+                // Offset post-wrap events to full-block position
+                for (int i = 0; i < more; ++i)
+                    resolvedEvents_[resolvedCount + i].sampleOffset += preWrapSamples;
+                resolvedCount += more;
+            }
+        }
+        else
+        {
+            resolvedCount = eventScheduler_.retrieve(
+                transport_.getBlockStartBeats(),
+                transport_.getBlockEndBeats(),
+                numSamples,
+                transport_.getTempo(), sampleRate_,
+                resolvedEvents_, kMaxResolvedEvents);
+        }
+    }
+
     // 3. If no snapshot, output silence
     if (!activeSnapshot_)
     {
@@ -1067,6 +1196,95 @@ void Engine::processBlock(float* const* outputChannels, int numChannels, int num
         midiBufferMap[srcEntry.source->getHandle()] = &srcEntry.midiBuffer;
     }
     midiRouter_.dispatch(midiBufferMap, numSamples);
+
+    // 4b. Dispatch resolved scheduled events
+    for (int i = 0; i < resolvedCount; ++i)
+    {
+        auto& ev = resolvedEvents_[i];
+        switch (ev.type)
+        {
+            case ScheduledEvent::Type::noteOn:
+            {
+                int vel = std::clamp(static_cast<int>(ev.floatValue * 127.0f + 0.5f), 0, 127);
+                auto msg = juce::MidiMessage::noteOn(ev.channel, ev.data1,
+                                                      static_cast<juce::uint8>(vel));
+                auto it = midiBufferMap.find(ev.targetHandle);
+                if (it != midiBufferMap.end())
+                    it->second->addEvent(msg, ev.sampleOffset);
+                break;
+            }
+            case ScheduledEvent::Type::noteOff:
+            {
+                auto msg = juce::MidiMessage::noteOff(ev.channel, ev.data1);
+                auto it = midiBufferMap.find(ev.targetHandle);
+                if (it != midiBufferMap.end())
+                    it->second->addEvent(msg, ev.sampleOffset);
+                break;
+            }
+            case ScheduledEvent::Type::cc:
+            {
+                auto msg = juce::MidiMessage::controllerEvent(ev.channel, ev.data1, ev.data2);
+                auto it = midiBufferMap.find(ev.targetHandle);
+                if (it != midiBufferMap.end())
+                    it->second->addEvent(msg, ev.sampleOffset);
+                break;
+            }
+            case ScheduledEvent::Type::pitchBend:
+            {
+                auto msg = juce::MidiMessage::pitchWheel(ev.channel, ev.data1);
+                auto it = midiBufferMap.find(ev.targetHandle);
+                if (it != midiBufferMap.end())
+                    it->second->addEvent(msg, ev.sampleOffset);
+                break;
+            }
+            case ScheduledEvent::Type::paramChange:
+            {
+                // Look up processor in snapshot by handle
+                if (ev.data1 >= 0 && ev.data1 < static_cast<int>(paramTokenNames_.size()))
+                {
+                    const std::string& paramName = paramTokenNames_[ev.data1];
+                    // Search sources (generators and chain processors)
+                    Processor* target = nullptr;
+                    for (auto& srcEntry : activeSnapshot_->sources)
+                    {
+                        if (srcEntry.generator && srcEntry.generator->getHandle() == ev.targetHandle)
+                        {
+                            target = srcEntry.generator;
+                            break;
+                        }
+                        for (auto* proc : srcEntry.chainProcessors)
+                        {
+                            if (proc->getHandle() == ev.targetHandle)
+                            {
+                                target = proc;
+                                break;
+                            }
+                        }
+                        if (target) break;
+                    }
+                    // Search bus chain processors
+                    if (!target)
+                    {
+                        for (auto& busEntry : activeSnapshot_->buses)
+                        {
+                            for (auto* proc : busEntry.chainProcessors)
+                            {
+                                if (proc->getHandle() == ev.targetHandle)
+                                {
+                                    target = proc;
+                                    break;
+                                }
+                            }
+                            if (target) break;
+                        }
+                    }
+                    if (target)
+                        target->setParameter(paramName, ev.floatValue);
+                }
+                break;
+            }
+        }
+    }
 
     // 5. Process sources
     for (auto& srcEntry : activeSnapshot_->sources)

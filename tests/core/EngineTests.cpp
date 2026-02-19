@@ -552,14 +552,15 @@ TEST_CASE("Transport commands do not crash")
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// Event scheduling stubs
+// Event scheduling
 // ═══════════════════════════════════════════════════════════════════
 
-TEST_CASE("Event scheduling stubs return false")
+TEST_CASE("Event scheduling functions return true")
 {
     Engine engine(44100.0, 512);
-    CHECK_FALSE(engine.scheduleNoteOn(1, 0.0, 1, 60, 0.8f));
-    CHECK_FALSE(engine.scheduleNoteOff(1, 1.0, 1, 60));
-    CHECK_FALSE(engine.scheduleCC(1, 0.0, 1, 1, 64));
-    CHECK_FALSE(engine.scheduleParamChange(1, 0.0, "gain", 0.5f));
+    CHECK(engine.scheduleNoteOn(1, 0.0, 1, 60, 0.8f));
+    CHECK(engine.scheduleNoteOff(1, 1.0, 1, 60));
+    CHECK(engine.scheduleCC(1, 0.0, 1, 1, 64));
+    CHECK(engine.schedulePitchBend(1, 0.0, 1, 8192));
+    CHECK(engine.scheduleParamChange(1, 0.0, "gain", 0.5f));
 }

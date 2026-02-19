@@ -263,6 +263,8 @@ bool sq_schedule_note_off(SqEngine engine, int source_handle, double beat_time,
                           int channel, int note);
 bool sq_schedule_cc(SqEngine engine, int source_handle, double beat_time,
                     int channel, int cc_num, int cc_val);
+bool sq_schedule_pitch_bend(SqEngine engine, int source_handle, double beat_time,
+                            int channel, int value);
 bool sq_schedule_param_change(SqEngine engine, int proc_handle, double beat_time,
                               const char* param_name, float value);
 

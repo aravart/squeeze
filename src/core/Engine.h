@@ -2,6 +2,7 @@
 
 #include "core/Bus.h"
 #include "core/CommandQueue.h"
+#include "core/EventScheduler.h"
 #include "core/MidiRouter.h"
 #include "core/Processor.h"
 #include "core/Source.h"
@@ -121,10 +122,11 @@ public:
     bool isTransportPlaying() const;
     bool isTransportLooping() const;
 
-    // --- Event scheduling stubs ---
+    // --- Event scheduling (control thread) ---
     bool scheduleNoteOn(int sourceHandle, double beatTime, int channel, int note, float velocity);
     bool scheduleNoteOff(int sourceHandle, double beatTime, int channel, int note);
     bool scheduleCC(int sourceHandle, double beatTime, int channel, int ccNum, int ccVal);
+    bool schedulePitchBend(int sourceHandle, double beatTime, int channel, int value);
     bool scheduleParamChange(int procHandle, double beatTime, const std::string& paramName, float value);
 
     // --- Audio processing (audio thread) ---
@@ -151,6 +153,16 @@ private:
     CommandQueue commandQueue_;
     MidiRouter midiRouter_;
     Transport transport_;
+    EventScheduler eventScheduler_;
+
+    // Event scheduling: resolved events buffer (audio thread)
+    static constexpr int kMaxResolvedEvents = 256;
+    ResolvedEvent resolvedEvents_[kMaxResolvedEvents];
+
+    // Param token registry (control thread writes, audio thread reads via SPSC ordering)
+    static constexpr int kMaxParamTokens = 4096;
+    std::vector<std::string> paramTokenNames_;
+    int resolveParamToken(const std::string& name);
 
     double sampleRate_;
     int blockSize_;

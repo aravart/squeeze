@@ -188,6 +188,7 @@ def _load_lib():
     _sig("sq_schedule_note_on", _B, [_V, _I, _D, _I, _I, _F])
     _sig("sq_schedule_note_off", _B, [_V, _I, _D, _I, _I])
     _sig("sq_schedule_cc", _B, [_V, _I, _D, _I, _I, _I])
+    _sig("sq_schedule_pitch_bend", _B, [_V, _I, _D, _I, _I])
     _sig("sq_schedule_param_change", _B, [_V, _I, _D, _S, _F])
 
     # --- Plugin manager ---

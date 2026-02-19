@@ -4,7 +4,7 @@
 - Accept beat-timestamped events from the control thread
 - Deliver events to the audio thread, resolved to sample offsets within the current block
 - Manage a persistent staging buffer for events scheduled ahead of the current block
-- Support event types: MIDI messages (noteOn, noteOff, CC) and parameter changes
+- Support event types: MIDI messages (noteOn, noteOff, CC, pitchBend) and parameter changes
 
 ## Overview
 
@@ -25,6 +25,7 @@ Loop awareness is the client's responsibility. Clients schedule events just-in-t
 | `noteOn` | channel, data1=note, floatValue=velocity (0.0–1.0) | `juce::MidiMessage::noteOn` at sampleOffset |
 | `noteOff` | channel, data1=note | `juce::MidiMessage::noteOff` at sampleOffset |
 | `cc` | channel, data1=CC number, data2=value (0–127) | `juce::MidiMessage::controllerEvent` at sampleOffset |
+| `pitchBend` | channel, data1=14-bit value (0–16383, 8192=center) | `juce::MidiMessage::pitchWheel` at sampleOffset |
 | `paramChange` | data1=paramToken (opaque), floatValue=normalized value (0.0–1.0) | Sub-block split: `setParameter()` between sub-blocks |
 
 ### What does NOT flow through EventScheduler
@@ -42,11 +43,11 @@ struct ScheduledEvent {
     double beatTime;        // PPQ timestamp (quarter notes from origin)
     int targetHandle;       // source or processor handle
 
-    enum class Type { noteOn, noteOff, cc, paramChange };
+    enum class Type { noteOn, noteOff, cc, pitchBend, paramChange };
     Type type;
 
     int channel;            // MIDI channel 1–16 (MIDI events only)
-    int data1;              // note number, CC number, or param token
+    int data1;              // note number, CC number, pitch bend (0–16383), or param token
     int data2;              // CC value (0–127)
     float floatValue;       // velocity (0.0–1.0) or param value (0.0–1.0)
 };
@@ -100,9 +101,9 @@ Trivially copyable POD struct. No heap allocation. Fixed size for SPSC queue sto
 |-------|------|-------------|
 | `beatTime` | `double` | PPQ timestamp — quarter notes from timeline origin |
 | `targetHandle` | `int` | Source or processor handle (Engine resolves to the target) |
-| `type` | `Type` | Event type: noteOn, noteOff, cc, paramChange |
+| `type` | `Type` | Event type: noteOn, noteOff, cc, pitchBend, paramChange |
 | `channel` | `int` | MIDI channel 1–16 (MIDI events only; ignored for paramChange) |
-| `data1` | `int` | Note number (0–127), CC number (0–127), or param token (opaque int) |
+| `data1` | `int` | Note number (0–127), CC number (0–127), pitch bend value (0–16383), or param token (opaque int) |
 | `data2` | `int` | CC value (0–127); unused for other types |
 | `floatValue` | `float` | Velocity (0.0–1.0 normalized) or parameter value (0.0–1.0 normalized) |
 
@@ -140,6 +141,7 @@ Resolves beat-timestamped events to sample offsets for the current block. Return
 **Preconditions:**
 - `tempo > 0`, `sampleRate > 0` (undefined behavior otherwise — division by zero)
 - `blockStartBeats < blockEndBeats` (caller must not pass wrapped ranges — Engine splits at loop boundaries before calling)
+- `numSamples` is the sub-block size for this call, not the full audio block size. `sampleOffset` in the output is relative to the start of this sub-block (range `[0, numSamples - 1]`). When Engine splits a block at a loop boundary, it calls `retrieve()` twice with sub-block sizes and must offset the second call's results by the first sub-block's sample count to map back to full-block positions.
 
 **Algorithm:**
 
@@ -164,7 +166,8 @@ For each event in the staging buffer (reverse scan for O(1) swap-remove):
    samplesPerBeat = sampleRate * 60.0 / tempo
    ```
    Match if `beatTime` is in `[blockStartBeats, blockEndBeats)`.
-   `sampleOffset = round((beatTime - blockStartBeats) * samplesPerBeat)`
+   `sampleOffset = clamp(round((beatTime - blockStartBeats) * samplesPerBeat), 0, numSamples - 1)`
+   Clamping is necessary because `round()` can produce `numSamples` when `beatTime` falls near `blockEndBeats`.
 
 4. **Late event rescue** — if the event didn't match the block window but is only slightly late:
    - Dispatch at `sampleOffset = 0` if `0 < backward <= kLateToleranceBeats` (1.0 beat)
@@ -182,9 +185,9 @@ Insertion sort on the output array (small N per block):
 - Primary key: `sampleOffset` ascending
 - Secondary key: type priority ascending
 
-**Type priority order:** `noteOff (0) < cc (1) < paramChange (2) < noteOn (3)`
+**Type priority order:** `noteOff (0) < cc (1) < pitchBend (2) < paramChange (3) < noteOn (4)`
 
-This guarantees: noteOff fires before noteOn at the same beat (correct phrase transitions), and paramChange fires before noteOn (plugin state set before note triggers).
+This guarantees: noteOff fires before noteOn at the same beat (correct phrase transitions), cc and pitchBend fire before noteOn (controller state set before note triggers), and paramChange fires before noteOn (plugin state set before note triggers).
 
 ### `clear()`
 
@@ -244,6 +247,7 @@ The staging buffer is **audio-thread-local only**. No synchronization needed. Re
 - Source/processor lookup or parameter name resolution — Engine's concern
 - MIDI device input (MidiRouter)
 - Infrastructure commands (CommandQueue)
+- MIDI message types beyond noteOn/noteOff/cc/pitchBend (aftertouch, poly pressure, program change, sysex) — can be added as new `Type` variants if needed
 
 ## Dependencies
 
@@ -273,6 +277,8 @@ bool sq_schedule_note_off(SqEngine engine, SqSource src, double beat_time,
                           int channel, int note);
 bool sq_schedule_cc(SqEngine engine, SqSource src, double beat_time,
                     int channel, int cc_num, int cc_val);
+bool sq_schedule_pitch_bend(SqEngine engine, SqSource src, double beat_time,
+                            int channel, int value);
 bool sq_schedule_param_change(SqEngine engine, SqProc proc, double beat_time,
                               const char* param_name, float value);
 ```
@@ -285,6 +291,7 @@ Note: `sq_schedule_param_change` takes a `param_name` string. Engine resolves th
 engine.schedule_note_on(synth, beat_time=4.0, channel=1, note=60, velocity=0.8)
 engine.schedule_note_off(synth, beat_time=4.5, channel=1, note=60)
 engine.schedule_cc(synth, beat_time=4.0, channel=1, cc=1, value=64)
+engine.schedule_pitch_bend(synth, beat_time=4.0, channel=1, value=8192)
 engine.schedule_param_change(synth, beat_time=4.0, param="cutoff", value=0.7)
 ```
 
@@ -313,6 +320,6 @@ if (transport_.isPlaying() && transport_.getSampleRate() > 0.0) {
 }
 
 // 4. Engine dispatches resolved events:
-//    - MIDI types → source MidiBuffers at sampleOffset
+//    - MIDI types (noteOn, noteOff, cc, pitchBend) → source MidiBuffers at sampleOffset
 //    - paramChange → sub-block splitting
 ```

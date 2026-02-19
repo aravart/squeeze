@@ -640,24 +640,35 @@ bool sq_transport_is_looping(SqEngine engine)
 bool sq_schedule_note_on(SqEngine engine, int source_handle, double beat_time,
                          int channel, int note, float velocity)
 {
+    if (!engine) return false;
     return eng(engine).scheduleNoteOn(source_handle, beat_time, channel, note, velocity);
 }
 
 bool sq_schedule_note_off(SqEngine engine, int source_handle, double beat_time,
                           int channel, int note)
 {
+    if (!engine) return false;
     return eng(engine).scheduleNoteOff(source_handle, beat_time, channel, note);
 }
 
 bool sq_schedule_cc(SqEngine engine, int source_handle, double beat_time,
                     int channel, int cc_num, int cc_val)
 {
+    if (!engine) return false;
     return eng(engine).scheduleCC(source_handle, beat_time, channel, cc_num, cc_val);
+}
+
+bool sq_schedule_pitch_bend(SqEngine engine, int source_handle, double beat_time,
+                            int channel, int value)
+{
+    if (!engine) return false;
+    return eng(engine).schedulePitchBend(source_handle, beat_time, channel, value);
 }
 
 bool sq_schedule_param_change(SqEngine engine, int proc_handle, double beat_time,
                               const char* param_name, float value)
 {
+    if (!engine) return false;
     return eng(engine).scheduleParamChange(proc_handle, beat_time, param_name, value);
 }
 

@@ -489,15 +489,16 @@ TEST_CASE("Transport commands do not crash and queries reflect state")
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// Event scheduling stubs
+// Event scheduling (basic — see EventSchedulerFFITests for full coverage)
 // ═══════════════════════════════════════════════════════════════════
 
-TEST_CASE("Event scheduling stubs return false via FFI")
+TEST_CASE("Event scheduling functions return true via FFI")
 {
     SqEngine engine = sq_engine_create(44100.0, 512, nullptr);
-    CHECK_FALSE(sq_schedule_note_on(engine, 1, 0.0, 1, 60, 0.8f));
-    CHECK_FALSE(sq_schedule_note_off(engine, 1, 1.0, 1, 60));
-    CHECK_FALSE(sq_schedule_cc(engine, 1, 0.0, 1, 1, 64));
-    CHECK_FALSE(sq_schedule_param_change(engine, 1, 0.0, "gain", 0.5f));
+    CHECK(sq_schedule_note_on(engine, 1, 0.0, 1, 60, 0.8f));
+    CHECK(sq_schedule_note_off(engine, 1, 1.0, 1, 60));
+    CHECK(sq_schedule_cc(engine, 1, 0.0, 1, 1, 64));
+    CHECK(sq_schedule_pitch_bend(engine, 1, 0.0, 1, 8192));
+    CHECK(sq_schedule_param_change(engine, 1, 0.0, "gain", 0.5f));
     sq_engine_destroy(engine);
 }

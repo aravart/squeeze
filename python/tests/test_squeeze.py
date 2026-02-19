@@ -310,9 +310,8 @@ class TestProcessorParams:
     def test_processor_automate(self, s):
         src = s.add_source("Synth")
         gen = src.generator
-        # Event scheduling stubs return False
         result = gen.automate(0.0, "gain", 0.5)
-        assert isinstance(result, bool)
+        assert result is True
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -467,17 +466,31 @@ class TestEventScheduling:
     def test_note_on(self, s):
         src = s.add_source("Synth")
         result = src.note_on(0.0, 1, 60, 0.8)
-        assert isinstance(result, bool)
+        assert result is True
 
     def test_note_off(self, s):
         src = s.add_source("Synth")
         result = src.note_off(1.0, 1, 60)
-        assert isinstance(result, bool)
+        assert result is True
 
     def test_cc(self, s):
         src = s.add_source("Synth")
         result = src.cc(0.0, 1, 1, 64)
-        assert isinstance(result, bool)
+        assert result is True
+
+    def test_pitch_bend(self, s):
+        src = s.add_source("Synth")
+        result = src.pitch_bend(0.0, 1, 8192)
+        assert result is True
+
+    def test_param_change_dispatches(self, s):
+        src = s.add_source("Synth")
+        gen = src.generator
+        assert gen.get_param("gain") == 1.0
+        gen.automate(0.0, "gain", 0.25)
+        s.transport.play()
+        s.render(512)
+        assert abs(gen.get_param("gain") - 0.25) < 1e-6
 
 
 # ═══════════════════════════════════════════════════════════════════
