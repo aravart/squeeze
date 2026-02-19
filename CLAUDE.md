@@ -2,7 +2,7 @@
 
 Squeeze is a modern, modular JUCE/C++ audio engine for hosting VST/AU plugins and routing audio through a mixer-centric architecture with a C ABI for multi-language integration.
 
-v2 is a ground-up rewrite. The v1 codebase lives in `./squeeze/` for reference (architecture, specs, DSP algorithms, test patterns) but no code is carried over directly.
+v2 is a ground-up rewrite. The v1 codebase lives in `./squeeze-v1/` for reference (architecture, specs, DSP algorithms, test patterns) but no code is carried over directly.
 
 ---
 
@@ -238,15 +238,15 @@ The existing rule — **every tier ships a working FFI and Python client** — e
 
 ## v1 Reference
 
-The `./squeeze/` directory contains the complete v1 implementation. Key reference material:
+The `./squeeze-v1/` directory contains the complete v1 implementation. Key reference material:
 
-- `squeeze/ARCHITECTURE.md` — full architectural overview
-- `squeeze/docs/specs/` — 25 component specifications
-- `squeeze/docs/AUDIT.md` — component audit with gap analysis
-- `squeeze/docs/transition_plan.md` — C ABI transition plan
-- `squeeze/docs/discussion/` — design rationale documents
-- `squeeze/src/core/` — all DSP and engine implementations
-- `squeeze/tests/core/` — 589+ test cases as patterns
+- `squeeze-v1/ARCHITECTURE.md` — full architectural overview
+- `squeeze-v1/docs/specs/` — 25 component specifications
+- `squeeze-v1/docs/AUDIT.md` — component audit with gap analysis
+- `squeeze-v1/docs/transition_plan.md` — C ABI transition plan
+- `squeeze-v1/docs/discussion/` — design rationale documents
+- `squeeze-v1/src/core/` — all DSP and engine implementations
+- `squeeze-v1/tests/core/` — 589+ test cases as patterns
 
 Consult v1 for domain knowledge (DSP algorithms, parameter ranges, thread safety patterns, edge cases discovered during development) but implement fresh.
 

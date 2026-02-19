@@ -1,11 +1,11 @@
-/squeeze
+/squeeze-v1
 build
 __pycache__
 *.egg-info
 plugin-cache.xml
 
 # Bundled native libraries (copied for wheel builds, not source)
-python/squeeze/*.dylib
-python/squeeze/*.so
-python/squeeze/*.dll
+python/squeeze-v1/*.dylib
+python/squeeze-v1/*.so
+python/squeeze-v1/*.dll
 python/dist/
