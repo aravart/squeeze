@@ -82,7 +82,7 @@ public:
     // --- Sidechain (control thread) ---
     bool sidechain(Processor* proc, Source* source);
     bool sidechain(Processor* proc, Bus* bus);
-    bool removeSidechain(Processor* proc);
+    void removeSidechain(Processor* proc);
     bool hasSidechain(Processor* proc) const;
     Source* getSidechainSource(Processor* proc) const;  // nullptr if none or kind != source
     Bus* getSidechainBus(Processor* proc) const;        // nullptr if none or kind != bus
@@ -95,7 +95,7 @@ public:
 // Sidechain assignment
 bool     sq_sidechain_source(SqEngine engine, SqProc proc, SqSource src, char** error);
 bool     sq_sidechain_bus(SqEngine engine, SqProc proc, SqBus bus, char** error);
-bool     sq_remove_sidechain(SqEngine engine, SqProc proc);
+void     sq_remove_sidechain(SqEngine engine, SqProc proc);
 
 // Sidechain queries
 bool     sq_has_sidechain(SqEngine engine, SqProc proc);
@@ -220,6 +220,9 @@ process(buffer, midi):
 
         // 2. Copy sidechain audio into wideBuffer_ channels mainChannels..end
         scChannels = min(sidechainAudio_->getNumChannels(), sidechainChannels_)
+        if scChannels < sidechainChannels_:
+            SQ_DEBUG_RT("sidechain: source has %d ch, plugin expects %d — zero-filling",
+                        scChannels, sidechainChannels_)  // logged once, not per-block
         for ch in 0..scChannels-1:
             wideBuffer_.copyFrom(mainChannels + ch, 0,
                                  *sidechainAudio_, ch, 0, numSamples)
@@ -245,7 +248,7 @@ The extra copy is negligible — sidechain buffers are small (1–2 channels, on
 
 ## Engine — Sidechain Dependency Tracking
 
-Engine maintains a sidechain assignment map and a processor owner map on the control thread:
+Engine maintains a sidechain assignment map on the control thread:
 
 ```cpp
 // In Engine private:
@@ -256,24 +259,25 @@ struct SidechainAssignment {
     Bus* bus = nullptr;        // if kind == bus
 };
 std::unordered_map<Processor*, SidechainAssignment> sidechainMap_;
-
-// Reverse lookup: processor → owning source or bus.
-// Updated by sourceAppend/Insert/Remove and busAppend/Insert/Remove.
-// Used by sidechain() for cycle detection and snapshot building,
-// and by "proc is not in any chain" validation.
-struct ProcessorOwner {
-    enum class Kind { source, bus };
-    Kind kind;
-    Source* source = nullptr;
-    Bus* bus = nullptr;
-};
-std::unordered_map<Processor*, ProcessorOwner> processorOwnerMap_;
 ```
 
-The `processorOwnerMap_` is maintained alongside the existing `processorRegistry_`. When a processor is added to a source or bus chain, an entry is inserted. When removed, the entry is erased. This map enables:
-- Determining which source or bus a processor belongs to (for cycle detection — "does this sidechain create a dependency between source A and source B?")
-- Validating that a processor is actually in a chain before accepting a sidechain assignment
-- Cleanup when sources or buses are removed (iterate the map to find affected processors)
+### Processor Owner Lookup
+
+Sidechain needs to resolve which Source or Bus owns a given Processor (for cycle detection, "not in chain" validation, and cleanup). The Engine already has `processorRegistry_` mapping handle → Processor*. Rather than introducing a second parallel map, the registry is extended to carry owner info:
+
+```cpp
+// In Engine private (replaces the existing processorRegistry_):
+struct ProcessorEntry {
+    Processor* processor;
+    enum class Owner { source, bus };
+    Owner ownerKind;
+    Source* ownerSource = nullptr;  // if ownerKind == source
+    Bus* ownerBus = nullptr;        // if ownerKind == bus
+};
+std::unordered_map<int, ProcessorEntry> processorRegistry_;
+```
+
+The owner fields are set when a processor is added to a chain (`sourceAppend`, `busAppend`, etc.) and cleared when removed. One map, one sync point. This also benefits non-sidechain code that needs to locate a processor's owner (e.g., future features, debugging).
 
 ### Assignment
 
@@ -291,9 +295,10 @@ The `processorOwnerMap_` is maintained alongside the existing `processorRegistry
 `Engine::removeSidechain(proc)`:
 
 1. Acquire `controlMutex_`, collect garbage
-2. Erase from `sidechainMap_`
-3. `buildAndSwapSnapshot()`
-4. Return true if an assignment was removed, false if none existed
+2. Erase from `sidechainMap_` (no-op if not present)
+3. `buildAndSwapSnapshot()` if an assignment was removed
+
+Idempotent — calling `removeSidechain()` on a processor with no assignment is a no-op.
 
 ### Source Processing Order
 
@@ -326,7 +331,8 @@ Source-to-bus-processor sidechain (a processor in a bus chain sidechained from a
 Circular sidechain dependencies must be detected and rejected. Sidechain edges participate in cycle detection alongside routeTo and send edges:
 
 **Source-to-source cycles:**
-- Source A has a processor sidechained from source B, and source B has a processor sidechained from source A
+- Direct: source A sidechained from source B, and source B sidechained from source A
+- Transitive: source A sidechained from B, B sidechained from C, C sidechained from A
 
 **Bus-to-bus cycles:**
 - Bus A has a processor sidechained from Bus B, and Bus B routes to Bus A (or vice versa)
@@ -368,6 +374,8 @@ for each proc in snapshot.chainProcessors:
 ```
 
 `setSidechainAudio()` is only called when the processor will actually run. The pointer is cleared inside `process()` after the wide-buffer path completes. When bypassed, `setSidechainAudio()` is never called and no stale pointer persists.
+
+**Sub-block splitting compatibility:** When the Engine splits processing at parameter change points (EventScheduler), the sidechain buffer pointer still points at the full source/bus snapshot buffer. This is correct — `process()` receives the sub-block's `numSamples`, and the wide-buffer copy uses `numSamples`, so only the relevant portion of the sidechain buffer is copied. The sidechain pointer is set once per sub-block iteration, and cleared after each `process()` call.
 
 ### Sidechain Cleanup
 
@@ -440,7 +448,7 @@ Self-sidechain introduces no ordering constraints — a source cannot depend on 
 - In the snapshot, `sidechainRefs.size() == chainProcessors.size()` for every SourceEntry and BusEntry — the two vectors are parallel and must be kept aligned by `buildAndSwapSnapshot()`
 - Snapshot `SidechainRef.sourceIndex` and `busIndex` refer to post-sort positions in the snapshot arrays (computed after topological sort, not before)
 - Sidechain assignments trigger a snapshot rebuild
-- A processor can have at most one sidechain assignment
+- A processor can have at most one sidechain assignment. Calling `sidechain()` on a processor that already has an assignment silently replaces it — no `removeSidechain()` required first
 - Removing a processor from a chain also removes its sidechain assignment
 - Removing a source or bus that is a sidechain target removes all assignments referencing it
 
@@ -450,10 +458,10 @@ Self-sidechain introduces no ordering constraints — a source cannot depend on 
 - `sidechain(proc, source)` where proc is not in any chain: returns false, sets `*error`
 - `sidechain(proc, source)` that would create a circular source dependency: returns false, sets `*error` ("sidechain from source 'X' to source 'Y' would create a cycle"), logged at warn
 - `sidechain(proc, bus)` that would create a cycle in the bus DAG: returns false, sets `*error` ("sidechain from bus 'X' to bus 'Y' would create a cycle"), logged at warn
-- `removeSidechain(proc)` with no existing assignment: returns false (not an error, no log)
+- `removeSidechain(proc)` with no existing assignment: idempotent no-op
 - `sq_supports_sidechain()` on a non-PluginProcessor: returns false (built-in processors don't have sidechain)
 - `sq_sidechain_channels()` on a non-PluginProcessor: returns 0
-- C ABI functions with unknown/invalid proc handle: `sq_sidechain_source()` and `sq_sidechain_bus()` return false and set `*error`; `sq_remove_sidechain()` returns false; `sq_has_sidechain()` and `sq_supports_sidechain()` return false; `sq_sidechain_channels()` returns 0; `sq_get_sidechain_source()` and `sq_get_sidechain_bus()` return NULL. Consistent with other `sq_*` functions' handling of unknown handles.
+- C ABI functions with unknown/invalid proc handle: `sq_sidechain_source()` and `sq_sidechain_bus()` return false and set `*error`; `sq_remove_sidechain()` is a no-op; `sq_has_sidechain()` and `sq_supports_sidechain()` return false; `sq_sidechain_channels()` returns 0; `sq_get_sidechain_source()` and `sq_get_sidechain_bus()` return NULL. Consistent with other `sq_*` functions' handling of unknown handles.
 - Plugin rejects the sidechain bus layout during PluginProcessor construction: `sidechainChannels_` stays 0, `supportsSidechain()` returns false — no error, sidechain is simply unavailable for this plugin
 
 ## Does NOT Handle
@@ -479,7 +487,7 @@ Self-sidechain introduces no ordering constraints — a source cannot depend on 
 This feature is cross-cutting. The following existing specs must be updated when Sidechain is implemented:
 
 - **PluginProcessor** — Remove "Sidechain — future" from "Does NOT Handle" (line 167). Add `supportsSidechain()`, `getSidechainChannels()`, `setSidechainAudio()`, `wideBuffer_`, and the modified `process()` path to the interface and processing sections.
-- **Engine** — Add `sidechain()`, `removeSidechain()`, `hasSidechain()`, `getSidechainSource()`, `getSidechainBus()` to the C++ interface. Add `sq_sidechain_source`, `sq_sidechain_bus`, `sq_remove_sidechain`, `sq_has_sidechain`, `sq_get_sidechain_source`, `sq_get_sidechain_bus`, `sq_supports_sidechain`, `sq_sidechain_channels` to the C ABI. Update `processSubBlock` pseudocode to include sidechain buffer passing. Add sidechain cleanup to `removeSource()`, `removeBus()`, `sourceRemove()`, `busRemove()`. Add sidechain edges to bus DAG sort in `buildAndSwapSnapshot()`.
+- **Engine** — Add `sidechain()`, `removeSidechain()`, `hasSidechain()`, `getSidechainSource()`, `getSidechainBus()` to the C++ interface. Add `sq_sidechain_source`, `sq_sidechain_bus`, `sq_remove_sidechain`, `sq_has_sidechain`, `sq_get_sidechain_source`, `sq_get_sidechain_bus`, `sq_supports_sidechain`, `sq_sidechain_channels` to the C ABI. Extend `processorRegistry_` to carry owner info (`ProcessorEntry` with ownerSource/ownerBus). Update `processSubBlock` pseudocode to include sidechain buffer passing. Add sidechain cleanup to `removeSource()`, `removeBus()`, `sourceRemove()`, `busRemove()`. Add sidechain edges to bus DAG sort in `buildAndSwapSnapshot()`.
 - **Architecture** — The processing loop's source iteration note ("independent — future: parallelizable") needs a caveat: sources with sidechain dependencies are ordered and cannot be parallelized with their dependencies. The processing loop pseudocode (`for each source: source.process(buffer, midi)`) should note that source iteration order may be constrained by sidechain.
 - **Processor** — Add virtual `supportsSidechain()` (returns false), `getSidechainChannels()` (returns 0), and `setSidechainAudio()` (no-op) to the base class interface.
 - **PythonAPI** — Add `processor.sidechain`, `processor.supports_sidechain`, and `processor.sidechain_channels` properties.
