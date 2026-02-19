@@ -143,6 +143,111 @@ TEST_CASE("Scheduled events are cleared on transport stop")
 
 
 // ═══════════════════════════════════════════════════════════════════
+// Events cleared on seek
+// ═══════════════════════════════════════════════════════════════════
+
+TEST_CASE("Scheduled events are cleared on seek_beats")
+{
+    FFIEngine e;
+    int src = sq_add_source(e, "Synth");
+    int gen = sq_source_generator(e, src);
+
+    // Schedule a param change at beat 5.0
+    sq_schedule_param_change(e, gen, 5.0, "gain", 0.1f);
+
+    // Play and render one block to move events into staging
+    sq_transport_play(e);
+    e.flush();
+
+    // Seek clears the scheduler
+    sq_transport_seek_beats(e, 0.0);
+    e.flush();
+
+    // Now advance past beat 5 — event should be gone
+    for (int i = 0; i < 500; ++i)
+        e.flush();
+
+    float val = sq_get_param(e, gen, "gain");
+    CHECK_THAT(val, WithinAbs(1.0f, 1e-6));
+}
+
+TEST_CASE("Scheduled events are cleared on seek_samples")
+{
+    FFIEngine e;
+    int src = sq_add_source(e, "Synth");
+    int gen = sq_source_generator(e, src);
+
+    sq_schedule_param_change(e, gen, 5.0, "gain", 0.1f);
+
+    sq_transport_play(e);
+    e.flush();
+
+    sq_transport_seek_samples(e, 0);
+    e.flush();
+
+    for (int i = 0; i < 500; ++i)
+        e.flush();
+
+    float val = sq_get_param(e, gen, "gain");
+    CHECK_THAT(val, WithinAbs(1.0f, 1e-6));
+}
+
+
+// ═══════════════════════════════════════════════════════════════════
+// Pause does NOT clear events
+// ═══════════════════════════════════════════════════════════════════
+
+TEST_CASE("Scheduled events are NOT cleared on pause")
+{
+    FFIEngine e;
+    int src = sq_add_source(e, "Synth");
+    int gen = sq_source_generator(e, src);
+
+    // Schedule param change at beat 0.0
+    sq_schedule_param_change(e, gen, 0.0, "gain", 0.3f);
+
+    // Pause — should not clear events
+    sq_transport_pause(e);
+    e.flush();
+
+    // Now play — event should still fire
+    sq_transport_play(e);
+    e.flush();
+
+    float val = sq_get_param(e, gen, "gain");
+    CHECK_THAT(val, WithinAbs(0.3f, 1e-6));
+}
+
+
+// ═══════════════════════════════════════════════════════════════════
+// Loop config does NOT clear events
+// ═══════════════════════════════════════════════════════════════════
+
+TEST_CASE("Scheduled events are NOT cleared on setLoopPoints or setLooping")
+{
+    FFIEngine e;
+    int src = sq_add_source(e, "Synth");
+    int gen = sq_source_generator(e, src);
+
+    // Schedule param change at beat 0.0
+    sq_schedule_param_change(e, gen, 0.0, "gain", 0.4f);
+
+    // Configure loop — should not clear events
+    sq_transport_set_loop_points(e, 0.0, 8.0);
+    e.flush();
+    sq_transport_set_looping(e, true);
+    e.flush();
+
+    // Now play — event should fire
+    sq_transport_play(e);
+    e.flush();
+
+    float val = sq_get_param(e, gen, "gain");
+    CHECK_THAT(val, WithinAbs(0.4f, 1e-6));
+}
+
+
+// ═══════════════════════════════════════════════════════════════════
 // Null engine safety
 // ═══════════════════════════════════════════════════════════════════
 
@@ -154,4 +259,10 @@ TEST_CASE("Event scheduling functions handle null engine without crash")
     sq_schedule_cc(nullptr, 1, 0.0, 1, 1, 64);
     sq_schedule_pitch_bend(nullptr, 1, 0.0, 1, 8192);
     sq_schedule_param_change(nullptr, 1, 0.0, "gain", 0.5f);
+}
+
+TEST_CASE("sq_schedule_param_change with null param_name returns false")
+{
+    FFIEngine e;
+    CHECK_FALSE(sq_schedule_param_change(e, 1, 0.0, nullptr, 0.5f));
 }

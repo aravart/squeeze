@@ -2,6 +2,8 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include "core/EventScheduler.h"
 
+#include <limits>
+
 using namespace squeeze;
 using Catch::Matchers::WithinAbs;
 
@@ -176,6 +178,34 @@ TEST_CASE("EventScheduler retrieve does not expire events within 16 beats")
     CHECK(es.stagingCount() == 1);
 }
 
+TEST_CASE("EventScheduler retrieve expires event at exactly 16 beats behind (boundary)")
+{
+    EventScheduler es;
+    // Event at beat 0.0, block starts at beat 16.0 — ahead = -16.0
+    // kExpiryBeats = 16.0, condition is ahead < -kExpiryBeats (strict <)
+    // -16.0 < -16.0 is false → event should NOT be expired
+    es.schedule(makeNoteOn(1, 0.0));
+
+    ResolvedEvent out[16];
+    int count = es.retrieve(16.0, 17.0, 22050, kTempo, kSampleRate, out, 16);
+    CHECK(count == 0);
+    // At exactly -16.0, strict < means not expired — kept in staging
+    CHECK(es.stagingCount() == 1);
+}
+
+TEST_CASE("EventScheduler retrieve expires event just past 16 beats behind")
+{
+    EventScheduler es;
+    // Event at beat 0.0, block starts at beat 16.001 — ahead = -16.001
+    // -16.001 < -16.0 is true → event should be expired
+    es.schedule(makeNoteOn(1, 0.0));
+
+    ResolvedEvent out[16];
+    int count = es.retrieve(16.001, 17.001, 22050, kTempo, kSampleRate, out, 16);
+    CHECK(count == 0);
+    CHECK(es.stagingCount() == 0);  // expired and removed
+}
+
 
 // ═══════════════════════════════════════════════════════════════════
 // retrieve() — late event rescue
@@ -307,6 +337,18 @@ TEST_CASE("EventScheduler retrieve discards negative beatTime events")
 {
     EventScheduler es;
     es.schedule(makeNoteOn(1, -1.0));
+
+    ResolvedEvent out[16];
+    int count = es.retrieve(0.0, 1.0, 512, kTempo, kSampleRate, out, 16);
+    CHECK(count == 0);
+    CHECK(es.stagingCount() == 0);
+}
+
+TEST_CASE("EventScheduler retrieve discards infinite beatTime events")
+{
+    EventScheduler es;
+    es.schedule(makeNoteOn(1, std::numeric_limits<double>::infinity()));
+    es.schedule(makeNoteOn(2, -std::numeric_limits<double>::infinity()));
 
     ResolvedEvent out[16];
     int count = es.retrieve(0.0, 1.0, 512, kTempo, kSampleRate, out, 16);

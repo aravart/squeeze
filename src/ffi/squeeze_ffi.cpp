@@ -668,7 +668,7 @@ bool sq_schedule_pitch_bend(SqEngine engine, int source_handle, double beat_time
 bool sq_schedule_param_change(SqEngine engine, int proc_handle, double beat_time,
                               const char* param_name, float value)
 {
-    if (!engine) return false;
+    if (!engine || !param_name) return false;
     return eng(engine).scheduleParamChange(proc_handle, beat_time, param_name, value);
 }
 

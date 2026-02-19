@@ -18,7 +18,7 @@ bool EventScheduler::schedule(const ScheduledEvent& event)
                 static_cast<int>(event.type), event.beatTime, event.targetHandle);
         return false;
     }
-    SQ_TRACE("EventScheduler::schedule: queued event type=%d beat=%.3f target=%d",
+    SQ_DEBUG("EventScheduler::schedule: queued event type=%d beat=%.3f target=%d",
              static_cast<int>(event.type), event.beatTime, event.targetHandle);
     return true;
 }
@@ -47,7 +47,7 @@ int EventScheduler::retrieve(double blockStartBeats, double blockEndBeats,
     ScheduledEvent incoming;
     while (queue_.tryPop(incoming))
     {
-        if (std::isnan(incoming.beatTime) || incoming.beatTime < 0.0)
+        if (std::isnan(incoming.beatTime) || std::isinf(incoming.beatTime) || incoming.beatTime < 0.0)
         {
             SQ_WARN_RT("EventScheduler::retrieve: discarding event with invalid beatTime=%.3f",
                         incoming.beatTime);
@@ -151,7 +151,7 @@ void EventScheduler::clear()
     while (queue_.tryPop(discard)) {}
 
     stagingCount_ = 0;
-    SQ_TRACE_RT("EventScheduler::clear: all events discarded");
+    SQ_DEBUG_RT("EventScheduler::clear: all events discarded");
 }
 
 } // namespace squeeze
