@@ -171,6 +171,10 @@ private:
     bool batching_ = false;
     bool snapshotDirty_ = false;
 
+    // Deferred deletion of objects removed from the graph
+    std::vector<GarbageItem> pendingGarbage_;
+    void deferDelete(GarbageItem item);
+
     // Internal
     void buildAndSwapSnapshot();
     void handleCommand(const Command& cmd);
@@ -499,6 +503,10 @@ struct MixerSnapshot {
     };
     std::vector<BusEntry> buses;  // sorted in dependency order, master last
 
+    // Deferred deletion: objects removed from the graph before this snapshot
+    // was built. Destroyed when this snapshot is garbage-collected.
+    std::vector<GarbageItem> attachedGarbage;
+
     int totalLatency;
 };
 ```
@@ -510,6 +518,14 @@ struct MixerSnapshot {
 ## Garbage Collection
 
 Engine calls `commandQueue_.collectGarbage()` at the top of every control-thread method that acquires `controlMutex_`. This ensures old snapshots and other deferred-deletion items are freed regularly on the control thread, without requiring an external timer or caller discipline.
+
+**Deferred deletion invariant:** Any object whose raw pointer appears in a `MixerSnapshot` (Sources, Buses, Processors/generators) must not be destroyed on the control thread while a snapshot referencing it may be active on the audio thread. Instead, the control thread moves ownership to `pendingGarbage_`. When `buildAndSwapSnapshot()` builds a new snapshot (which no longer references the removed object), the pending garbage items are attached to the new snapshot via `attachedGarbage`. When *that* snapshot is eventually replaced by a subsequent snapshot and garbage-collected, the attached items are destroyed alongside it. This guarantees at least one full snapshot swap cycle between deferral and destruction.
+
+This applies to:
+- `removeSource()`: the removed Source (and its generator and chain processors) is defer-deleted
+- `removeBus()`: the removed Bus (and its chain processors) is defer-deleted
+- `sourceRemove()`: the removed chain processor is defer-deleted
+- `busRemove()`: the removed chain processor is defer-deleted
 
 ## Bus DAG Cycle Detection
 

@@ -40,17 +40,19 @@ void Source::setHandle(int h) { handle_ = h; }
 
 Processor* Source::getGenerator() const { return generator_.get(); }
 
-void Source::setGenerator(std::unique_ptr<Processor> generator)
+std::unique_ptr<Processor> Source::setGenerator(std::unique_ptr<Processor> generator)
 {
     if (!generator) {
         SQ_WARN("Source::setGenerator: null processor, ignoring");
-        return;
+        return nullptr;
     }
     SQ_DEBUG("Source::setGenerator: name=%s, old=%s new=%s",
              name_.c_str(), generator_->getName().c_str(), generator->getName().c_str());
     if (sampleRate_ > 0.0)
         generator->prepare(sampleRate_, blockSize_);
+    auto old = std::move(generator_);
     generator_ = std::move(generator);
+    return old;
 }
 
 Chain& Source::getChain() { return chain_; }

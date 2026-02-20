@@ -13,6 +13,7 @@
 #include <juce_audio_basics/juce_audio_basics.h>
 
 #include <atomic>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -40,6 +41,16 @@ struct MixerSnapshot {
     };
     std::vector<SourceEntry> sources;
     std::vector<BusEntry> buses; // dependency order, master last
+
+    // Deferred deletion: objects removed before this snapshot was built.
+    // Destroyed when this snapshot is garbage-collected.
+    std::vector<GarbageItem> attachedGarbage;
+
+    ~MixerSnapshot()
+    {
+        for (auto& item : attachedGarbage)
+            item.destroy();
+    }
 };
 
 class Engine {
@@ -189,6 +200,10 @@ private:
 
     bool batching_ = false;
     bool snapshotDirty_ = false;
+
+    // Deferred deletion of objects removed from the graph
+    std::vector<GarbageItem> pendingGarbage_;
+    void deferDelete(GarbageItem item);
 
     void collectGarbage();
     void buildAndSwapSnapshot();

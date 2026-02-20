@@ -59,6 +59,10 @@ Engine::~Engine()
     delete activeSnapshot_;
     activeSnapshot_ = nullptr;
     commandQueue_.collectGarbage();
+    // Destroy any remaining deferred items
+    for (auto& item : pendingGarbage_)
+        item.destroy();
+    pendingGarbage_.clear();
     SQ_INFO("Engine: destroyed");
 }
 
@@ -77,6 +81,11 @@ void Engine::collectGarbage()
     if (count > 0)
         SQ_TRACE("Engine: collected %d garbage items", count);
     Logger::drain();
+}
+
+void Engine::deferDelete(GarbageItem item)
+{
+    pendingGarbage_.push_back(item);
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -176,7 +185,12 @@ bool Engine::removeSource(Source* src)
         midiRouter_.commit();
 
     SQ_DEBUG("Engine::removeSource: handle=%d name=%s", src->getHandle(), src->getName().c_str());
+
+    // Defer deletion — audio thread may still reference this Source
+    auto removed = std::move(*it);
     sources_.erase(it);
+    deferDelete(GarbageItem::wrap(removed.release()));
+
     maybeRebuildSnapshot();
     return true;
 }
@@ -268,7 +282,12 @@ bool Engine::removeBus(Bus* bus)
     }
 
     SQ_DEBUG("Engine::removeBus: handle=%d name=%s", bus->getHandle(), bus->getName().c_str());
+
+    // Defer deletion — audio thread may still reference this Bus
+    auto removed = std::move(*it);
     buses_.erase(it);
+    deferDelete(GarbageItem::wrap(removed.release()));
+
     maybeRebuildSnapshot();
     return true;
 }
@@ -542,8 +561,13 @@ void Engine::sourceRemove(Source* src, int index)
     if (index < 0 || index >= chain.size()) return;
     Processor* p = chain.at(index);
     unregisterProcessor(p);
-    chain.remove(index);
+    auto removed = chain.remove(index);
     SQ_DEBUG("Engine::sourceRemove: source=%d index=%d", src->getHandle(), index);
+
+    // Defer deletion — audio thread may still reference this Processor
+    if (removed)
+        deferDelete(GarbageItem::wrap(removed.release()));
+
     maybeRebuildSnapshot();
 }
 
@@ -599,8 +623,13 @@ void Engine::busRemove(Bus* bus, int index)
     if (index < 0 || index >= chain.size()) return;
     Processor* p = chain.at(index);
     unregisterProcessor(p);
-    chain.remove(index);
+    auto removed = chain.remove(index);
     SQ_DEBUG("Engine::busRemove: bus=%d index=%d", bus->getHandle(), index);
+
+    // Defer deletion — audio thread may still reference this Processor
+    if (removed)
+        deferDelete(GarbageItem::wrap(removed.release()));
+
     maybeRebuildSnapshot();
 }
 
@@ -1088,9 +1117,14 @@ void Engine::buildAndSwapSnapshot()
         snapshot->buses.push_back(std::move(entry));
     }
 
-    SQ_DEBUG("Engine::buildAndSwapSnapshot: %d sources, %d buses",
+    // Attach pending garbage to this snapshot — they'll be destroyed when
+    // this snapshot is eventually garbage-collected (after the next swap).
+    snapshot->attachedGarbage = std::move(pendingGarbage_);
+
+    SQ_DEBUG("Engine::buildAndSwapSnapshot: %d sources, %d buses, %d deferred",
              static_cast<int>(snapshot->sources.size()),
-             static_cast<int>(snapshot->buses.size()));
+             static_cast<int>(snapshot->buses.size()),
+             static_cast<int>(snapshot->attachedGarbage.size()));
 
     Command cmd;
     cmd.type = Command::Type::swapSnapshot;

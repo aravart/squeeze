@@ -564,3 +564,101 @@ TEST_CASE("Event scheduling functions return true")
     CHECK(engine.schedulePitchBend(1, 0.0, 1, 8192));
     CHECK(engine.scheduleParamChange(1, 0.0, "gain", 0.5f));
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// Deferred deletion
+// ═══════════════════════════════════════════════════════════════════
+
+TEST_CASE("removeSource defers deletion until snapshot swap")
+{
+    Engine engine(44100.0, 512);
+    auto* src = engine.addSource("test", std::make_unique<GainProcessor>());
+    engine.render(512);  // ensure snapshot is active on audio thread
+
+    engine.removeSource(src);
+    // Object is deferred, not yet destroyed.
+    // Next render triggers snapshot swap, then collectGarbage frees it.
+    engine.render(512);
+    // No crash = success (audio thread used old snapshot safely)
+}
+
+TEST_CASE("removeBus defers deletion until snapshot swap")
+{
+    Engine engine(44100.0, 512);
+    auto* bus = engine.addBus("FX");
+    engine.addSource("src", std::make_unique<ConstGenerator>(0.5f));
+    engine.render(512);
+
+    engine.removeBus(bus);
+    engine.render(512);
+    // No crash = success
+}
+
+TEST_CASE("sourceRemove defers processor deletion until snapshot swap")
+{
+    Engine engine(44100.0, 512);
+    auto* src = engine.addSource("src", std::make_unique<ConstGenerator>(1.0f));
+    engine.sourceAppend(src, std::make_unique<GainProcessor>());
+    engine.render(512);
+
+    engine.sourceRemove(src, 0);
+    engine.render(512);
+    // No crash = success
+}
+
+TEST_CASE("busRemove defers processor deletion until snapshot swap")
+{
+    Engine engine(44100.0, 512);
+    auto* bus = engine.addBus("FX");
+    engine.busAppend(bus, std::make_unique<GainProcessor>());
+    engine.render(512);
+
+    engine.busRemove(bus, 0);
+    engine.render(512);
+    // No crash = success
+}
+
+TEST_CASE("removeSource followed by addSource does not crash")
+{
+    Engine engine(44100.0, 512);
+    auto* src = engine.addSource("synth", std::make_unique<ConstGenerator>(0.5f));
+    engine.render(512);
+
+    // Simulate the pattern: remove old source, add new one (plugin swap)
+    engine.removeSource(src);
+    auto* newSrc = engine.addSource("synth2", std::make_unique<ConstGenerator>(0.3f));
+    REQUIRE(newSrc != nullptr);
+
+    engine.render(512);
+
+    // Verify the new source produces audio
+    const int N = 128;
+    float left[N] = {};
+    float right[N] = {};
+    float* channels[2] = {left, right};
+    engine.processBlock(channels, 2, N);
+
+    bool hasAudio = false;
+    for (int i = 0; i < N; ++i)
+        if (left[i] != 0.0f) hasAudio = true;
+    CHECK(hasAudio);
+}
+
+TEST_CASE("Multiple removes in batch defers all deletions")
+{
+    Engine engine(44100.0, 512);
+    auto* src1 = engine.addSource("a", std::make_unique<GainProcessor>());
+    auto* src2 = engine.addSource("b", std::make_unique<GainProcessor>());
+    auto* bus = engine.addBus("FX");
+    engine.busAppend(bus, std::make_unique<GainProcessor>());
+    engine.render(512);
+
+    engine.batchBegin();
+    engine.removeSource(src1);
+    engine.removeSource(src2);
+    engine.busRemove(bus, 0);
+    engine.batchCommit();
+
+    engine.render(512);
+    // No crash = success
+}

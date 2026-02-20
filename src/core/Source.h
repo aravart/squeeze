@@ -33,7 +33,7 @@ public:
 
     // --- Generator ---
     Processor* getGenerator() const;
-    void setGenerator(std::unique_ptr<Processor> generator);
+    std::unique_ptr<Processor> setGenerator(std::unique_ptr<Processor> generator);
 
     // --- Insert chain ---
     Chain& getChain();
