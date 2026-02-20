@@ -128,6 +128,24 @@ class SqIdNameList(ctypes.Structure):
     ]
 
 
+class SqPluginInfo(ctypes.Structure):
+    _fields_ = [
+        ("name", ctypes.c_char_p),
+        ("manufacturer", ctypes.c_char_p),
+        ("category", ctypes.c_char_p),
+        ("version", ctypes.c_char_p),
+        ("is_instrument", ctypes.c_bool),
+        ("num_inputs", ctypes.c_int),
+        ("num_outputs", ctypes.c_int),
+    ]
+
+class SqPluginInfoList(ctypes.Structure):
+    _fields_ = [
+        ("items", ctypes.POINTER(SqPluginInfo)),
+        ("count", ctypes.c_int),
+    ]
+
+
 LogCallbackType = ctypes.CFUNCTYPE(None, ctypes.c_int, ctypes.c_char_p, ctypes.c_void_p)
 SqClockCallbackType = ctypes.CFUNCTYPE(None, ctypes.c_uint32, ctypes.c_double, ctypes.c_void_p)
 
@@ -258,6 +276,8 @@ def _load_lib():
     _sig("sq_add_plugin", _I, [_V, _S, _EP])
     _sig("sq_available_plugins", SqStringList, [_V])
     _sig("sq_num_plugins", _I, [_V])
+    _sig("sq_plugin_infos", SqPluginInfoList, [_V])
+    _sig("sq_free_plugin_info_list", None, [SqPluginInfoList])
 
     # --- MIDI device management ---
     _sig("sq_midi_devices", SqStringList, [_V])

@@ -116,6 +116,28 @@ std::vector<std::string> PluginManager::getAvailablePlugins() const
     return names;
 }
 
+std::vector<PluginInfo> PluginManager::getPluginInfos() const
+{
+    std::vector<PluginInfo> infos;
+    infos.reserve(descriptions_.size());
+    for (const auto& desc : descriptions_)
+    {
+        infos.push_back({
+            desc.name.toStdString(),
+            desc.manufacturerName.toStdString(),
+            desc.category.toStdString(),
+            desc.version.toStdString(),
+            desc.isInstrument,
+            desc.numInputChannels,
+            desc.numOutputChannels
+        });
+    }
+
+    std::sort(infos.begin(), infos.end(),
+              [](const PluginInfo& a, const PluginInfo& b) { return a.name < b.name; });
+    return infos;
+}
+
 int PluginManager::getNumPlugins() const
 {
     return static_cast<int>(descriptions_.size());

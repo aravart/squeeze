@@ -5,8 +5,8 @@ import threading
 import time
 
 from squeeze import (
-    Buffer, BufferInfo, Squeeze, Source, Bus, Chain, Clock, Processor, Transport,
-    Midi, MidiDevice, ParamDescriptor, SqueezeError, set_log_level,
+    Buffer, BufferInfo, PluginInfo, Squeeze, Source, Bus, Chain, Clock, Processor,
+    Transport, Midi, MidiDevice, ParamDescriptor, SqueezeError, set_log_level,
     set_log_callback,
 )
 
@@ -585,6 +585,15 @@ class TestPluginManager:
     def test_num_plugins_zero(self, s):
         assert s.num_plugins == 0
 
+    def test_plugin_infos_empty(self):
+        with Squeeze(plugins=False) as s:
+            infos = s.plugin_infos
+            assert isinstance(infos, list)
+            assert len(infos) == 0
+
+    def test_plugin_info_importable(self):
+        assert PluginInfo is not None
+
 
 # ═══════════════════════════════════════════════════════════════════
 # MIDI devices
@@ -772,6 +781,10 @@ class TestImports:
     def test_buffer_exported(self):
         import squeeze
         assert hasattr(squeeze, 'Buffer')
+
+    def test_plugin_info_exported(self):
+        import squeeze
+        assert hasattr(squeeze, 'PluginInfo')
 
     def test_no_old_exports(self):
         import squeeze

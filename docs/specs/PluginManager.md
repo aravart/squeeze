@@ -19,6 +19,16 @@ PluginManager handles plugin cache loading and plugin instantiation. It has no E
 ```cpp
 namespace squeeze {
 
+struct PluginInfo {
+    std::string name;
+    std::string manufacturer;
+    std::string category;
+    std::string version;
+    bool isInstrument;
+    int numInputChannels;
+    int numOutputChannels;
+};
+
 class PluginManager {
 public:
     PluginManager();
@@ -35,6 +45,7 @@ public:
     // --- Lookup ---
     const juce::PluginDescription* findByName(const std::string& name) const;
     std::vector<std::string> getAvailablePlugins() const;
+    std::vector<PluginInfo> getPluginInfos() const;
     int getNumPlugins() const;
 
     // --- Instantiation ---
@@ -59,6 +70,25 @@ bool sq_load_plugin_cache(SqEngine engine, const char* path, char** error);
 // Plugin listing
 SqStringList sq_available_plugins(SqEngine engine);
 int sq_num_plugins(SqEngine engine);
+
+// Plugin metadata
+typedef struct {
+    char* name;
+    char* manufacturer;
+    char* category;
+    char* version;
+    bool  is_instrument;
+    int   num_inputs;
+    int   num_outputs;
+} SqPluginInfo;
+
+typedef struct {
+    SqPluginInfo* items;
+    int           count;
+} SqPluginInfoList;
+
+SqPluginInfoList sq_plugin_infos(SqEngine engine);
+void sq_free_plugin_info_list(SqPluginInfoList list);
 ```
 
 Plugin instantiation is embedded in source/bus chain operations:
@@ -71,10 +101,13 @@ Plugin instantiation is embedded in source/bus chain operations:
 ```python
 # plugins=True by default — auto-finds plugin-cache.xml
 plugins = engine.available_plugins    # list of strings
+infos = engine.plugin_infos           # list[PluginInfo]
 
 synth = engine.add_source("Lead", plugin="Diva.vst3")
 eq = vocal.chain.append("EQ.vst3")
 ```
+
+`PluginInfo` dataclass fields: `name: str`, `manufacturer: str`, `category: str`, `version: str`, `is_instrument: bool`, `num_inputs: int`, `num_outputs: int`.
 
 ### FFI Orchestration
 
@@ -141,7 +174,7 @@ SqProc sq_source_append(SqEngine handle, SqSource src,
 |--------|--------|-------|
 | `loadCache()` / `loadCacheFromString()` | Control | Replaces internal list — not concurrent with other calls |
 | `findByName()` | Control | Read-only, safe concurrent with other reads |
-| `getAvailablePlugins()` / `getNumPlugins()` | Control | Read-only |
+| `getAvailablePlugins()` / `getPluginInfos()` / `getNumPlugins()` | Control | Read-only |
 | `createProcessor()` | Control | Blocks (disk I/O) — never call from audio thread |
 
 All PluginManager methods are called from the control thread. The FFI layer serializes access through `controlMutex_`.

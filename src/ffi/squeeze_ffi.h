@@ -287,6 +287,29 @@ SqStringList sq_available_plugins(SqEngine engine);
 /// Return the number of plugins in the loaded cache.
 int sq_num_plugins(SqEngine engine);
 
+/* ── Plugin metadata ─────────────────────────────────────────── */
+
+typedef struct {
+    char* name;
+    char* manufacturer;
+    char* category;
+    char* version;
+    bool  is_instrument;
+    int   num_inputs;
+    int   num_outputs;
+} SqPluginInfo;
+
+typedef struct {
+    SqPluginInfo* items;
+    int           count;
+} SqPluginInfoList;
+
+/// Return metadata for all loaded plugins (sorted by name). Free with sq_free_plugin_info_list().
+SqPluginInfoList sq_plugin_infos(SqEngine engine);
+
+/// Free a plugin info list returned by sq_plugin_infos().
+void sq_free_plugin_info_list(SqPluginInfoList list);
+
 /* ── MIDI device C structs ────────────────────────────────────── */
 
 typedef struct {

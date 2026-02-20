@@ -94,6 +94,29 @@ TEST_CASE("sq_load_plugin_cache with real cache file succeeds")
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// Plugin info
+// ═══════════════════════════════════════════════════════════════════
+
+TEST_CASE("sq_plugin_infos returns empty list initially")
+{
+    SqEngine engine = sq_engine_create(44100.0, 512, nullptr);
+    REQUIRE(engine != nullptr);
+
+    SqPluginInfoList list = sq_plugin_infos(engine);
+    CHECK(list.count == 0);
+    CHECK(list.items == nullptr);
+    sq_free_plugin_info_list(list);
+
+    sq_engine_destroy(engine);
+}
+
+TEST_CASE("sq_free_plugin_info_list with empty list is safe")
+{
+    SqPluginInfoList list = {nullptr, 0};
+    sq_free_plugin_info_list(list); // must not crash
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // Plugin instantiation
 // ═══════════════════════════════════════════════════════════════════
 

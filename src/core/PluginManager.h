@@ -10,6 +10,16 @@
 
 namespace squeeze {
 
+struct PluginInfo {
+    std::string name;
+    std::string manufacturer;
+    std::string category;
+    std::string version;
+    bool isInstrument;
+    int numInputChannels;
+    int numOutputChannels;
+};
+
 /// Manages plugin cache loading and plugin instantiation.
 /// Loads JUCE KnownPluginList XML caches and creates PluginProcessor instances.
 /// Has no Engine dependency — returns std::unique_ptr<Processor>.
@@ -28,6 +38,7 @@ public:
     // --- Lookup ---
     const juce::PluginDescription* findByName(const std::string& name) const;
     std::vector<std::string> getAvailablePlugins() const;
+    std::vector<PluginInfo> getPluginInfos() const;
     int getNumPlugins() const;
 
     // --- Instantiation ---

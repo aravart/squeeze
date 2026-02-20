@@ -49,7 +49,7 @@ Key methods:
 - `s.start(sample_rate=None, block_size=None)` / `s.stop()` — audio device (defaults to constructor args)
 - `s.run(*, seconds=None, until=None)` — pump events (see Event Loop below)
 - `s.render(num_samples)` — headless test rendering
-- `s.load_plugin_cache(path)` / `s.available_plugins` / `s.num_plugins`
+- `s.load_plugin_cache(path)` / `s.available_plugins` / `s.num_plugins` / `s.plugin_infos -> list[PluginInfo]`
 - `s.batch()` — context manager, defers graph rebuild until exit
 - `s.close()` — destroy engine (also called by context manager)
 - `s.version -> str`
@@ -146,6 +146,8 @@ proc = src.generator  # or from chain.append()/chain.insert()
 - `proc.handle -> int`
 
 `ParamDescriptor` fields: `name`, `default_value`, `min_value`, `max_value`, `num_steps`, `automatable`, `boolean`, `label`, `group`
+
+`PluginInfo` fields: `name`, `manufacturer`, `category`, `version`, `is_instrument` (bool), `num_inputs` (int), `num_outputs` (int)
 
 ### Send
 

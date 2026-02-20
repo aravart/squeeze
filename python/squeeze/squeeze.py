@@ -11,12 +11,12 @@ from pathlib import Path
 from types import TracebackType
 from typing import Callable
 
-from squeeze._ffi import lib, SqBufferInfo, SqIdNameList
+from squeeze._ffi import lib, SqBufferInfo, SqIdNameList, SqPluginInfoList
 from squeeze._helpers import (
     SqueezeError, make_error_ptr, check_error,
     decode_string, string_list_to_python, encode,
 )
-from squeeze.types import BufferInfo
+from squeeze.types import BufferInfo, PluginInfo
 from squeeze.buffer import Buffer
 from squeeze.bus import Bus
 from squeeze.clock import Clock
@@ -313,6 +313,25 @@ class Squeeze:
     def num_plugins(self) -> int:
         """Number of plugins in the loaded cache."""
         return lib.sq_num_plugins(self._ptr)
+
+    @property
+    def plugin_infos(self) -> list[PluginInfo]:
+        """Metadata for all loaded plugins (sorted by name)."""
+        raw = lib.sq_plugin_infos(self._ptr)
+        result: list[PluginInfo] = []
+        for i in range(raw.count):
+            item = raw.items[i]
+            result.append(PluginInfo(
+                name=item.name.decode("utf-8") if item.name else "",
+                manufacturer=item.manufacturer.decode("utf-8") if item.manufacturer else "",
+                category=item.category.decode("utf-8") if item.category else "",
+                version=item.version.decode("utf-8") if item.version else "",
+                is_instrument=item.is_instrument,
+                num_inputs=item.num_inputs,
+                num_outputs=item.num_outputs,
+            ))
+        lib.sq_free_plugin_info_list(raw)
+        return result
 
     # --- Audio device ---
 

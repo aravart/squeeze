@@ -20,6 +20,18 @@ class ParamDescriptor:
 
 
 @dataclass(frozen=True)
+class PluginInfo:
+    """Metadata about an available plugin."""
+    name: str
+    manufacturer: str
+    category: str
+    version: str
+    is_instrument: bool
+    num_inputs: int
+    num_outputs: int
+
+
+@dataclass(frozen=True)
 class BufferInfo:
     """Metadata about an audio buffer."""
     buffer_id: int

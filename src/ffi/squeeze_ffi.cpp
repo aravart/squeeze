@@ -747,6 +747,43 @@ int sq_num_plugins(SqEngine engine)
     return cast(engine)->pluginManager.getNumPlugins();
 }
 
+SqPluginInfoList sq_plugin_infos(SqEngine engine)
+{
+    SqPluginInfoList result = {nullptr, 0};
+    auto infos = cast(engine)->pluginManager.getPluginInfos();
+    if (infos.empty()) return result;
+
+    result.count = static_cast<int>(infos.size());
+    result.items = static_cast<SqPluginInfo*>(
+        malloc(sizeof(SqPluginInfo) * infos.size()));
+
+    for (int i = 0; i < result.count; i++)
+    {
+        auto& info = infos[static_cast<size_t>(i)];
+        result.items[i].name = strdup(info.name.c_str());
+        result.items[i].manufacturer = strdup(info.manufacturer.c_str());
+        result.items[i].category = strdup(info.category.c_str());
+        result.items[i].version = strdup(info.version.c_str());
+        result.items[i].is_instrument = info.isInstrument;
+        result.items[i].num_inputs = info.numInputChannels;
+        result.items[i].num_outputs = info.numOutputChannels;
+    }
+
+    return result;
+}
+
+void sq_free_plugin_info_list(SqPluginInfoList list)
+{
+    for (int i = 0; i < list.count; i++)
+    {
+        free(list.items[i].name);
+        free(list.items[i].manufacturer);
+        free(list.items[i].category);
+        free(list.items[i].version);
+    }
+    free(list.items);
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // MIDI device management
 // ═══════════════════════════════════════════════════════════════════
