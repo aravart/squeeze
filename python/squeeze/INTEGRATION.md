@@ -28,6 +28,11 @@ s = Squeeze(sample_rate=44100.0, block_size=512)
 with Squeeze() as s: ...
 ```
 
+The `plugins` kwarg controls plugin cache loading:
+- `plugins=True` (default): searches upward from cwd for `plugin-cache.xml`, loads if found
+- `plugins="/path/to/cache.xml"`: loads that file, raises on failure
+- `plugins=False`: skips loading
+
 Key methods:
 - `s.add_source(name, *, plugin=None) -> Source`
 - `s.add_bus(name) -> Bus`

@@ -546,14 +546,17 @@ class Squeeze:
             s.start()
     """
 
-    def __init__(self, sample_rate: float = 44100.0, block_size: int = 512):
+    def __init__(self, sample_rate: float = 44100.0, block_size: int = 512,
+                 *, plugins: str | bool = True):
         """Create a new Squeeze engine.
 
         Args:
             sample_rate: Audio sample rate in Hz. Default: 44100.0
             block_size: Audio block size in samples. Default: 512
+            plugins: Plugin cache loading. True (default) searches upward
+                from cwd for plugin-cache.xml. A string loads that path
+                directly (raises on failure). False skips loading.
         """
-        # Internally calls sq_create(sample_rate, block_size)
 
     def close(self) -> None:
         """Destroy the engine. Safe to call multiple times."""
@@ -776,7 +779,7 @@ from squeeze import Squeeze, set_log_level
 set_log_level(2)
 
 with Squeeze() as s:
-    s.load_plugin_cache("plugin-cache.xml")
+    # plugins=True by default — auto-finds plugin-cache.xml
 
     # Sources
     synth = s.add_source("Lead", plugin="Diva.vst3")

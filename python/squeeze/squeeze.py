@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import ctypes
+import os
 from collections.abc import Iterator
 from contextlib import contextmanager
+from pathlib import Path
 from types import TracebackType
 from typing import Callable
 
@@ -33,7 +35,19 @@ class Squeeze:
             s.render(512)
     """
 
-    def __init__(self, sample_rate: float = 44100.0, block_size: int = 512):
+    _PLUGIN_CACHE_NAME = "plugin-cache.xml"
+
+    def __init__(self, sample_rate: float = 44100.0, block_size: int = 512,
+                 *, plugins: str | bool = True):
+        """Create a new Squeeze engine.
+
+        Args:
+            sample_rate: Audio sample rate in Hz.
+            block_size: Audio block size in samples.
+            plugins: Plugin cache loading. ``True`` (default) searches upward
+                from cwd for ``plugin-cache.xml``. A string path loads that
+                file directly (raises on failure). ``False`` skips loading.
+        """
         err = make_error_ptr()
         self._ptr = lib.sq_engine_create(sample_rate, block_size, err)
         if not self._ptr:
@@ -44,6 +58,7 @@ class Squeeze:
         self._transport: Transport | None = None
         self._midi: Midi | None = None
         self._perf: Perf | None = None
+        self._load_plugins(plugins)
 
     def close(self) -> None:
         """Destroy the engine. Safe to call multiple times."""
@@ -64,6 +79,33 @@ class Squeeze:
 
     def __del__(self) -> None:
         self.close()
+
+    def _load_plugins(self, plugins: str | bool) -> None:
+        """Handle the ``plugins`` constructor arg."""
+        if not plugins:
+            return
+        if isinstance(plugins, str):
+            if not os.path.isfile(plugins):
+                raise SqueezeError(f"Plugin cache not found: {plugins}")
+            self.load_plugin_cache(plugins)
+            return
+        # plugins=True — search upward from cwd
+        found = self._find_plugin_cache()
+        if found is not None:
+            self.load_plugin_cache(found)
+
+    @staticmethod
+    def _find_plugin_cache() -> str | None:
+        """Search for plugin-cache.xml from cwd up to home directory."""
+        home = Path.home()
+        cur = Path.cwd().resolve()
+        while True:
+            candidate = cur / Squeeze._PLUGIN_CACHE_NAME
+            if candidate.is_file():
+                return str(candidate)
+            if cur == home or cur.parent == cur:
+                return None
+            cur = cur.parent
 
     @property
     def version(self) -> str:
