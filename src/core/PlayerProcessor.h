@@ -67,6 +67,7 @@ private:
     bool wasPlaying_ = false;
     float fadeGain_ = 0.0f;
     double lastSpeed_ = 1.0;  // speed used for fade-out rendering
+    bool tempoLockWarned_ = false;  // suppress repeated RT warnings
 
     double fadeSamplesFromMs() const;
 

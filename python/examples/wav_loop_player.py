@@ -13,6 +13,7 @@ import tkinter as tk
 from tkinter import filedialog
 
 from squeeze import Squeeze
+from squeeze.buffer import Buffer
 
 
 class WavLoopPlayer:
@@ -27,6 +28,7 @@ class WavLoopPlayer:
         self.src.route_to(self.s.master)
         self.src["fade_ms"] = 10.0
         self.buf_loaded = False
+        self.buf: Buffer | None = None
 
         self._build_ui()
         self.s.start()
@@ -48,6 +50,15 @@ class WavLoopPlayer:
         tk.Button(file_frame, text="Open WAV...", command=self._open_file).pack(side="left")
         self.file_label = tk.Label(file_frame, text="(no file)", anchor="w")
         self.file_label.pack(side="left", padx=8, fill="x", expand=True)
+
+        # File BPM — must be set for tempo_lock to work
+        bpm_frame = tk.Frame(self.root)
+        bpm_frame.pack(fill="x", **pad)
+        tk.Label(bpm_frame, text="File BPM", width=14, anchor="w").pack(side="left")
+        self.file_bpm_var = tk.DoubleVar(value=120.0)
+        tk.Spinbox(bpm_frame, from_=30, to=300, increment=0.1,
+                   textvariable=self.file_bpm_var, width=8,
+                   command=self._on_file_bpm).pack(side="left")
 
         # Sliders
         self.tempo_var = tk.DoubleVar(value=120.0)
@@ -92,10 +103,16 @@ class WavLoopPlayer:
 
     def _load(self, path: str) -> None:
         buf_id = self.s.load_buffer(path)
+        self.buf = Buffer(self.s, buf_id)
+        self.buf.tempo = self.file_bpm_var.get()
         self.src.set_buffer(buf_id)
         self.buf_loaded = True
         name = path.rsplit("/", 1)[-1]
         self.file_label.config(text=name)
+
+    def _on_file_bpm(self) -> None:
+        if self.buf is not None:
+            self.buf.tempo = self.file_bpm_var.get()
 
     def _on_tempo(self, _: str) -> None:
         self.s.transport.tempo = self.tempo_var.get()

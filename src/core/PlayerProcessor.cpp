@@ -87,7 +87,22 @@ void PlayerProcessor::process(juce::AudioBuffer<float>& buffer)
         }
         double bufferTempo = buf ? buf->getTempo() : 0.0;
         if (engineTempo > 0.0 && bufferTempo > 0.0)
+        {
             effectiveSpeed = (engineTempo / bufferTempo) * static_cast<double>(speed_);
+            tempoLockWarned_ = false;
+        }
+        else if (!tempoLockWarned_)
+        {
+            if (bufferTempo <= 0.0)
+                SQ_WARN_RT("PlayerProcessor: tempo_lock active but buffer tempo is 0 — set buffer tempo for tempo_lock to work");
+            else if (engineTempo <= 0.0)
+                SQ_WARN_RT("PlayerProcessor: tempo_lock active but engine tempo unavailable (no PlayHead or BPM not set)");
+            tempoLockWarned_ = true;
+        }
+    }
+    else
+    {
+        tempoLockWarned_ = false;
     }
     effectiveSpeed *= transposeRatio_;
 
