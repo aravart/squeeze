@@ -19,6 +19,7 @@ FetchContent_MakeAvailable(juce)
 add_library(squeeze_core STATIC
     src/core/AudioDevice.cpp
     src/core/Buffer.cpp
+    src/core/BufferLibrary.cpp
     src/core/Bus.cpp
     src/core/Chain.cpp
     src/core/Engine.cpp
@@ -43,6 +44,7 @@ target_link_libraries(squeeze_core PUBLIC
     juce::juce_events
     juce::juce_audio_basics
     juce::juce_audio_devices
+    juce::juce_audio_formats
     juce::juce_audio_processors
 )
 
@@ -93,6 +95,7 @@ add_executable(squeeze_unit_tests
     tests/core/ClockDispatchTests.cpp
     tests/core/PerfMonitorTests.cpp
     tests/core/BufferTests.cpp
+    tests/core/BufferLibraryTests.cpp
     tests/core/PlaybackCursorTests.cpp
     tests/core/PlayerProcessorTests.cpp
 )
@@ -119,6 +122,7 @@ add_executable(squeeze_ffi_tests
 
 target_link_libraries(squeeze_ffi_tests PRIVATE
     squeeze_ffi
+    squeeze_core
     Catch2::Catch2WithMain
 )
 

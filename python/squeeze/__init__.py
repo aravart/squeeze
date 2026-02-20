@@ -15,7 +15,7 @@ from squeeze.processor import Processor
 from squeeze.send import Send
 from squeeze.transport import Transport
 from squeeze.midi import Midi, MidiDevice, MidiRouteInfo
-from squeeze.types import ParamDescriptor
+from squeeze.types import BufferInfo, ParamDescriptor
 
 from squeeze._helpers import SqueezeError, set_log_level, set_log_callback
 

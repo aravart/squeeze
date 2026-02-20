@@ -1,6 +1,7 @@
 #include "ffi/squeeze_ffi.h"
 #include "core/AudioDevice.h"
 #include "core/Buffer.h"
+#include "core/BufferLibrary.h"
 #include "core/Engine.h"
 #include "core/GainProcessor.h"
 #include "core/Logger.h"
@@ -28,9 +29,7 @@ struct EngineHandle {
     squeeze::EditorManager editorManager;
     std::mutex audioMutex;
 
-    // Buffer registry (monotonically increasing IDs, never reused)
-    std::unordered_map<int, std::unique_ptr<squeeze::Buffer>> buffers;
-    int nextBufferId = 1;
+    squeeze::BufferLibrary bufferLibrary;
 
     EngineHandle(double sr, int bs) : engine(sr, bs) {}
 };
@@ -1070,102 +1069,155 @@ void sq_free_slot_perf_list(SqSlotPerfList list)
 // Buffer management
 // ═══════════════════════════════════════════════════════════════════
 
+void sq_free_buffer_info(SqBufferInfo info)
+{
+    free(info.name);
+    free(info.file_path);
+}
+
+void sq_free_id_name_list(SqIdNameList list)
+{
+    for (int i = 0; i < list.count; i++)
+        free(list.names[i]);
+    free(list.names);
+    free(list.ids);
+}
+
+int sq_load_buffer(SqEngine engine, const char* path, char** error)
+{
+    auto* h = cast(engine);
+    std::string err;
+    int id = h->bufferLibrary.loadBuffer(path ? path : "", err);
+    if (id < 0)
+        set_error(error, err);
+    else if (error)
+        *error = nullptr;
+    return id;
+}
+
 int sq_create_buffer(SqEngine engine, int num_channels, int length_in_samples,
                      double sample_rate, const char* name, char** error)
 {
     auto* h = cast(engine);
-    auto buf = squeeze::Buffer::createEmpty(
-        num_channels, length_in_samples, sample_rate, name ? name : "");
-    if (!buf)
-    {
-        set_error(error, "Invalid buffer parameters");
-        return -1;
-    }
-    if (error) *error = nullptr;
-    int id = h->nextBufferId++;
-    h->buffers[id] = std::move(buf);
+    std::string err;
+    int id = h->bufferLibrary.createBuffer(
+        num_channels, length_in_samples, sample_rate, name ? name : "", err);
+    if (id < 0)
+        set_error(error, err);
+    else if (error)
+        *error = nullptr;
     return id;
 }
 
 bool sq_remove_buffer(SqEngine engine, int buffer_id)
 {
     auto* h = cast(engine);
-    return h->buffers.erase(buffer_id) > 0;
+    auto buf = h->bufferLibrary.removeBuffer(buffer_id);
+    return buf != nullptr;
 }
 
 int sq_buffer_count(SqEngine engine)
 {
-    return static_cast<int>(cast(engine)->buffers.size());
+    return cast(engine)->bufferLibrary.getNumBuffers();
+}
+
+SqBufferInfo sq_buffer_info(SqEngine engine, int buffer_id)
+{
+    SqBufferInfo info = {};
+    auto* h = cast(engine);
+    auto* buf = h->bufferLibrary.getBuffer(buffer_id);
+    if (!buf)
+        return info;
+
+    info.buffer_id = buffer_id;
+    info.num_channels = buf->getNumChannels();
+    info.length = buf->getLengthInSamples();
+    info.sample_rate = buf->getSampleRate();
+    info.name = strdup(buf->getName().c_str());
+    info.file_path = strdup(buf->getFilePath().c_str());
+    info.length_seconds = buf->getLengthInSeconds();
+    return info;
+}
+
+SqIdNameList sq_buffers(SqEngine engine)
+{
+    SqIdNameList result = {nullptr, nullptr, 0};
+    auto* h = cast(engine);
+    auto list = h->bufferLibrary.getBuffers();
+    if (list.empty())
+        return result;
+
+    result.count = static_cast<int>(list.size());
+    result.ids = static_cast<int*>(malloc(sizeof(int) * list.size()));
+    result.names = static_cast<char**>(malloc(sizeof(char*) * list.size()));
+
+    for (int i = 0; i < result.count; i++)
+    {
+        result.ids[i] = list[static_cast<size_t>(i)].first;
+        result.names[i] = strdup(list[static_cast<size_t>(i)].second.c_str());
+    }
+    return result;
 }
 
 int sq_buffer_num_channels(SqEngine engine, int buffer_id)
 {
-    auto* h = cast(engine);
-    auto it = h->buffers.find(buffer_id);
-    if (it == h->buffers.end()) return 0;
-    return it->second->getNumChannels();
+    auto* buf = cast(engine)->bufferLibrary.getBuffer(buffer_id);
+    if (!buf) return 0;
+    return buf->getNumChannels();
 }
 
 int sq_buffer_length(SqEngine engine, int buffer_id)
 {
-    auto* h = cast(engine);
-    auto it = h->buffers.find(buffer_id);
-    if (it == h->buffers.end()) return 0;
-    return it->second->getLengthInSamples();
+    auto* buf = cast(engine)->bufferLibrary.getBuffer(buffer_id);
+    if (!buf) return 0;
+    return buf->getLengthInSamples();
 }
 
 double sq_buffer_sample_rate(SqEngine engine, int buffer_id)
 {
-    auto* h = cast(engine);
-    auto it = h->buffers.find(buffer_id);
-    if (it == h->buffers.end()) return 0.0;
-    return it->second->getSampleRate();
+    auto* buf = cast(engine)->bufferLibrary.getBuffer(buffer_id);
+    if (!buf) return 0.0;
+    return buf->getSampleRate();
 }
 
 char* sq_buffer_name(SqEngine engine, int buffer_id)
 {
-    auto* h = cast(engine);
-    auto it = h->buffers.find(buffer_id);
-    if (it == h->buffers.end()) return nullptr;
-    return to_c_string(it->second->getName());
+    auto* buf = cast(engine)->bufferLibrary.getBuffer(buffer_id);
+    if (!buf) return nullptr;
+    return to_c_string(buf->getName());
 }
 
 double sq_buffer_length_seconds(SqEngine engine, int buffer_id)
 {
-    auto* h = cast(engine);
-    auto it = h->buffers.find(buffer_id);
-    if (it == h->buffers.end()) return 0.0;
-    return it->second->getLengthInSeconds();
+    auto* buf = cast(engine)->bufferLibrary.getBuffer(buffer_id);
+    if (!buf) return 0.0;
+    return buf->getLengthInSeconds();
 }
 
 int sq_buffer_write_position(SqEngine engine, int buffer_id)
 {
-    auto* h = cast(engine);
-    auto it = h->buffers.find(buffer_id);
-    if (it == h->buffers.end()) return -1;
-    return it->second->writePosition.load(std::memory_order_acquire);
+    auto* buf = cast(engine)->bufferLibrary.getBuffer(buffer_id);
+    if (!buf) return -1;
+    return buf->writePosition.load(std::memory_order_acquire);
 }
 
 void sq_buffer_set_write_position(SqEngine engine, int buffer_id, int position)
 {
-    auto* h = cast(engine);
-    auto it = h->buffers.find(buffer_id);
-    if (it == h->buffers.end()) return;
-    it->second->writePosition.store(position, std::memory_order_release);
+    auto* buf = cast(engine)->bufferLibrary.getBuffer(buffer_id);
+    if (!buf) return;
+    buf->writePosition.store(position, std::memory_order_release);
 }
 
 int sq_buffer_read(SqEngine engine, int buffer_id, int channel,
                    int offset, float* dest, int num_samples)
 {
-    auto* h = cast(engine);
-    auto it = h->buffers.find(buffer_id);
-    if (it == h->buffers.end() || !dest || num_samples <= 0) return 0;
+    auto* buf = cast(engine)->bufferLibrary.getBuffer(buffer_id);
+    if (!buf || !dest || num_samples <= 0) return 0;
 
-    auto& buf = *it->second;
-    const float* src = buf.getReadPointer(channel);
+    const float* src = buf->getReadPointer(channel);
     if (!src) return 0;
 
-    int len = buf.getLengthInSamples();
+    int len = buf->getLengthInSamples();
     if (offset < 0 || offset >= len) return 0;
     int count = std::min(num_samples, len - offset);
     std::memcpy(dest, src + offset, static_cast<size_t>(count) * sizeof(float));
@@ -1175,15 +1227,13 @@ int sq_buffer_read(SqEngine engine, int buffer_id, int channel,
 int sq_buffer_write(SqEngine engine, int buffer_id, int channel,
                     int offset, const float* src, int num_samples)
 {
-    auto* h = cast(engine);
-    auto it = h->buffers.find(buffer_id);
-    if (it == h->buffers.end() || !src || num_samples <= 0) return 0;
+    auto* buf = cast(engine)->bufferLibrary.getBuffer(buffer_id);
+    if (!buf || !src || num_samples <= 0) return 0;
 
-    auto& buf = *it->second;
-    float* dst = buf.getWritePointer(channel);
+    float* dst = buf->getWritePointer(channel);
     if (!dst) return 0;
 
-    int len = buf.getLengthInSamples();
+    int len = buf->getLengthInSamples();
     if (offset < 0 || offset >= len) return 0;
     int count = std::min(num_samples, len - offset);
     std::memcpy(dst + offset, src, static_cast<size_t>(count) * sizeof(float));
@@ -1192,10 +1242,9 @@ int sq_buffer_write(SqEngine engine, int buffer_id, int channel,
 
 void sq_buffer_clear(SqEngine engine, int buffer_id)
 {
-    auto* h = cast(engine);
-    auto it = h->buffers.find(buffer_id);
-    if (it == h->buffers.end()) return;
-    it->second->clear();
+    auto* buf = cast(engine)->bufferLibrary.getBuffer(buffer_id);
+    if (!buf) return;
+    buf->clear();
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1224,10 +1273,10 @@ bool sq_source_set_buffer(SqEngine engine, int source_handle, int buffer_id)
     auto* gen = dynamic_cast<squeeze::PlayerProcessor*>(src->getGenerator());
     if (!gen) return false;
 
-    auto it = h->buffers.find(buffer_id);
-    if (it == h->buffers.end()) return false;
+    auto* buf = h->bufferLibrary.getBuffer(buffer_id);
+    if (!buf) return false;
 
-    gen->setBuffer(it->second.get());
+    gen->setBuffer(buf);
     return true;
 }
 

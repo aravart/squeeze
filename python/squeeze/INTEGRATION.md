@@ -35,7 +35,10 @@ The `plugins` kwarg controls plugin cache loading:
 
 Key methods:
 - `s.add_source(name, *, plugin=None, player=False) -> Source`
+- `s.load_buffer(path) -> int` — load audio file, returns buffer ID
 - `s.create_buffer(channels, length, sample_rate, name="") -> Buffer`
+- `s.buffer_info(buffer_id) -> BufferInfo` — metadata about a buffer
+- `s.buffers -> list[tuple[int, str]]` — sorted (id, name) pairs
 - `s.buffer_count -> int`
 - `s.add_bus(name) -> Bus`
 - `s.master -> Bus` (always exists)
@@ -69,6 +72,8 @@ s.perf.reset()                  # reset cumulative counters
 
 ```python
 buf = s.create_buffer(channels=2, length=44100, sample_rate=44100.0, name="loop")
+buf_id = s.load_buffer("/samples/kick.wav")  # returns int buffer ID
+info = s.buffer_info(buf_id)                 # BufferInfo dataclass
 ```
 
 Properties: `buffer_id -> int`, `num_channels -> int`, `length -> int`, `sample_rate -> float`, `name -> str`, `length_seconds -> float`, `write_position -> int` (settable)
@@ -76,6 +81,8 @@ Properties: `buffer_id -> int`, `num_channels -> int`, `length -> int`, `sample_
 - `buf.write(channel, data, offset=0) -> int` — write samples, returns count written
 - `buf.clear()` — zero all samples, reset write_position
 - `buf.remove() -> bool`
+
+`BufferInfo` fields: `buffer_id`, `num_channels`, `length`, `sample_rate`, `name`, `file_path`, `length_seconds`
 
 ### Source
 

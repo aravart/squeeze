@@ -17,3 +17,15 @@ class ParamDescriptor:
     boolean: bool
     label: str              # unit: "dB", "Hz", "%", ""
     group: str              # "" = ungrouped
+
+
+@dataclass(frozen=True)
+class BufferInfo:
+    """Metadata about an audio buffer."""
+    buffer_id: int
+    num_channels: int
+    length: int
+    sample_rate: float
+    name: str
+    file_path: str
+    length_seconds: float

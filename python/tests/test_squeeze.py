@@ -5,8 +5,9 @@ import threading
 import time
 
 from squeeze import (
-    Buffer, Squeeze, Source, Bus, Chain, Clock, Processor, Transport, Midi,
-    MidiDevice, ParamDescriptor, SqueezeError, set_log_level, set_log_callback,
+    Buffer, BufferInfo, Squeeze, Source, Bus, Chain, Clock, Processor, Transport,
+    Midi, MidiDevice, ParamDescriptor, SqueezeError, set_log_level,
+    set_log_callback,
 )
 
 
@@ -871,6 +872,56 @@ class TestBuffer:
             buf2 = s.create_buffer(channels=1, length=100, sample_rate=44100.0)
             assert buf1 != buf2
             assert buf1 == Buffer(s, buf1.buffer_id)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# BufferLibrary (load_buffer, buffer_info, buffers)
+# ═══════════════════════════════════════════════════════════════════
+
+class TestBufferLibrary:
+    def test_load_buffer_nonexistent_raises(self):
+        with Squeeze(plugins=False) as s:
+            with pytest.raises(SqueezeError):
+                s.load_buffer("/nonexistent/file.wav")
+
+    def test_buffer_info_metadata(self):
+        with Squeeze(plugins=False) as s:
+            buf = s.create_buffer(channels=2, length=44100, sample_rate=44100.0, name="kick")
+            info = s.buffer_info(buf.buffer_id)
+            assert isinstance(info, BufferInfo)
+            assert info.buffer_id == buf.buffer_id
+            assert info.num_channels == 2
+            assert info.length == 44100
+            assert info.sample_rate == 44100.0
+            assert info.name == "kick"
+            assert abs(info.length_seconds - 1.0) < 1e-6
+
+    def test_buffer_info_unknown_id(self):
+        with Squeeze(plugins=False) as s:
+            info = s.buffer_info(999)
+            assert info.buffer_id == 0
+            assert info.num_channels == 0
+
+    def test_buffers_sorted(self):
+        with Squeeze(plugins=False) as s:
+            b1 = s.create_buffer(channels=1, length=100, sample_rate=44100.0, name="c")
+            b2 = s.create_buffer(channels=1, length=100, sample_rate=44100.0, name="a")
+            b3 = s.create_buffer(channels=1, length=100, sample_rate=44100.0, name="b")
+            bufs = s.buffers
+            assert len(bufs) == 3
+            assert bufs[0] == (b1.buffer_id, "c")
+            assert bufs[1] == (b2.buffer_id, "a")
+            assert bufs[2] == (b3.buffer_id, "b")
+            # Verify sorted by ID
+            assert bufs[0][0] < bufs[1][0] < bufs[2][0]
+
+    def test_buffers_empty(self):
+        with Squeeze(plugins=False) as s:
+            assert s.buffers == []
+
+    def test_buffer_info_exported(self):
+        """BufferInfo is importable from squeeze package."""
+        assert BufferInfo is not None
 
 
 # ═══════════════════════════════════════════════════════════════════

@@ -11,11 +11,12 @@ from pathlib import Path
 from types import TracebackType
 from typing import Callable
 
-from squeeze._ffi import lib
+from squeeze._ffi import lib, SqBufferInfo, SqIdNameList
 from squeeze._helpers import (
     SqueezeError, make_error_ptr, check_error,
     decode_string, string_list_to_python, encode,
 )
+from squeeze.types import BufferInfo
 from squeeze.buffer import Buffer
 from squeeze.bus import Bus
 from squeeze.clock import Clock
@@ -168,6 +169,25 @@ class Squeeze:
 
     # --- Buffers ---
 
+    def load_buffer(self, path: str) -> int:
+        """Load an audio file into a buffer.
+
+        Args:
+            path: Path to the audio file (WAV, AIFF, FLAC, etc.).
+
+        Returns:
+            Buffer ID (>= 1).
+
+        Raises:
+            SqueezeError: If the file cannot be loaded.
+        """
+        err = make_error_ptr()
+        buf_id = lib.sq_load_buffer(self._ptr, encode(path), err)
+        if buf_id < 0:
+            check_error(err)
+            raise SqueezeError(f"Failed to load buffer: {path}")
+        return buf_id
+
     def create_buffer(self, channels: int, length: int,
                       sample_rate: float, name: str = "") -> Buffer:
         """Create an empty audio buffer.
@@ -189,6 +209,39 @@ class Squeeze:
             check_error(err)
             raise SqueezeError("Failed to create buffer")
         return Buffer(self, buf_id)
+
+    def buffer_info(self, buffer_id: int) -> BufferInfo:
+        """Get metadata about a buffer.
+
+        Args:
+            buffer_id: The buffer ID.
+
+        Returns:
+            BufferInfo with metadata fields.
+        """
+        info = lib.sq_buffer_info(self._ptr, buffer_id)
+        result = BufferInfo(
+            buffer_id=info.buffer_id,
+            num_channels=info.num_channels,
+            length=info.length,
+            sample_rate=info.sample_rate,
+            name=info.name.decode("utf-8") if info.name else "",
+            file_path=info.file_path.decode("utf-8") if info.file_path else "",
+            length_seconds=info.length_seconds,
+        )
+        lib.sq_free_buffer_info(info)
+        return result
+
+    @property
+    def buffers(self) -> list[tuple[int, str]]:
+        """Sorted list of (buffer_id, name) tuples."""
+        raw = lib.sq_buffers(self._ptr)
+        result: list[tuple[int, str]] = []
+        for i in range(raw.count):
+            name = raw.names[i].decode("utf-8") if raw.names[i] else ""
+            result.append((raw.ids[i], name))
+        lib.sq_free_id_name_list(raw)
+        return result
 
     @property
     def buffer_count(self) -> int:

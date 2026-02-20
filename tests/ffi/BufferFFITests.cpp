@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include "ffi/squeeze_ffi.h"
+#include <juce_audio_formats/juce_audio_formats.h>
 #include <cmath>
 #include <cstring>
 #include <vector>
@@ -448,5 +449,180 @@ TEST_CASE("PlayerProcessor speed parameter through FFI")
     // At 2x speed, position should be further than at 1x
     CHECK(pos > 0.05f);
 
+    sq_engine_destroy(e);
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// BufferLibrary FFI (sq_load_buffer, sq_buffer_info, sq_buffers)
+// ═══════════════════════════════════════════════════════════════════
+
+TEST_CASE("sq_load_buffer with nonexistent file returns -1 and sets error")
+{
+    SqEngine e = sq_engine_create(44100.0, 512, nullptr);
+    char* error = nullptr;
+    int id = sq_load_buffer(e, "/nonexistent/file.wav", &error);
+    CHECK(id == -1);
+    REQUIRE(error != nullptr);
+    sq_free_string(error);
+    sq_engine_destroy(e);
+}
+
+TEST_CASE("sq_load_buffer with valid WAV file succeeds")
+{
+    // Write a temp WAV file using JUCE
+    juce::TemporaryFile tmpFile(".wav");
+    auto outFile = tmpFile.getFile();
+    {
+        juce::WavAudioFormat wavFormat;
+        std::unique_ptr<juce::AudioFormatWriter> writer(
+            wavFormat.createWriterFor(
+                new juce::FileOutputStream(outFile),
+                48000.0, 2, 16, {}, 0));
+        REQUIRE(writer != nullptr);
+
+        juce::AudioBuffer<float> data(2, 200);
+        data.clear();
+        for (int i = 0; i < 200; ++i)
+            data.setSample(0, i, 0.5f);
+        writer->writeFromAudioSampleBuffer(data, 0, 200);
+    }
+
+    SqEngine e = sq_engine_create(44100.0, 512, nullptr);
+    char* error = nullptr;
+    int id = sq_load_buffer(e, outFile.getFullPathName().toRawUTF8(), &error);
+    REQUIRE(id >= 1);
+    CHECK(error == nullptr);
+    CHECK(sq_buffer_count(e) == 1);
+
+    // Verify metadata through existing queries
+    CHECK(sq_buffer_num_channels(e, id) == 2);
+    CHECK(sq_buffer_length(e, id) == 200);
+    CHECK_THAT(sq_buffer_sample_rate(e, id), WithinAbs(48000.0, 1.0));
+
+    sq_engine_destroy(e);
+}
+
+TEST_CASE("sq_buffer_info returns correct metadata")
+{
+    SqEngine e = sq_engine_create(44100.0, 512, nullptr);
+    int id = sq_create_buffer(e, 2, 44100, 44100.0, "kick", nullptr);
+
+    SqBufferInfo info = sq_buffer_info(e, id);
+    CHECK(info.buffer_id == id);
+    CHECK(info.num_channels == 2);
+    CHECK(info.length == 44100);
+    CHECK_THAT(info.sample_rate, WithinAbs(44100.0, 1e-9));
+    CHECK(std::string(info.name) == "kick");
+    CHECK_THAT(info.length_seconds, WithinAbs(1.0, 1e-9));
+    sq_free_buffer_info(info);
+
+    sq_engine_destroy(e);
+}
+
+TEST_CASE("sq_buffer_info for unknown ID returns zeroed struct")
+{
+    SqEngine e = sq_engine_create(44100.0, 512, nullptr);
+    SqBufferInfo info = sq_buffer_info(e, 999);
+    CHECK(info.buffer_id == 0);
+    CHECK(info.num_channels == 0);
+    CHECK(info.length == 0);
+    CHECK(info.sample_rate == 0.0);
+    CHECK(info.name == nullptr);
+    CHECK(info.file_path == nullptr);
+    sq_engine_destroy(e);
+}
+
+TEST_CASE("sq_buffers returns sorted list")
+{
+    SqEngine e = sq_engine_create(44100.0, 512, nullptr);
+    int id1 = sq_create_buffer(e, 1, 100, 44100.0, "c", nullptr);
+    int id2 = sq_create_buffer(e, 1, 100, 44100.0, "a", nullptr);
+    int id3 = sq_create_buffer(e, 1, 100, 44100.0, "b", nullptr);
+
+    SqIdNameList list = sq_buffers(e);
+    REQUIRE(list.count == 3);
+    CHECK(list.ids[0] == id1);
+    CHECK(list.ids[1] == id2);
+    CHECK(list.ids[2] == id3);
+    CHECK(std::string(list.names[0]) == "c");
+    CHECK(std::string(list.names[1]) == "a");
+    CHECK(std::string(list.names[2]) == "b");
+
+    // Verify sorted by ID
+    CHECK(list.ids[0] < list.ids[1]);
+    CHECK(list.ids[1] < list.ids[2]);
+
+    sq_free_id_name_list(list);
+    sq_engine_destroy(e);
+}
+
+TEST_CASE("sq_buffers empty returns count 0")
+{
+    SqEngine e = sq_engine_create(44100.0, 512, nullptr);
+    SqIdNameList list = sq_buffers(e);
+    CHECK(list.count == 0);
+    sq_engine_destroy(e);
+}
+
+TEST_CASE("sq_load_buffer loaded buffer has correct channels, sample rate, and length")
+{
+    // Write a temp WAV file
+    juce::TemporaryFile tmpFile(".wav");
+    auto outFile = tmpFile.getFile();
+    {
+        juce::WavAudioFormat wavFormat;
+        std::unique_ptr<juce::AudioFormatWriter> writer(
+            wavFormat.createWriterFor(
+                new juce::FileOutputStream(outFile),
+                96000.0, 1, 24, {}, 0));
+        REQUIRE(writer != nullptr);
+
+        juce::AudioBuffer<float> data(1, 500);
+        data.clear();
+        writer->writeFromAudioSampleBuffer(data, 0, 500);
+    }
+
+    SqEngine e = sq_engine_create(44100.0, 512, nullptr);
+    int id = sq_load_buffer(e, outFile.getFullPathName().toRawUTF8(), nullptr);
+    REQUIRE(id >= 1);
+
+    SqBufferInfo info = sq_buffer_info(e, id);
+    CHECK(info.num_channels == 1);
+    CHECK(info.length == 500);
+    CHECK_THAT(info.sample_rate, WithinAbs(96000.0, 1.0));
+    CHECK(info.file_path != nullptr);
+    CHECK(std::string(info.file_path) == outFile.getFullPathName().toStdString());
+    sq_free_buffer_info(info);
+
+    sq_engine_destroy(e);
+}
+
+TEST_CASE("sq_buffer_info for loaded buffer includes file path")
+{
+    juce::TemporaryFile tmpFile(".wav");
+    auto outFile = tmpFile.getFile();
+    {
+        juce::WavAudioFormat wavFormat;
+        std::unique_ptr<juce::AudioFormatWriter> writer(
+            wavFormat.createWriterFor(
+                new juce::FileOutputStream(outFile),
+                44100.0, 1, 16, {}, 0));
+        REQUIRE(writer != nullptr);
+        juce::AudioBuffer<float> data(1, 100);
+        data.clear();
+        writer->writeFromAudioSampleBuffer(data, 0, 100);
+    }
+
+    SqEngine e = sq_engine_create(44100.0, 512, nullptr);
+    int id = sq_load_buffer(e, outFile.getFullPathName().toRawUTF8(), nullptr);
+    REQUIRE(id >= 1);
+
+    SqBufferInfo info = sq_buffer_info(e, id);
+    REQUIRE(info.file_path != nullptr);
+    CHECK(std::string(info.file_path) == outFile.getFullPathName().toStdString());
+    // Name should be filename without extension
+    REQUIRE(info.name != nullptr);
+    CHECK(std::string(info.name) == outFile.getFileNameWithoutExtension().toStdString());
+    sq_free_buffer_info(info);
     sq_engine_destroy(e);
 }

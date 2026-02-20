@@ -416,6 +416,31 @@ void sq_free_slot_perf_list(SqSlotPerfList list);
 
 /* ── Buffer management ────────────────────────────────────────── */
 
+typedef struct {
+    int    buffer_id;
+    int    num_channels;
+    int    length;
+    double sample_rate;
+    char*  name;
+    char*  file_path;
+    double length_seconds;
+} SqBufferInfo;
+
+typedef struct {
+    int*   ids;
+    char** names;
+    int    count;
+} SqIdNameList;
+
+/// Free a SqBufferInfo returned by sq_buffer_info.
+void sq_free_buffer_info(SqBufferInfo info);
+
+/// Free a SqIdNameList returned by sq_buffers.
+void sq_free_id_name_list(SqIdNameList list);
+
+/// Load an audio file into a buffer. Returns buffer ID (>= 1), or -1 on failure (sets *error).
+int sq_load_buffer(SqEngine engine, const char* path, char** error);
+
 /// Create an empty buffer. Returns buffer ID (>= 1), or -1 on failure (sets *error).
 int sq_create_buffer(SqEngine engine, int num_channels, int length_in_samples,
                      double sample_rate, const char* name, char** error);
@@ -425,6 +450,12 @@ bool sq_remove_buffer(SqEngine engine, int buffer_id);
 
 /// Returns the number of buffers.
 int sq_buffer_count(SqEngine engine);
+
+/// Returns metadata about a buffer. Returns zeroed struct if not found.
+SqBufferInfo sq_buffer_info(SqEngine engine, int buffer_id);
+
+/// Returns sorted list of (id, name) pairs. Free with sq_free_id_name_list().
+SqIdNameList sq_buffers(SqEngine engine);
 
 /* ── Buffer queries ───────────────────────────────────────────── */
 

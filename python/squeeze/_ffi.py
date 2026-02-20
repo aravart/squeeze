@@ -109,6 +109,25 @@ class SqSlotPerfList(ctypes.Structure):
     ]
 
 
+class SqBufferInfo(ctypes.Structure):
+    _fields_ = [
+        ("buffer_id", ctypes.c_int),
+        ("num_channels", ctypes.c_int),
+        ("length", ctypes.c_int),
+        ("sample_rate", ctypes.c_double),
+        ("name", ctypes.c_char_p),
+        ("file_path", ctypes.c_char_p),
+        ("length_seconds", ctypes.c_double),
+    ]
+
+class SqIdNameList(ctypes.Structure):
+    _fields_ = [
+        ("ids", ctypes.POINTER(ctypes.c_int)),
+        ("names", ctypes.POINTER(ctypes.c_char_p)),
+        ("count", ctypes.c_int),
+    ]
+
+
 LogCallbackType = ctypes.CFUNCTYPE(None, ctypes.c_int, ctypes.c_char_p, ctypes.c_void_p)
 SqClockCallbackType = ctypes.CFUNCTYPE(None, ctypes.c_uint32, ctypes.c_double, ctypes.c_void_p)
 
@@ -283,9 +302,14 @@ def _load_lib():
     _sig("sq_free_slot_perf_list", None, [SqSlotPerfList])
 
     # --- Buffer management ---
+    _sig("sq_free_buffer_info", None, [SqBufferInfo])
+    _sig("sq_free_id_name_list", None, [SqIdNameList])
+    _sig("sq_load_buffer", _I, [_V, _S, _EP])
     _sig("sq_create_buffer", _I, [_V, _I, _I, _D, _S, _EP])
     _sig("sq_remove_buffer", _B, [_V, _I])
     _sig("sq_buffer_count", _I, [_V])
+    _sig("sq_buffer_info", SqBufferInfo, [_V, _I])
+    _sig("sq_buffers", SqIdNameList, [_V])
     _sig("sq_buffer_num_channels", _I, [_V, _I])
     _sig("sq_buffer_length", _I, [_V, _I])
     _sig("sq_buffer_sample_rate", _D, [_V, _I])
