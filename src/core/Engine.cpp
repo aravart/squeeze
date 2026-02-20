@@ -135,6 +135,7 @@ Source* Engine::addSource(const std::string& name, std::unique_ptr<Processor> ge
     registerProcessor(src->getGenerator());
 
     src->prepare(sampleRate_, blockSize_);
+    src->getGenerator()->setPlayHead(&transport_);
     src->routeTo(master_);
 
     Source* raw = src.get();
@@ -505,6 +506,7 @@ Processor* Engine::sourceAppend(Source* src, std::unique_ptr<Processor> p)
     p->setHandle(assignHandle());
     p->prepare(sampleRate_, blockSize_);
     Processor* raw = p.get();
+    raw->setPlayHead(&transport_);
     registerProcessor(raw);
     src->getChain().append(std::move(p));
     SQ_DEBUG("Engine::sourceAppend: source=%d proc=%d", src->getHandle(), raw->getHandle());
@@ -521,6 +523,7 @@ Processor* Engine::sourceInsert(Source* src, int index, std::unique_ptr<Processo
     p->setHandle(assignHandle());
     p->prepare(sampleRate_, blockSize_);
     Processor* raw = p.get();
+    raw->setPlayHead(&transport_);
     registerProcessor(raw);
     src->getChain().insert(index, std::move(p));
     SQ_DEBUG("Engine::sourceInsert: source=%d index=%d proc=%d",
@@ -560,6 +563,7 @@ Processor* Engine::busAppend(Bus* bus, std::unique_ptr<Processor> p)
     p->setHandle(assignHandle());
     p->prepare(sampleRate_, blockSize_);
     Processor* raw = p.get();
+    raw->setPlayHead(&transport_);
     registerProcessor(raw);
     bus->getChain().append(std::move(p));
     SQ_DEBUG("Engine::busAppend: bus=%d proc=%d", bus->getHandle(), raw->getHandle());
@@ -576,6 +580,7 @@ Processor* Engine::busInsert(Bus* bus, int index, std::unique_ptr<Processor> p)
     p->setHandle(assignHandle());
     p->prepare(sampleRate_, blockSize_);
     Processor* raw = p.get();
+    raw->setPlayHead(&transport_);
     registerProcessor(raw);
     bus->getChain().insert(index, std::move(p));
     SQ_DEBUG("Engine::busInsert: bus=%d index=%d proc=%d",

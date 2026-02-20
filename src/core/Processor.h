@@ -67,6 +67,9 @@ public:
     // --- Latency ---
     virtual int getLatencySamples() const { return 0; }
 
+    // --- PlayHead (control thread, called by Engine) ---
+    virtual void setPlayHead(juce::AudioPlayHead* /*playHead*/) {}
+
     // --- Handle (set by Engine when processor is added) ---
     int getHandle() const { return handle_; }
     void setHandle(int h) { handle_ = h; }

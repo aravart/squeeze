@@ -181,6 +181,17 @@ int PluginProcessor::getLatencySamples() const
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// PlayHead
+// ═══════════════════════════════════════════════════════════════════
+
+void PluginProcessor::setPlayHead(juce::AudioPlayHead* playHead)
+{
+    SQ_DEBUG("PluginProcessor::setPlayHead: '%s' playHead=%p",
+             pluginName_.c_str(), (void*)playHead);
+    processor_->setPlayHead(playHead);
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // Accessors
 // ═══════════════════════════════════════════════════════════════════
 

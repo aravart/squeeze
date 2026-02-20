@@ -84,6 +84,9 @@ public:
     // --- Latency ---
     virtual int getLatencySamples() const { return 0; }
 
+    // --- PlayHead (control thread, called by Engine) ---
+    virtual void setPlayHead(juce::AudioPlayHead* /*playHead*/) {}
+
     // --- Handle (set by Engine when processor is added) ---
     int getHandle() const { return handle_; }
     void setHandle(int h) { handle_ = h; }
@@ -230,6 +233,7 @@ A processor can be bypassed, causing audio to pass through unchanged. Bypass is 
 | `isBypassed()` | Any | Atomic load |
 | `getName()` | Any | Immutable after construction |
 | `getLatencySamples()` | Control | Called during snapshot build |
+| `setPlayHead()` | Control | Called by Engine after construction; no-op default |
 
 ## C ABI
 

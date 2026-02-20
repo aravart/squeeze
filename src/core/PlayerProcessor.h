@@ -29,6 +29,9 @@ public:
     std::string getParameterText(const std::string& name) const override;
     int getLatencySamples() const override;
 
+    // PlayHead (control thread, called by Engine)
+    void setPlayHead(juce::AudioPlayHead* playHead) override;
+
     // Buffer assignment (control thread)
     void setBuffer(const Buffer* buffer);
     const Buffer* getBuffer() const;
@@ -45,9 +48,14 @@ private:
     float loopStart_ = 0.0f;
     float loopEnd_ = 1.0f;
     float fadeMs_ = 5.0f;
+    float tempoLock_ = 0.0f;
+    float transpose_ = 0.0f;
 
     // Buffer pointer (atomic for cross-thread visibility)
     std::atomic<const Buffer*> buffer_{nullptr};
+
+    // PlayHead for tempo queries
+    juce::AudioPlayHead* playHead_ = nullptr;
 
     // Seek via parameter write
     std::atomic<bool> seekPending_{false};
@@ -60,7 +68,7 @@ private:
 
     double fadeSamplesFromMs() const;
 
-    static constexpr int kParamCount = 7;
+    static constexpr int kParamCount = 9;
     static const ParamDescriptor kDescriptors[kParamCount];
 };
 

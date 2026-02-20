@@ -56,6 +56,9 @@ public:
     // --- Latency ---
     int getLatencySamples() const override;
 
+    // --- PlayHead ---
+    void setPlayHead(juce::AudioPlayHead* playHead) override;
+
     // --- Plugin-specific queries ---
     const std::string& getPluginName() const;
     juce::AudioProcessor* getJuceProcessor();
@@ -117,9 +120,9 @@ JUCE plugins process audio in-place. The `AudioBuffer` passed to `processBlock` 
 
 JUCE plugins query transport state (tempo, position, time signature, loop points, playing/stopped) through the `juce::AudioPlayHead` interface. Without a PlayHead, plugins that do tempo sync, beat-accurate delay, LFO sync, or transport display will receive null position info.
 
-`prepare()` calls `processor_->setPlayHead(playHead)` using a PlayHead provided by the Engine. The Engine implements `juce::AudioPlayHead` backed by Transport state — `getPosition()` returns the current position, tempo, time signature, and loop points from `Transport`'s atomic query interface.
+`setPlayHead()` is an override of the Processor virtual that forwards to `processor_->setPlayHead(playHead)`. The Engine calls this after construction to wire the PlayHead. The Engine implements `juce::AudioPlayHead` backed by Transport state — `getPosition()` returns the current position, tempo, time signature, and loop points from `Transport`'s atomic query interface.
 
-The PlayHead pointer is set once during `prepare()` and remains valid for the processor's lifetime. The PlayHead reads Transport state via atomic loads, so `getPosition()` is RT-safe and can be called from the plugin's `processBlock()`.
+The PlayHead pointer is set once after construction and remains valid for the processor's lifetime. The PlayHead reads Transport state via atomic loads, so `getPosition()` is RT-safe and can be called from the plugin's `processBlock()`.
 
 ## Parameters
 
@@ -148,7 +151,7 @@ The parameter map (name → JUCE index) is built once at construction and is imm
 - `setParameter()` with unknown name is a no-op (not an error)
 - `getLatencySamples()` delegates to the plugin's reported latency
 - MIDI output from plugins is discarded — `tempMidi_` is not read back after `processBlock()`
-- `prepare()` wires the Engine's PlayHead to the plugin via `setPlayHead()`
+- Engine wires PlayHead via `setPlayHead()` after construction
 
 ## Error Conditions
 
@@ -167,7 +170,7 @@ The parameter map (name → JUCE index) is built once at construction and is imm
 - **Sidechain** — future; requires JUCE bus layout negotiation and wider buffers (see `docs/discussion/sidechain.md`)
 - **Parameter automation from EventScheduler** — Engine handles sub-block splitting and calls setParameter at split boundaries
 - **MIDI effect plugins** — MIDI output from processBlock() is discarded; arpeggiators and chord generators are not supported as MIDI processors
-- **PlayHead ownership** — Engine implements AudioPlayHead backed by Transport; PluginProcessor receives it via `prepare()`
+- **PlayHead ownership** — Engine implements AudioPlayHead backed by Transport; PluginProcessor receives it via `setPlayHead()`
 
 ## Dependencies
 
@@ -190,6 +193,7 @@ The parameter map (name → JUCE index) is built once at construction and is imm
 | `getPluginName()` / `getJuceProcessor()` | Any | Immutable / stable pointer |
 | `hasMidi()` / `getInputChannels()` / `getOutputChannels()` | Any | Immutable after construction |
 | `getLatencySamples()` | Control | Delegates to processor |
+| `setPlayHead()` | Control | Forwards to processor; called by Engine |
 
 JUCE's parameter system handles the control-thread-write / audio-thread-read synchronization internally.
 

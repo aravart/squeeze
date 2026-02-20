@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <juce_audio_basics/juce_audio_basics.h>
 
 namespace squeeze {
 
@@ -14,6 +15,8 @@ const ParamDescriptor PlayerProcessor::kDescriptors[kParamCount] = {
     {"loop_start", 0.0f, 0.0f, 1.0f,  0, true, false, "",   "Loop"},
     {"loop_end",   1.0f, 0.0f, 1.0f,  0, true, false, "",   "Loop"},
     {"fade_ms",    5.0f, 0.0f, 50.0f, 0, true, false, "ms", "Playback"},
+    {"tempo_lock", 0.0f, 0.0f, 1.0f,  2, true, true,  "",   "Playback"},
+    {"transpose",  0.0f, -24.0f, 24.0f, 0, true, false, "st", "Playback"},
 };
 
 PlayerProcessor::PlayerProcessor()
@@ -47,6 +50,12 @@ void PlayerProcessor::reset()
     SQ_DEBUG("PlayerProcessor::reset");
 }
 
+void PlayerProcessor::setPlayHead(juce::AudioPlayHead* playHead)
+{
+    SQ_DEBUG("PlayerProcessor::setPlayHead: playHead=%p", (void*)playHead);
+    playHead_ = playHead;
+}
+
 void PlayerProcessor::process(juce::AudioBuffer<float>& buffer)
 {
     int numSamples = buffer.getNumSamples();
@@ -64,7 +73,25 @@ void PlayerProcessor::process(juce::AudioBuffer<float>& buffer)
         SQ_TRACE_RT("PlayerProcessor: seek to %.3f", static_cast<double>(target));
     }
 
-    if (!isPlaying || !buf || speed_ == 0.0f)
+    // Compute effective speed with tempo_lock and transpose
+    double effectiveSpeed = static_cast<double>(speed_);
+    if (tempoLock_ >= 0.5f)
+    {
+        double engineTempo = 0.0;
+        if (playHead_)
+        {
+            auto pos = playHead_->getPosition();
+            if (pos.hasValue() && pos->getBpm().hasValue())
+                engineTempo = *pos->getBpm();
+        }
+        double bufferTempo = buf ? buf->getTempo() : 0.0;
+        if (engineTempo > 0.0 && bufferTempo > 0.0)
+            effectiveSpeed = (engineTempo / bufferTempo) * static_cast<double>(speed_);
+    }
+    if (transpose_ != 0.0f)
+        effectiveSpeed *= std::pow(2.0, static_cast<double>(transpose_) / 12.0);
+
+    if (!isPlaying || !buf || effectiveSpeed == 0.0)
     {
         // Apply fade-out if we were playing
         if (wasPlaying_ && fadeMs_ > 0.0f)
@@ -96,7 +123,7 @@ void PlayerProcessor::process(juce::AudioBuffer<float>& buffer)
     else if (loopMode_ >= 0.5f) lm = LoopMode::forward;
 
     int rendered = cursor_.render(buf, L, R, numSamples,
-                                   static_cast<double>(speed_), lm,
+                                   effectiveSpeed, lm,
                                    static_cast<double>(loopStart_),
                                    static_cast<double>(loopEnd_),
                                    fadeSamplesFromMs());
@@ -167,6 +194,8 @@ float PlayerProcessor::getParameter(const std::string& name) const
     if (name == "loop_start") return loopStart_;
     if (name == "loop_end")   return loopEnd_;
     if (name == "fade_ms")    return fadeMs_;
+    if (name == "tempo_lock") return tempoLock_;
+    if (name == "transpose")  return transpose_;
     return 0.0f;
 }
 
@@ -203,6 +232,14 @@ void PlayerProcessor::setParameter(const std::string& name, float value)
     else if (name == "fade_ms")
     {
         fadeMs_ = std::max(0.0f, std::min(50.0f, value));
+    }
+    else if (name == "tempo_lock")
+    {
+        tempoLock_ = value >= 0.5f ? 1.0f : 0.0f;
+    }
+    else if (name == "transpose")
+    {
+        transpose_ = std::max(-24.0f, std::min(24.0f, value));
     }
 }
 
@@ -245,6 +282,18 @@ std::string PlayerProcessor::getParameterText(const std::string& name) const
     if (name == "fade_ms")
     {
         std::snprintf(buf, sizeof(buf), "%.1f ms", static_cast<double>(fadeMs_));
+        return buf;
+    }
+    if (name == "tempo_lock")
+    {
+        return tempoLock_ >= 0.5f ? "On" : "Off";
+    }
+    if (name == "transpose")
+    {
+        if (transpose_ > 0.0f)
+            std::snprintf(buf, sizeof(buf), "+%.1f st", static_cast<double>(transpose_));
+        else
+            std::snprintf(buf, sizeof(buf), "%.1f st", static_cast<double>(transpose_));
         return buf;
     }
     return "";

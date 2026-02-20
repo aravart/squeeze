@@ -364,9 +364,9 @@ TEST_CASE("sq_add_source_player creates a source with PlayerProcessor")
     int gen = sq_source_generator(e, src);
     CHECK(gen > 0);
 
-    // Generator should have 7 parameters
+    // Generator should have 9 parameters
     SqParamDescriptorList descs = sq_param_descriptors(e, gen);
-    CHECK(descs.count == 7);
+    CHECK(descs.count == 9);
     sq_free_param_descriptor_list(descs);
 
     sq_engine_destroy(e);
@@ -506,6 +506,87 @@ TEST_CASE("PlayerProcessor speed parameter through FFI")
     float pos = sq_get_param(e, gen, "position");
     // At 2x speed, position should be further than at 1x
     CHECK(pos > 0.05f);
+
+    sq_engine_destroy(e);
+}
+
+TEST_CASE("sq_set_param tempo_lock round-trip through FFI")
+{
+    SqEngine e = sq_engine_create(44100.0, 512, nullptr);
+    int src = sq_add_source_player(e, "p", nullptr);
+    int gen = sq_source_generator(e, src);
+
+    CHECK(sq_get_param(e, gen, "tempo_lock") == 0.0f);
+    sq_set_param(e, gen, "tempo_lock", 1.0f);
+    CHECK(sq_get_param(e, gen, "tempo_lock") == 1.0f);
+
+    sq_engine_destroy(e);
+}
+
+TEST_CASE("sq_set_param transpose round-trip through FFI")
+{
+    SqEngine e = sq_engine_create(44100.0, 512, nullptr);
+    int src = sq_add_source_player(e, "p", nullptr);
+    int gen = sq_source_generator(e, src);
+
+    CHECK(sq_get_param(e, gen, "transpose") == 0.0f);
+    sq_set_param(e, gen, "transpose", 7.0f);
+    CHECK(sq_get_param(e, gen, "transpose") == 7.0f);
+
+    sq_engine_destroy(e);
+}
+
+TEST_CASE("sq_param_descriptors includes tempo_lock and transpose")
+{
+    SqEngine e = sq_engine_create(44100.0, 512, nullptr);
+    int src = sq_add_source_player(e, "p", nullptr);
+    int gen = sq_source_generator(e, src);
+
+    SqParamDescriptorList descs = sq_param_descriptors(e, gen);
+    REQUIRE(descs.count == 9);
+
+    // Find tempo_lock and transpose
+    bool foundTempoLock = false;
+    bool foundTranspose = false;
+    for (int i = 0; i < descs.count; ++i)
+    {
+        if (std::string(descs.descriptors[i].name) == "tempo_lock")
+            foundTempoLock = true;
+        if (std::string(descs.descriptors[i].name) == "transpose")
+            foundTranspose = true;
+    }
+    CHECK(foundTempoLock);
+    CHECK(foundTranspose);
+
+    sq_free_param_descriptor_list(descs);
+    sq_engine_destroy(e);
+}
+
+TEST_CASE("PlayerProcessor display text for new params through FFI")
+{
+    SqEngine e = sq_engine_create(44100.0, 512, nullptr);
+    int src = sq_add_source_player(e, "p", nullptr);
+    int gen = sq_source_generator(e, src);
+
+    char* text = sq_param_text(e, gen, "tempo_lock");
+    REQUIRE(text != nullptr);
+    CHECK(std::string(text) == "Off");
+    sq_free_string(text);
+
+    sq_set_param(e, gen, "tempo_lock", 1.0f);
+    text = sq_param_text(e, gen, "tempo_lock");
+    CHECK(std::string(text) == "On");
+    sq_free_string(text);
+
+    text = sq_param_text(e, gen, "transpose");
+    REQUIRE(text != nullptr);
+    CHECK(std::string(text) == "0.0 st");
+    sq_free_string(text);
+
+    sq_set_param(e, gen, "transpose", 3.0f);
+    text = sq_param_text(e, gen, "transpose");
+    CHECK(std::string(text) == "+3.0 st");
+    sq_free_string(text);
 
     sq_engine_destroy(e);
 }

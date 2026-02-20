@@ -981,11 +981,11 @@ class TestPlayerProcessor:
             assert isinstance(src, Source)
             assert src.name == "player1"
 
-    def test_player_has_7_params(self):
+    def test_player_has_9_params(self):
         with Squeeze(plugins=False) as s:
             src = s.add_source("p", player=True)
             descs = src.generator.param_descriptors
-            assert len(descs) == 7
+            assert len(descs) == 9
 
     def test_player_set_buffer(self):
         with Squeeze(plugins=False) as s:
@@ -1037,3 +1037,34 @@ class TestPlayerProcessor:
             src["playing"] = 1.0
             s.render(512)
             assert src["playing"] < 0.5
+
+    def test_player_tempo_lock_default(self):
+        with Squeeze(plugins=False) as s:
+            src = s.add_source("p", player=True)
+            assert src["tempo_lock"] == 0.0
+
+    def test_player_tempo_lock_set_get(self):
+        with Squeeze(plugins=False) as s:
+            src = s.add_source("p", player=True)
+            src["tempo_lock"] = 1.0
+            assert src["tempo_lock"] == 1.0
+
+    def test_player_transpose_default(self):
+        with Squeeze(plugins=False) as s:
+            src = s.add_source("p", player=True)
+            assert src["transpose"] == 0.0
+
+    def test_player_transpose_set_get(self):
+        with Squeeze(plugins=False) as s:
+            src = s.add_source("p", player=True)
+            src["transpose"] = 7.0
+            assert src["transpose"] == 7.0
+
+    def test_player_param_descriptors_count(self):
+        with Squeeze(plugins=False) as s:
+            src = s.add_source("p", player=True)
+            descs = src.generator.param_descriptors
+            assert len(descs) == 9
+            names = [d.name for d in descs]
+            assert "tempo_lock" in names
+            assert "transpose" in names

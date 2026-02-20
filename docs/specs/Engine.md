@@ -181,6 +181,8 @@ private:
 } // namespace squeeze
 ```
 
+**PlayHead wiring:** All add/append/insert methods call `setPlayHead(&transport_)` on new processors after `prepare()`. This includes `addSource()` (on the generator), `sourceAppend()`, `sourceInsert()`, `busAppend()`, and `busInsert()` (on the new chain processor). This allows processors like PluginProcessor and PlayerProcessor to access transport state (tempo, position) during processing.
+
 ### C ABI (`squeeze_ffi.h`)
 
 ```c

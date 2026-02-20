@@ -269,7 +269,7 @@ with Squeeze() as s:
     s.render(44100)            # render 1 second
 ```
 
-PlayerProcessor parameters: `playing` (0/1), `position` (0-1), `speed` (-4..4, varispeed), `loop_mode` (0=off, 1=forward, 2=ping-pong), `loop_start` (0-1), `loop_end` (0-1), `fade_ms` (0-50).
+PlayerProcessor parameters: `playing` (0/1), `position` (0-1), `speed` (-4..4, varispeed), `loop_mode` (0=off, 1=forward, 2=ping-pong), `loop_start` (0-1), `loop_end` (0-1), `fade_ms` (0-50), `tempo_lock` (0/1, lock speed to engine tempo / buffer tempo), `transpose` (-24..24, semitone pitch shift).
 
 ### Mixer with sends
 

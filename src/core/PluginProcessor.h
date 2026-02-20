@@ -38,6 +38,9 @@ public:
     // --- Latency ---
     int getLatencySamples() const override;
 
+    // --- PlayHead ---
+    void setPlayHead(juce::AudioPlayHead* playHead) override;
+
     // --- Accessors ---
     const std::string& getPluginName() const;
     juce::AudioProcessor* getJuceProcessor();

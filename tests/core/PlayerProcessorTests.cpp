@@ -38,12 +38,12 @@ static std::unique_ptr<Buffer> makeRampBuffer(int channels, int length, double s
 // Parameters
 // ═══════════════════════════════════════════════════════════════════
 
-TEST_CASE("PlayerProcessor has 7 parameters")
+TEST_CASE("PlayerProcessor has 9 parameters")
 {
     PlayerProcessor pp;
-    CHECK(pp.getParameterCount() == 7);
+    CHECK(pp.getParameterCount() == 9);
     auto descs = pp.getParameterDescriptors();
-    CHECK(descs.size() == 7);
+    CHECK(descs.size() == 9);
 }
 
 TEST_CASE("PlayerProcessor parameter defaults")
@@ -349,4 +349,299 @@ TEST_CASE("PlayerProcessor reset preserves parameters and buffer")
     CHECK(pp.getBuffer() == buf.get());
     CHECK(pp.getParameter("speed") == 2.0f);
     CHECK(pp.getParameter("loop_mode") == 1.0f);
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// tempo_lock and transpose parameters
+// ═══════════════════════════════════════════════════════════════════
+
+TEST_CASE("PlayerProcessor tempo_lock defaults to 0.0")
+{
+    PlayerProcessor pp;
+    CHECK(pp.getParameter("tempo_lock") == 0.0f);
+}
+
+TEST_CASE("PlayerProcessor tempo_lock set/get round-trip")
+{
+    PlayerProcessor pp;
+    pp.setParameter("tempo_lock", 1.0f);
+    CHECK(pp.getParameter("tempo_lock") == 1.0f);
+    pp.setParameter("tempo_lock", 0.0f);
+    CHECK(pp.getParameter("tempo_lock") == 0.0f);
+}
+
+TEST_CASE("PlayerProcessor transpose defaults to 0.0")
+{
+    PlayerProcessor pp;
+    CHECK(pp.getParameter("transpose") == 0.0f);
+}
+
+TEST_CASE("PlayerProcessor transpose set/get round-trip")
+{
+    PlayerProcessor pp;
+    pp.setParameter("transpose", 7.0f);
+    CHECK(pp.getParameter("transpose") == 7.0f);
+    pp.setParameter("transpose", -12.0f);
+    CHECK(pp.getParameter("transpose") == -12.0f);
+}
+
+TEST_CASE("PlayerProcessor transpose is clamped to [-24, 24]")
+{
+    PlayerProcessor pp;
+    pp.setParameter("transpose", 30.0f);
+    CHECK(pp.getParameter("transpose") == 24.0f);
+    pp.setParameter("transpose", -30.0f);
+    CHECK(pp.getParameter("transpose") == -24.0f);
+}
+
+TEST_CASE("PlayerProcessor display text for tempo_lock")
+{
+    PlayerProcessor pp;
+    CHECK(pp.getParameterText("tempo_lock") == "Off");
+    pp.setParameter("tempo_lock", 1.0f);
+    CHECK(pp.getParameterText("tempo_lock") == "On");
+}
+
+TEST_CASE("PlayerProcessor display text for transpose")
+{
+    PlayerProcessor pp;
+    CHECK(pp.getParameterText("transpose") == "0.0 st");
+    pp.setParameter("transpose", 3.0f);
+    CHECK(pp.getParameterText("transpose") == "+3.0 st");
+    pp.setParameter("transpose", -12.0f);
+    CHECK(pp.getParameterText("transpose") == "-12.0 st");
+}
+
+TEST_CASE("PlayerProcessor parameter descriptors includes new params")
+{
+    PlayerProcessor pp;
+    auto descs = pp.getParameterDescriptors();
+    REQUIRE(descs.size() == 9);
+
+    // Check tempo_lock descriptor
+    CHECK(descs[7].name == "tempo_lock");
+    CHECK(descs[7].defaultValue == 0.0f);
+    CHECK(descs[7].minValue == 0.0f);
+    CHECK(descs[7].maxValue == 1.0f);
+    CHECK(descs[7].numSteps == 2);
+    CHECK(descs[7].boolean == true);
+
+    // Check transpose descriptor
+    CHECK(descs[8].name == "transpose");
+    CHECK(descs[8].defaultValue == 0.0f);
+    CHECK(descs[8].minValue == -24.0f);
+    CHECK(descs[8].maxValue == 24.0f);
+    CHECK(descs[8].numSteps == 0);
+    CHECK(descs[8].label == "st");
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// setPlayHead
+// ═══════════════════════════════════════════════════════════════════
+
+TEST_CASE("PlayerProcessor setPlayHead stores pointer")
+{
+    PlayerProcessor pp;
+    pp.prepare(44100.0, 512);
+
+    // Create a simple mock PlayHead
+    struct MockPlayHead : juce::AudioPlayHead {
+        double bpm = 120.0;
+        juce::Optional<PositionInfo> getPosition() const override {
+            PositionInfo info;
+            info.setBpm(bpm);
+            return info;
+        }
+    };
+
+    MockPlayHead mock;
+    pp.setPlayHead(&mock);
+    // No crash, pointer accepted — tested indirectly via tempo_lock below
+}
+
+TEST_CASE("PlayerProcessor tempo_lock with buffer tempo adjusts speed")
+{
+    struct MockPlayHead : juce::AudioPlayHead {
+        double bpm = 240.0;
+        juce::Optional<PositionInfo> getPosition() const override {
+            PositionInfo info;
+            info.setBpm(bpm);
+            return info;
+        }
+    };
+
+    PlayerProcessor pp;
+    pp.prepare(44100.0, 512);
+    pp.setParameter("fade_ms", 0.0f);
+
+    // Create buffer at 120 BPM with ramp data
+    auto buf = makeRampBuffer(1, 10000);
+    buf->setTempo(120.0);
+    pp.setBuffer(buf.get());
+
+    MockPlayHead mock;
+    pp.setPlayHead(&mock);
+    pp.setParameter("tempo_lock", 1.0f);
+    pp.setParameter("playing", 1.0f);
+
+    juce::AudioBuffer<float> out(2, 512);
+    pp.process(out);
+
+    // Engine tempo 240 / buffer tempo 120 = 2x speed
+    // Position should advance at 2x rate
+    float pos = pp.getParameter("position");
+    CHECK(pos > 0.05f); // at 2x speed over 512 samples of 10000
+}
+
+TEST_CASE("PlayerProcessor tempo_lock with no buffer tempo has no effect")
+{
+    struct MockPlayHead : juce::AudioPlayHead {
+        double bpm = 240.0;
+        juce::Optional<PositionInfo> getPosition() const override {
+            PositionInfo info;
+            info.setBpm(bpm);
+            return info;
+        }
+    };
+
+    PlayerProcessor pp;
+    pp.prepare(44100.0, 512);
+    pp.setParameter("fade_ms", 0.0f);
+
+    auto buf = makeRampBuffer(1, 10000);
+    // tempo is 0.0 (default, not set)
+    pp.setBuffer(buf.get());
+
+    MockPlayHead mock;
+    pp.setPlayHead(&mock);
+    pp.setParameter("tempo_lock", 1.0f);
+    pp.setParameter("playing", 1.0f);
+
+    juce::AudioBuffer<float> out1(2, 512);
+    pp.process(out1);
+    float posLocked = pp.getParameter("position");
+
+    // Compare with non-locked: should be same since bufferTempo is 0
+    PlayerProcessor pp2;
+    pp2.prepare(44100.0, 512);
+    pp2.setParameter("fade_ms", 0.0f);
+    auto buf2 = makeRampBuffer(1, 10000);
+    pp2.setBuffer(buf2.get());
+    pp2.setParameter("playing", 1.0f);
+
+    juce::AudioBuffer<float> out2(2, 512);
+    pp2.process(out2);
+    float posNormal = pp2.getParameter("position");
+
+    CHECK_THAT(posLocked, WithinAbs(posNormal, 0.001));
+}
+
+TEST_CASE("PlayerProcessor tempo_lock without PlayHead has no effect")
+{
+    PlayerProcessor pp;
+    pp.prepare(44100.0, 512);
+    pp.setParameter("fade_ms", 0.0f);
+
+    auto buf = makeRampBuffer(1, 10000);
+    buf->setTempo(120.0);
+    pp.setBuffer(buf.get());
+
+    // No setPlayHead called
+    pp.setParameter("tempo_lock", 1.0f);
+    pp.setParameter("playing", 1.0f);
+
+    juce::AudioBuffer<float> out1(2, 512);
+    pp.process(out1);
+    float posLocked = pp.getParameter("position");
+
+    // Compare with non-locked
+    PlayerProcessor pp2;
+    pp2.prepare(44100.0, 512);
+    pp2.setParameter("fade_ms", 0.0f);
+    auto buf2 = makeRampBuffer(1, 10000);
+    buf2->setTempo(120.0);
+    pp2.setBuffer(buf2.get());
+    pp2.setParameter("playing", 1.0f);
+
+    juce::AudioBuffer<float> out2(2, 512);
+    pp2.process(out2);
+    float posNormal = pp2.getParameter("position");
+
+    CHECK_THAT(posLocked, WithinAbs(posNormal, 0.001));
+}
+
+TEST_CASE("PlayerProcessor transpose shifts pitch")
+{
+    PlayerProcessor pp;
+    pp.prepare(44100.0, 512);
+    pp.setParameter("fade_ms", 0.0f);
+
+    auto buf = makeRampBuffer(1, 10000);
+    pp.setBuffer(buf.get());
+    pp.setParameter("transpose", 12.0f); // +1 octave = 2x speed
+    pp.setParameter("playing", 1.0f);
+
+    juce::AudioBuffer<float> out(2, 512);
+    pp.process(out);
+    float posOctaveUp = pp.getParameter("position");
+
+    // Compare with no transpose
+    PlayerProcessor pp2;
+    pp2.prepare(44100.0, 512);
+    pp2.setParameter("fade_ms", 0.0f);
+    auto buf2 = makeRampBuffer(1, 10000);
+    pp2.setBuffer(buf2.get());
+    pp2.setParameter("playing", 1.0f);
+
+    juce::AudioBuffer<float> out2(2, 512);
+    pp2.process(out2);
+    float posNormal = pp2.getParameter("position");
+
+    // transpose=12 should double the speed, so position advances ~2x
+    CHECK(posOctaveUp > posNormal * 1.8f);
+}
+
+TEST_CASE("PlayerProcessor tempo_lock and transpose combine")
+{
+    struct MockPlayHead : juce::AudioPlayHead {
+        double bpm = 240.0;
+        juce::Optional<PositionInfo> getPosition() const override {
+            PositionInfo info;
+            info.setBpm(bpm);
+            return info;
+        }
+    };
+
+    PlayerProcessor pp;
+    pp.prepare(44100.0, 512);
+    pp.setParameter("fade_ms", 0.0f);
+
+    auto buf = makeRampBuffer(1, 20000);
+    buf->setTempo(120.0);
+    pp.setBuffer(buf.get());
+
+    MockPlayHead mock;
+    pp.setPlayHead(&mock);
+    pp.setParameter("tempo_lock", 1.0f); // 240/120 = 2x
+    pp.setParameter("transpose", 12.0f); // +12 = 2x more
+    pp.setParameter("playing", 1.0f);
+
+    juce::AudioBuffer<float> out(2, 512);
+    pp.process(out);
+    float posCombined = pp.getParameter("position");
+
+    // Compare with just speed=1 (no lock, no transpose)
+    PlayerProcessor pp2;
+    pp2.prepare(44100.0, 512);
+    pp2.setParameter("fade_ms", 0.0f);
+    auto buf2 = makeRampBuffer(1, 20000);
+    pp2.setBuffer(buf2.get());
+    pp2.setParameter("playing", 1.0f);
+
+    juce::AudioBuffer<float> out2(2, 512);
+    pp2.process(out2);
+    float posNormal = pp2.getParameter("position");
+
+    // Combined should be ~4x speed, so position ~4x
+    CHECK(posCombined > posNormal * 3.5f);
 }

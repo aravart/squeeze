@@ -42,6 +42,9 @@ public:
     std::string getParameterText(const std::string& name) const override;
     int getLatencySamples() const override;  // always 0
 
+    // PlayHead (control thread, called by Engine)
+    void setPlayHead(juce::AudioPlayHead* playHead) override;
+
     // Buffer assignment (control thread)
     void setBuffer(const Buffer* buffer);
     const Buffer* getBuffer() const;
@@ -65,8 +68,10 @@ All controls are exposed through the standard parameter system. No special comma
 | loop_start | 0.0 | 1.0 | 0.0 | 0 | | Loop | Loop region start (normalized) |
 | loop_end | 0.0 | 1.0 | 1.0 | 0 | | Loop | Loop region end (normalized) |
 | fade_ms | 0.0 | 50.0 | 5.0 | 0 | ms | Playback | Crossfade time for transitions |
+| tempo_lock | 0.0 | 1.0 | 0.0 | 2 | | Playback | 0 = off, 1 = lock speed to engine tempo / buffer tempo |
+| transpose | -24.0 | 24.0 | 0.0 | 0 | st | Playback | Semitone pitch shift (modifies speed) |
 
-7 parameters. No volume or pan — the Source's gain and pan handle that.
+9 parameters. No volume or pan — the Source's gain and pan handle that.
 
 ### Parameter Behavior
 
@@ -85,6 +90,10 @@ All controls are exposed through the standard parameter system. No special comma
 
 **`fade_ms`**: Applied at loop boundaries (crossfade between end and start of loop), on play/stop transitions (fade in/out), and on seeks while playing (crossfade from old to new position). At 0.0, no fading — useful for samples with pre-edited seamless loop points.
 
+**`tempo_lock`**: When enabled (>= 0.5), the effective playback speed is scaled by `engine_tempo / buffer_tempo`. This synchronizes playback to the engine's tempo -- if the buffer was recorded at 120 BPM and the engine is running at 240 BPM, playback runs at 2x speed. When the buffer has no tempo metadata (0.0), tempo_lock has no effect (base rate remains 1.0). Requires Engine PlayHead wiring via `setPlayHead()`.
+
+**`transpose`**: Semitone pitch shift applied on top of the effective speed. `transpose = 12` doubles the speed (one octave up), `transpose = -12` halves it (one octave down). Formula: `speed *= 2^(transpose / 12)`. Combines with both manual speed and tempo_lock.
+
 ### Display Text
 
 | Parameter | Examples |
@@ -96,16 +105,29 @@ All controls are exposed through the standard parameter system. No special comma
 | loop_start | "0.0%", "25.0%" |
 | loop_end | "100.0%", "75.0%" |
 | fade_ms | "5.0 ms", "0.0 ms" |
+| tempo_lock | "Off", "On" |
+| transpose | "+3.0 st", "-12.0 st", "0.0 st" |
+
+## Effective Speed
+
+The final playback speed combines tempo_lock, manual speed, and transpose:
+
+```
+base_rate = (tempo_lock && buffer.tempo > 0) ? engine_tempo / buffer.tempo : 1.0
+effective_speed = base_rate * speed * 2^(transpose / 12)
+```
+
+When tempo_lock is off and transpose is 0, this reduces to just `speed`.
 
 ## Sample Rate Handling
 
 PlayerProcessor automatically compensates for sample rate mismatch between Buffer and Engine. The read increment per output sample is:
 
 ```
-increment = speed * (buffer.sampleRate / engineSampleRate)
+increment = effective_speed * (buffer.sampleRate / engineSampleRate)
 ```
 
-`speed = 1.0` always produces original-pitch, original-duration playback regardless of sample rate mismatch.
+`speed = 1.0` (with no tempo_lock or transpose) always produces original-pitch, original-duration playback regardless of sample rate mismatch.
 
 ## Channel Handling
 
