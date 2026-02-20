@@ -1,18 +1,22 @@
 #include "ffi/squeeze_ffi.h"
 #include "core/AudioDevice.h"
+#include "core/Buffer.h"
 #include "core/Engine.h"
 #include "core/GainProcessor.h"
 #include "core/Logger.h"
 #include "core/MidiDeviceManager.h"
+#include "core/PlayerProcessor.h"
 #include "core/PluginManager.h"
 #include "core/PluginProcessor.h"
 #include "core/TestProcessor.h"
 #include "gui/EditorManager.h"
 
 #include <juce_events/juce_events.h>
+#include <algorithm>
 #include <cstring>
 #include <mutex>
 #include <new>
+#include <unordered_map>
 
 // --- EngineHandle ---
 
@@ -23,6 +27,10 @@ struct EngineHandle {
     squeeze::MidiDeviceManager midiDeviceManager{engine.getMidiRouter()};
     squeeze::EditorManager editorManager;
     std::mutex audioMutex;
+
+    // Buffer registry (monotonically increasing IDs, never reused)
+    std::unordered_map<int, std::unique_ptr<squeeze::Buffer>> buffers;
+    int nextBufferId = 1;
 
     EngineHandle(double sr, int bs) : engine(sr, bs) {}
 };
@@ -1056,6 +1064,171 @@ SqSlotPerfList sq_perf_slots(SqEngine engine)
 void sq_free_slot_perf_list(SqSlotPerfList list)
 {
     free(list.items);
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Buffer management
+// ═══════════════════════════════════════════════════════════════════
+
+int sq_create_buffer(SqEngine engine, int num_channels, int length_in_samples,
+                     double sample_rate, const char* name, char** error)
+{
+    auto* h = cast(engine);
+    auto buf = squeeze::Buffer::createEmpty(
+        num_channels, length_in_samples, sample_rate, name ? name : "");
+    if (!buf)
+    {
+        set_error(error, "Invalid buffer parameters");
+        return -1;
+    }
+    if (error) *error = nullptr;
+    int id = h->nextBufferId++;
+    h->buffers[id] = std::move(buf);
+    return id;
+}
+
+bool sq_remove_buffer(SqEngine engine, int buffer_id)
+{
+    auto* h = cast(engine);
+    return h->buffers.erase(buffer_id) > 0;
+}
+
+int sq_buffer_count(SqEngine engine)
+{
+    return static_cast<int>(cast(engine)->buffers.size());
+}
+
+int sq_buffer_num_channels(SqEngine engine, int buffer_id)
+{
+    auto* h = cast(engine);
+    auto it = h->buffers.find(buffer_id);
+    if (it == h->buffers.end()) return 0;
+    return it->second->getNumChannels();
+}
+
+int sq_buffer_length(SqEngine engine, int buffer_id)
+{
+    auto* h = cast(engine);
+    auto it = h->buffers.find(buffer_id);
+    if (it == h->buffers.end()) return 0;
+    return it->second->getLengthInSamples();
+}
+
+double sq_buffer_sample_rate(SqEngine engine, int buffer_id)
+{
+    auto* h = cast(engine);
+    auto it = h->buffers.find(buffer_id);
+    if (it == h->buffers.end()) return 0.0;
+    return it->second->getSampleRate();
+}
+
+char* sq_buffer_name(SqEngine engine, int buffer_id)
+{
+    auto* h = cast(engine);
+    auto it = h->buffers.find(buffer_id);
+    if (it == h->buffers.end()) return nullptr;
+    return to_c_string(it->second->getName());
+}
+
+double sq_buffer_length_seconds(SqEngine engine, int buffer_id)
+{
+    auto* h = cast(engine);
+    auto it = h->buffers.find(buffer_id);
+    if (it == h->buffers.end()) return 0.0;
+    return it->second->getLengthInSeconds();
+}
+
+int sq_buffer_write_position(SqEngine engine, int buffer_id)
+{
+    auto* h = cast(engine);
+    auto it = h->buffers.find(buffer_id);
+    if (it == h->buffers.end()) return -1;
+    return it->second->writePosition.load(std::memory_order_acquire);
+}
+
+void sq_buffer_set_write_position(SqEngine engine, int buffer_id, int position)
+{
+    auto* h = cast(engine);
+    auto it = h->buffers.find(buffer_id);
+    if (it == h->buffers.end()) return;
+    it->second->writePosition.store(position, std::memory_order_release);
+}
+
+int sq_buffer_read(SqEngine engine, int buffer_id, int channel,
+                   int offset, float* dest, int num_samples)
+{
+    auto* h = cast(engine);
+    auto it = h->buffers.find(buffer_id);
+    if (it == h->buffers.end() || !dest || num_samples <= 0) return 0;
+
+    auto& buf = *it->second;
+    const float* src = buf.getReadPointer(channel);
+    if (!src) return 0;
+
+    int len = buf.getLengthInSamples();
+    if (offset < 0 || offset >= len) return 0;
+    int count = std::min(num_samples, len - offset);
+    std::memcpy(dest, src + offset, static_cast<size_t>(count) * sizeof(float));
+    return count;
+}
+
+int sq_buffer_write(SqEngine engine, int buffer_id, int channel,
+                    int offset, const float* src, int num_samples)
+{
+    auto* h = cast(engine);
+    auto it = h->buffers.find(buffer_id);
+    if (it == h->buffers.end() || !src || num_samples <= 0) return 0;
+
+    auto& buf = *it->second;
+    float* dst = buf.getWritePointer(channel);
+    if (!dst) return 0;
+
+    int len = buf.getLengthInSamples();
+    if (offset < 0 || offset >= len) return 0;
+    int count = std::min(num_samples, len - offset);
+    std::memcpy(dst + offset, src, static_cast<size_t>(count) * sizeof(float));
+    return count;
+}
+
+void sq_buffer_clear(SqEngine engine, int buffer_id)
+{
+    auto* h = cast(engine);
+    auto it = h->buffers.find(buffer_id);
+    if (it == h->buffers.end()) return;
+    it->second->clear();
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Source with PlayerProcessor
+// ═══════════════════════════════════════════════════════════════════
+
+int sq_add_source_player(SqEngine engine, const char* name, char** error)
+{
+    auto gen = std::make_unique<squeeze::PlayerProcessor>();
+    auto* src = eng(engine).addSource(name ? name : "", std::move(gen));
+    if (!src)
+    {
+        set_error(error, "Failed to add player source");
+        return -1;
+    }
+    if (error) *error = nullptr;
+    return src->getHandle();
+}
+
+bool sq_source_set_buffer(SqEngine engine, int source_handle, int buffer_id)
+{
+    auto* h = cast(engine);
+    auto* src = h->engine.getSource(source_handle);
+    if (!src) return false;
+
+    auto* gen = dynamic_cast<squeeze::PlayerProcessor*>(src->getGenerator());
+    if (!gen) return false;
+
+    auto it = h->buffers.find(buffer_id);
+    if (it == h->buffers.end()) return false;
+
+    gen->setBuffer(it->second.get());
+    return true;
 }
 
 // ═══════════════════════════════════════════════════════════════════

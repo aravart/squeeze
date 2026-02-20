@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pathlib as _pathlib
 
+from squeeze.buffer import Buffer
 from squeeze.squeeze import Squeeze
 from squeeze.source import Source
 from squeeze.bus import Bus

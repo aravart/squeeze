@@ -5,8 +5,8 @@ import threading
 import time
 
 from squeeze import (
-    Squeeze, Source, Bus, Chain, Clock, Processor, Transport, Midi, MidiDevice,
-    ParamDescriptor, SqueezeError, set_log_level, set_log_callback,
+    Buffer, Squeeze, Source, Bus, Chain, Clock, Processor, Transport, Midi,
+    MidiDevice, ParamDescriptor, SqueezeError, set_log_level, set_log_callback,
 )
 
 
@@ -768,8 +768,175 @@ class TestImports:
         assert hasattr(squeeze, 'set_log_level')
         assert hasattr(squeeze, 'set_log_callback')
 
+    def test_buffer_exported(self):
+        import squeeze
+        assert hasattr(squeeze, 'Buffer')
+
     def test_no_old_exports(self):
         import squeeze
         assert not hasattr(squeeze, 'Engine')
         assert not hasattr(squeeze, 'Node')
         assert not hasattr(squeeze, 'PortRef')
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Buffer
+# ═══════════════════════════════════════════════════════════════════
+
+class TestBuffer:
+    def test_create_buffer(self):
+        with Squeeze(plugins=False) as s:
+            buf = s.create_buffer(channels=2, length=44100, sample_rate=44100.0, name="test")
+            assert isinstance(buf, Buffer)
+            assert buf.buffer_id >= 1
+
+    def test_buffer_metadata(self):
+        with Squeeze(plugins=False) as s:
+            buf = s.create_buffer(channels=2, length=44100, sample_rate=44100.0, name="kick")
+            assert buf.num_channels == 2
+            assert buf.length == 44100
+            assert buf.sample_rate == 44100.0
+            assert buf.name == "kick"
+            assert abs(buf.length_seconds - 1.0) < 1e-6
+
+    def test_buffer_count(self):
+        with Squeeze(plugins=False) as s:
+            assert s.buffer_count == 0
+            s.create_buffer(channels=1, length=100, sample_rate=44100.0)
+            assert s.buffer_count == 1
+            s.create_buffer(channels=1, length=100, sample_rate=44100.0)
+            assert s.buffer_count == 2
+
+    def test_buffer_write_and_read(self):
+        with Squeeze(plugins=False) as s:
+            buf = s.create_buffer(channels=1, length=100, sample_rate=44100.0)
+            data = [float(i) / 100.0 for i in range(100)]
+            written = buf.write(channel=0, data=data)
+            assert written == 100
+
+            samples = buf.read(channel=0, num_samples=10)
+            assert len(samples) == 10
+            assert abs(samples[0] - 0.0) < 1e-6
+            assert abs(samples[5] - 0.05) < 1e-6
+
+    def test_buffer_read_default_all(self):
+        with Squeeze(plugins=False) as s:
+            buf = s.create_buffer(channels=1, length=50, sample_rate=44100.0)
+            data = [0.5] * 50
+            buf.write(channel=0, data=data)
+            samples = buf.read(channel=0)
+            assert len(samples) == 50
+
+    def test_buffer_read_with_offset(self):
+        with Squeeze(plugins=False) as s:
+            buf = s.create_buffer(channels=1, length=100, sample_rate=44100.0)
+            data = [float(i) for i in range(100)]
+            buf.write(channel=0, data=data)
+            samples = buf.read(channel=0, offset=90, num_samples=10)
+            assert len(samples) == 10
+            assert abs(samples[0] - 90.0) < 1e-4
+
+    def test_buffer_write_position(self):
+        with Squeeze(plugins=False) as s:
+            buf = s.create_buffer(channels=1, length=100, sample_rate=44100.0)
+            assert buf.write_position == 0
+            buf.write_position = 50
+            assert buf.write_position == 50
+
+    def test_buffer_clear(self):
+        with Squeeze(plugins=False) as s:
+            buf = s.create_buffer(channels=1, length=100, sample_rate=44100.0)
+            buf.write(channel=0, data=[1.0] * 100)
+            buf.write_position = 100
+            buf.clear()
+            assert buf.write_position == 0
+            samples = buf.read(channel=0, num_samples=1)
+            assert abs(samples[0]) < 1e-6
+
+    def test_buffer_remove(self):
+        with Squeeze(plugins=False) as s:
+            buf = s.create_buffer(channels=1, length=100, sample_rate=44100.0)
+            assert s.buffer_count == 1
+            assert buf.remove()
+            assert s.buffer_count == 0
+
+    def test_buffer_repr(self):
+        with Squeeze(plugins=False) as s:
+            buf = s.create_buffer(channels=1, length=100, sample_rate=44100.0, name="sine")
+            assert "sine" in repr(buf)
+
+    def test_buffer_equality(self):
+        with Squeeze(plugins=False) as s:
+            buf1 = s.create_buffer(channels=1, length=100, sample_rate=44100.0)
+            buf2 = s.create_buffer(channels=1, length=100, sample_rate=44100.0)
+            assert buf1 != buf2
+            assert buf1 == Buffer(s, buf1.buffer_id)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# PlayerProcessor
+# ═══════════════════════════════════════════════════════════════════
+
+class TestPlayerProcessor:
+    def test_add_source_player(self):
+        with Squeeze(plugins=False) as s:
+            src = s.add_source("player1", player=True)
+            assert isinstance(src, Source)
+            assert src.name == "player1"
+
+    def test_player_has_7_params(self):
+        with Squeeze(plugins=False) as s:
+            src = s.add_source("p", player=True)
+            descs = src.generator.param_descriptors
+            assert len(descs) == 7
+
+    def test_player_set_buffer(self):
+        with Squeeze(plugins=False) as s:
+            buf = s.create_buffer(channels=1, length=1000, sample_rate=44100.0)
+            src = s.add_source("p", player=True)
+            assert src.set_buffer(buf.buffer_id)
+
+    def test_player_set_buffer_invalid_id(self):
+        with Squeeze(plugins=False) as s:
+            src = s.add_source("p", player=True)
+            assert not src.set_buffer(999)
+
+    def test_player_set_buffer_non_player(self):
+        with Squeeze(plugins=False) as s:
+            buf = s.create_buffer(channels=1, length=100, sample_rate=44100.0)
+            src = s.add_source("gain")
+            assert not src.set_buffer(buf.buffer_id)
+
+    def test_player_playback(self):
+        with Squeeze(plugins=False) as s:
+            buf = s.create_buffer(channels=2, length=44100, sample_rate=44100.0)
+            buf.write(channel=0, data=[0.5] * 44100)
+            buf.write(channel=1, data=[0.5] * 44100)
+
+            src = s.add_source("p", player=True)
+            src.set_buffer(buf.buffer_id)
+            src.route_to(s.master)
+            src["fade_ms"] = 0.0
+            src["playing"] = 1.0
+            s.render(512)
+
+    def test_player_param_shortcuts(self):
+        with Squeeze(plugins=False) as s:
+            src = s.add_source("p", player=True)
+            src["speed"] = 2.0
+            assert src["speed"] == 2.0
+            src["loop_mode"] = 1.0
+            assert src["loop_mode"] == 1.0
+
+    def test_player_auto_stop(self):
+        with Squeeze(plugins=False) as s:
+            buf = s.create_buffer(channels=1, length=32, sample_rate=44100.0)
+            buf.write(channel=0, data=[0.3] * 32)
+            src = s.add_source("p", player=True)
+            src.set_buffer(buf.buffer_id)
+            src.route_to(s.master)
+            src["fade_ms"] = 0.0
+            src["loop_mode"] = 0.0
+            src["playing"] = 1.0
+            s.render(512)
+            assert src["playing"] < 0.5

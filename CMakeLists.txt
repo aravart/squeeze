@@ -18,12 +18,15 @@ FetchContent_MakeAvailable(juce)
 # --- Squeeze Core (static library) ---
 add_library(squeeze_core STATIC
     src/core/AudioDevice.cpp
+    src/core/Buffer.cpp
     src/core/Bus.cpp
     src/core/Chain.cpp
     src/core/Engine.cpp
     src/core/Logger.cpp
     src/core/MidiDeviceManager.cpp
     src/core/MidiRouter.cpp
+    src/core/PlaybackCursor.cpp
+    src/core/PlayerProcessor.cpp
     src/core/PluginManager.cpp
     src/core/PluginProcessor.cpp
     src/core/Source.cpp
@@ -89,6 +92,9 @@ add_executable(squeeze_unit_tests
     tests/core/EventSchedulerTests.cpp
     tests/core/ClockDispatchTests.cpp
     tests/core/PerfMonitorTests.cpp
+    tests/core/BufferTests.cpp
+    tests/core/PlaybackCursorTests.cpp
+    tests/core/PlayerProcessorTests.cpp
 )
 
 target_link_libraries(squeeze_unit_tests PRIVATE
@@ -108,6 +114,7 @@ add_executable(squeeze_ffi_tests
     tests/ffi/EventSchedulerFFITests.cpp
     tests/ffi/ClockDispatchFFITests.cpp
     tests/ffi/PerfMonitorFFITests.cpp
+    tests/ffi/BufferFFITests.cpp
 )
 
 target_link_libraries(squeeze_ffi_tests PRIVATE

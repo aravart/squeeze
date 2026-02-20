@@ -94,6 +94,15 @@ class Source:
         return Send(self._engine, self._handle, send_id, "source",
                     level=level, tap=tap)
 
+    # --- Buffer assignment ---
+
+    def set_buffer(self, buffer_id: int) -> bool:
+        """Assign a buffer to this source's PlayerProcessor generator.
+
+        Returns False if the buffer ID is not found or the source is not a player.
+        """
+        return lib.sq_source_set_buffer(self._engine._ptr, self._handle, buffer_id)
+
     # --- MIDI ---
 
     def midi_assign(self, *, device: str = "", channel: int = 0,

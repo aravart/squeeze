@@ -414,6 +414,66 @@ SqSlotPerfList sq_perf_slots(SqEngine engine);
 /// Free a slot perf list. NULL items is safe.
 void sq_free_slot_perf_list(SqSlotPerfList list);
 
+/* ── Buffer management ────────────────────────────────────────── */
+
+/// Create an empty buffer. Returns buffer ID (>= 1), or -1 on failure (sets *error).
+int sq_create_buffer(SqEngine engine, int num_channels, int length_in_samples,
+                     double sample_rate, const char* name, char** error);
+
+/// Remove a buffer by ID. Returns false if not found.
+bool sq_remove_buffer(SqEngine engine, int buffer_id);
+
+/// Returns the number of buffers.
+int sq_buffer_count(SqEngine engine);
+
+/* ── Buffer queries ───────────────────────────────────────────── */
+
+/// Returns number of channels, or 0 if buffer not found.
+int sq_buffer_num_channels(SqEngine engine, int buffer_id);
+
+/// Returns length in samples, or 0 if buffer not found.
+int sq_buffer_length(SqEngine engine, int buffer_id);
+
+/// Returns sample rate, or 0.0 if buffer not found.
+double sq_buffer_sample_rate(SqEngine engine, int buffer_id);
+
+/// Returns buffer name. Caller must sq_free_string(). NULL if not found.
+char* sq_buffer_name(SqEngine engine, int buffer_id);
+
+/// Returns length in seconds, or 0.0 if buffer not found.
+double sq_buffer_length_seconds(SqEngine engine, int buffer_id);
+
+/// Returns the current write position, or -1 if buffer not found.
+int sq_buffer_write_position(SqEngine engine, int buffer_id);
+
+/// Set the write position. No-op if buffer not found.
+void sq_buffer_set_write_position(SqEngine engine, int buffer_id, int position);
+
+/* ── Buffer sample data ───────────────────────────────────────── */
+
+/// Read samples from a buffer into dest.
+/// Returns number of samples actually read (0 on error or out-of-range).
+int sq_buffer_read(SqEngine engine, int buffer_id, int channel,
+                   int offset, float* dest, int num_samples);
+
+/// Write samples from src into a buffer.
+/// Returns number of samples actually written (0 on error or out-of-range).
+int sq_buffer_write(SqEngine engine, int buffer_id, int channel,
+                    int offset, const float* src, int num_samples);
+
+/// Zero all samples and reset write position to 0. No-op if buffer not found.
+void sq_buffer_clear(SqEngine engine, int buffer_id);
+
+/* ── Source with PlayerProcessor ──────────────────────────────── */
+
+/// Create a source with a PlayerProcessor generator.
+/// Returns source handle (>0), or -1 on failure (sets *error).
+int sq_add_source_player(SqEngine engine, const char* name, char** error);
+
+/// Assign a buffer to a PlayerProcessor source.
+/// Returns false if buffer not found or source is not a PlayerProcessor.
+bool sq_source_set_buffer(SqEngine engine, int source_handle, int buffer_id);
+
 /* ── Testing ──────────────────────────────────────────────────── */
 
 void sq_render(SqEngine engine, int num_samples);

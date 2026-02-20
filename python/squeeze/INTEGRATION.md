@@ -34,7 +34,9 @@ The `plugins` kwarg controls plugin cache loading:
 - `plugins=False`: skips loading
 
 Key methods:
-- `s.add_source(name, *, plugin=None) -> Source`
+- `s.add_source(name, *, plugin=None, player=False) -> Source`
+- `s.create_buffer(channels, length, sample_rate, name="") -> Buffer`
+- `s.buffer_count -> int`
 - `s.add_bus(name) -> Bus`
 - `s.master -> Bus` (always exists)
 - `s.transport -> Transport`
@@ -63,10 +65,23 @@ s.perf.slots() -> list[dict]    # per-slot handle, avg_us, peak_us
 s.perf.reset()                  # reset cumulative counters
 ```
 
+### Buffer
+
+```python
+buf = s.create_buffer(channels=2, length=44100, sample_rate=44100.0, name="loop")
+```
+
+Properties: `buffer_id -> int`, `num_channels -> int`, `length -> int`, `sample_rate -> float`, `name -> str`, `length_seconds -> float`, `write_position -> int` (settable)
+- `buf.read(channel, offset=0, num_samples=-1) -> list[float]` — read samples (-1 reads to end)
+- `buf.write(channel, data, offset=0) -> int` — write samples, returns count written
+- `buf.clear()` — zero all samples, reset write_position
+- `buf.remove() -> bool`
+
 ### Source
 
 ```python
 src = s.add_source("Lead", plugin="Diva")  # or omit plugin= for GainProcessor
+src = s.add_source("Loop", player=True)    # PlayerProcessor (buffer playback)
 ```
 
 Properties: `name`, `gain` (float, settable), `pan` (float -1..1, settable), `bypassed` (bool, settable), `handle -> int`
@@ -75,6 +90,7 @@ Properties: `name`, `gain` (float, settable), `pan` (float -1..1, settable), `by
 - `src.send(bus, *, level=0.0, tap="post") -> Send` — add send, returns Send object
 - `src.chain -> Chain` (insert effects)
 - `src.generator -> Processor` (the instrument)
+- `src.set_buffer(buffer_id) -> bool` — assign buffer to PlayerProcessor source
 - `src.midi_assign(*, device="", channel=0, note_range=(0, 127))`
 - `src.note_on(beat, channel, note, velocity) -> bool`
 - `src.note_off(beat, channel, note) -> bool`
@@ -224,6 +240,27 @@ def on_beat(beat):
 
 clock = s.clock(resolution=0.25, latency_ms=50.0, callback=on_beat)
 ```
+
+### Buffer playback (PlayerProcessor)
+
+```python
+with Squeeze() as s:
+    buf = s.create_buffer(channels=2, length=44100, sample_rate=44100.0, name="loop")
+    import math
+    sine = [math.sin(2 * math.pi * 440 * i / 44100) for i in range(44100)]
+    buf.write(channel=0, data=sine)
+    buf.write(channel=1, data=sine)
+
+    src = s.add_source("Player", player=True)
+    src.set_buffer(buf.buffer_id)
+    src.route_to(s.master)
+    src["loop_mode"] = 1       # forward loop
+    src["fade_ms"] = 5.0
+    src["playing"] = 1.0
+    s.render(44100)            # render 1 second
+```
+
+PlayerProcessor parameters: `playing` (0/1), `position` (0-1), `speed` (-4..4, varispeed), `loop_mode` (0=off, 1=forward, 2=ping-pong), `loop_start` (0-1), `loop_end` (0-1), `fade_ms` (0-50).
 
 ### Mixer with sends
 

@@ -16,6 +16,7 @@ from squeeze._helpers import (
     SqueezeError, make_error_ptr, check_error,
     decode_string, string_list_to_python, encode,
 )
+from squeeze.buffer import Buffer
 from squeeze.bus import Bus
 from squeeze.clock import Clock
 from squeeze.midi import Midi
@@ -138,11 +139,13 @@ class Squeeze:
 
     # --- Sources ---
 
-    def add_source(self, name: str, *, plugin: str | None = None) -> Source:
+    def add_source(self, name: str, *, plugin: str | None = None,
+                   player: bool = False) -> Source:
         """Add a source to the engine.
 
         With no keyword args, creates a source with a GainProcessor generator.
         With plugin="Name", loads the named plugin as the generator.
+        With player=True, creates a source with a PlayerProcessor generator.
         """
         if plugin is not None:
             err = make_error_ptr()
@@ -151,10 +154,46 @@ class Squeeze:
                 check_error(err)
                 raise SqueezeError(f"Failed to add plugin source '{plugin}'")
             return Source(self, h)
+        if player:
+            err = make_error_ptr()
+            h = lib.sq_add_source_player(self._ptr, encode(name), err)
+            if h < 0:
+                check_error(err)
+                raise SqueezeError(f"Failed to add player source '{name}'")
+            return Source(self, h)
         h = lib.sq_add_source(self._ptr, encode(name))
         if h < 0:
             raise SqueezeError(f"Failed to add source '{name}'")
         return Source(self, h)
+
+    # --- Buffers ---
+
+    def create_buffer(self, channels: int, length: int,
+                      sample_rate: float, name: str = "") -> Buffer:
+        """Create an empty audio buffer.
+
+        Args:
+            channels: Number of audio channels.
+            length: Length in samples.
+            sample_rate: Sample rate in Hz.
+            name: Optional buffer name.
+
+        Returns:
+            A Buffer handle.
+        """
+        err = make_error_ptr()
+        buf_id = lib.sq_create_buffer(
+            self._ptr, channels, length, sample_rate, encode(name), err
+        )
+        if buf_id < 0:
+            check_error(err)
+            raise SqueezeError("Failed to create buffer")
+        return Buffer(self, buf_id)
+
+    @property
+    def buffer_count(self) -> int:
+        """Number of buffers in the engine."""
+        return lib.sq_buffer_count(self._ptr)
 
     # --- Buses ---
 
