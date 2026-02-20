@@ -42,6 +42,19 @@ with Squeeze() as s:
 
 See [INTEGRATION.md](squeeze/INTEGRATION.md) for the full API reference.
 
+## Using Squeeze from Another Claude Code Project
+
+After installing, add this to your other project's `CLAUDE.md`:
+
+```markdown
+## Dependencies
+- squeeze-audio: Audio engine (installed via pip).
+  API reference: run `python -c "import squeeze; print(squeeze.INTEGRATION_GUIDE)"`
+  and read that file before writing any Squeeze code.
+```
+
+Claude Code will run the one-liner, get the path to the bundled integration guide, and read it to learn the full API.
+
 ## Requirements
 
 - Python >= 3.10

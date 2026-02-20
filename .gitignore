@@ -8,4 +8,5 @@ plugin-cache.xml
 python/squeeze-v1/*.dylib
 python/squeeze-v1/*.so
 python/squeeze-v1/*.dll
+python/squeeze/*.dylib
 python/dist/
