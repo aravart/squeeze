@@ -50,6 +50,7 @@ private:
     float fadeMs_ = 5.0f;
     float tempoLock_ = 0.0f;
     float transpose_ = 0.0f;
+    double transposeRatio_ = 1.0;  // precomputed 2^(transpose/12)
 
     // Buffer pointer (atomic for cross-thread visibility)
     std::atomic<const Buffer*> buffer_{nullptr};
@@ -65,6 +66,7 @@ private:
     double sampleRate_ = 44100.0;
     bool wasPlaying_ = false;
     float fadeGain_ = 0.0f;
+    double lastSpeed_ = 1.0;  // speed used for fade-out rendering
 
     double fadeSamplesFromMs() const;
 

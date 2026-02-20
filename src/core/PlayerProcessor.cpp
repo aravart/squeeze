@@ -47,6 +47,7 @@ void PlayerProcessor::reset()
     cursor_.reset();
     wasPlaying_ = false;
     fadeGain_ = 0.0f;
+    lastSpeed_ = 1.0;
     SQ_DEBUG("PlayerProcessor::reset");
 }
 
@@ -88,23 +89,39 @@ void PlayerProcessor::process(juce::AudioBuffer<float>& buffer)
         if (engineTempo > 0.0 && bufferTempo > 0.0)
             effectiveSpeed = (engineTempo / bufferTempo) * static_cast<double>(speed_);
     }
-    if (transpose_ != 0.0f)
-        effectiveSpeed *= std::pow(2.0, static_cast<double>(transpose_) / 12.0);
+    effectiveSpeed *= transposeRatio_;
 
     if (!isPlaying || !buf || effectiveSpeed == 0.0)
     {
-        // Apply fade-out if we were playing
-        if (wasPlaying_ && fadeMs_ > 0.0f)
+        // Apply fade-out if we were playing — render audio at last speed,
+        // then apply decaying envelope so the fade is audible
+        if (wasPlaying_ && fadeMs_ > 0.0f && buf && lastSpeed_ != 0.0)
         {
+            LoopMode lm = LoopMode::off;
+            if (loopMode_ >= 1.5f) lm = LoopMode::pingPong;
+            else if (loopMode_ >= 0.5f) lm = LoopMode::forward;
+
+            int rendered = cursor_.render(buf, L, R, numSamples,
+                                          lastSpeed_, lm,
+                                          static_cast<double>(loopStart_),
+                                          static_cast<double>(loopEnd_),
+                                          fadeSamplesFromMs());
+
             double fadeSamples = fadeSamplesFromMs();
             float fadeStep = fadeSamples > 0.0 ? static_cast<float>(1.0 / fadeSamples) : 1.0f;
 
-            for (int i = 0; i < numSamples && fadeGain_ > 0.0f; ++i)
+            for (int i = 0; i < rendered; ++i)
             {
                 L[i] *= fadeGain_;
                 R[i] *= fadeGain_;
                 fadeGain_ -= fadeStep;
                 if (fadeGain_ < 0.0f) fadeGain_ = 0.0f;
+            }
+            // Clear any unrendered tail
+            for (int i = rendered; i < numSamples; ++i)
+            {
+                L[i] = 0.0f;
+                R[i] = 0.0f;
             }
             if (fadeGain_ <= 0.0f)
                 wasPlaying_ = false;
@@ -145,6 +162,7 @@ void PlayerProcessor::process(juce::AudioBuffer<float>& buffer)
 
     wasPlaying_ = true;
     fadeGain_ = 1.0f;
+    lastSpeed_ = effectiveSpeed;
 
     // Auto-stop when cursor reaches end (loop off)
     if (cursor_.isStopped())
@@ -240,6 +258,7 @@ void PlayerProcessor::setParameter(const std::string& name, float value)
     else if (name == "transpose")
     {
         transpose_ = std::max(-24.0f, std::min(24.0f, value));
+        transposeRatio_ = std::exp2(static_cast<double>(transpose_) / 12.0);
     }
 }
 
@@ -313,6 +332,7 @@ void PlayerProcessor::setBuffer(const Buffer* buffer)
     playing_ = 0.0f;
     wasPlaying_ = false;
     fadeGain_ = 0.0f;
+    lastSpeed_ = 1.0;
 }
 
 const Buffer* PlayerProcessor::getBuffer() const
