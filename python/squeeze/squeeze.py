@@ -16,6 +16,7 @@ from squeeze._helpers import (
 from squeeze.bus import Bus
 from squeeze.clock import Clock
 from squeeze.midi import Midi
+from squeeze.perf import Perf
 from squeeze.source import Source
 from squeeze.transport import Transport
 
@@ -38,8 +39,11 @@ class Squeeze:
         if not self._ptr:
             check_error(err)
             raise SqueezeError("Failed to create engine")
+        self._init_sample_rate = sample_rate
+        self._init_block_size = block_size
         self._transport: Transport | None = None
         self._midi: Midi | None = None
+        self._perf: Perf | None = None
 
     def close(self) -> None:
         """Destroy the engine. Safe to call multiple times."""
@@ -81,6 +85,13 @@ class Squeeze:
         if self._midi is None:
             self._midi = Midi(self)
         return self._midi
+
+    @property
+    def perf(self) -> Perf:
+        """Performance monitoring."""
+        if self._perf is None:
+            self._perf = Perf(self)
+        return self._perf
 
     # --- Sources ---
 
@@ -170,10 +181,13 @@ class Squeeze:
 
     # --- Audio device ---
 
-    def start(self, sample_rate: float = 44100.0, block_size: int = 512) -> None:
-        """Start the audio device. Raises SqueezeError on failure."""
+    def start(self, sample_rate: float | None = None,
+              block_size: int | None = None) -> None:
+        """Start the audio device. Defaults to constructor args if not specified."""
+        sr = sample_rate if sample_rate is not None else self._init_sample_rate
+        bs = block_size if block_size is not None else self._init_block_size
         err = make_error_ptr()
-        ok = lib.sq_start(self._ptr, sample_rate, block_size, err)
+        ok = lib.sq_start(self._ptr, sr, bs, err)
         if not ok:
             check_error(err)
 
@@ -202,64 +216,6 @@ class Squeeze:
     def process_events(timeout_ms: int = 0) -> None:
         """Process pending JUCE GUI/message events."""
         lib.sq_process_events(timeout_ms)
-
-    # --- Performance monitoring ---
-
-    def perf_enable(self, enabled: bool = True) -> None:
-        """Enable or disable performance monitoring."""
-        lib.sq_perf_enable(self._ptr, 1 if enabled else 0)
-
-    def perf_is_enabled(self) -> bool:
-        """Return whether performance monitoring is enabled."""
-        return lib.sq_perf_is_enabled(self._ptr) != 0
-
-    def perf_enable_slots(self, enabled: bool = True) -> None:
-        """Enable or disable per-slot (source/bus) profiling."""
-        lib.sq_perf_enable_slots(self._ptr, 1 if enabled else 0)
-
-    def perf_is_slot_profiling_enabled(self) -> bool:
-        """Return whether slot profiling is enabled."""
-        return lib.sq_perf_is_slot_profiling_enabled(self._ptr) != 0
-
-    def perf_set_xrun_threshold(self, factor: float) -> None:
-        """Set xrun threshold as fraction of budget (default 1.0)."""
-        lib.sq_perf_set_xrun_threshold(self._ptr, factor)
-
-    def perf_get_xrun_threshold(self) -> float:
-        """Return the current xrun threshold factor."""
-        return lib.sq_perf_get_xrun_threshold(self._ptr)
-
-    def perf_snapshot(self) -> dict[str, float | int]:
-        """Return the latest performance snapshot as a dict."""
-        snap = lib.sq_perf_snapshot(self._ptr)
-        return {
-            "callback_avg_us": snap.callback_avg_us,
-            "callback_peak_us": snap.callback_peak_us,
-            "cpu_load_percent": snap.cpu_load_percent,
-            "xrun_count": snap.xrun_count,
-            "callback_count": snap.callback_count,
-            "sample_rate": snap.sample_rate,
-            "block_size": snap.block_size,
-            "buffer_duration_us": snap.buffer_duration_us,
-        }
-
-    def perf_slots(self) -> list[dict[str, int | float]]:
-        """Return per-slot timing as a list of dicts."""
-        slot_list = lib.sq_perf_slots(self._ptr)
-        result = []
-        for i in range(slot_list.count):
-            item = slot_list.items[i]
-            result.append({
-                "handle": item.handle,
-                "avg_us": item.avg_us,
-                "peak_us": item.peak_us,
-            })
-        lib.sq_free_slot_perf_list(slot_list)
-        return result
-
-    def perf_reset(self) -> None:
-        """Reset cumulative counters (xrun_count, callback_count)."""
-        lib.sq_perf_reset(self._ptr)
 
     # --- Testing ---
 

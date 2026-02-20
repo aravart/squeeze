@@ -131,36 +131,42 @@ class TestRouting:
     def test_source_send(self, s):
         src = s.add_source("Synth")
         fx = s.add_bus("FX")
-        send_id = src.send(fx, level=-6.0)
-        assert send_id > 0
+        snd = src.send(fx, level=-6.0)
+        assert snd.send_id > 0
+        assert snd.level == -6.0
+        assert snd.tap == "post"
 
-    def test_source_remove_send(self, s):
+    def test_source_send_remove(self, s):
         src = s.add_source("Synth")
         fx = s.add_bus("FX")
-        send_id = src.send(fx, level=-6.0)
-        src.remove_send(send_id)
+        snd = src.send(fx, level=-6.0)
+        snd.remove()
         s.render(512)
 
-    def test_source_set_send_level(self, s):
+    def test_source_send_level(self, s):
         src = s.add_source("Synth")
         fx = s.add_bus("FX")
-        send_id = src.send(fx, level=-6.0)
-        src.set_send_level(send_id, -12.0)
+        snd = src.send(fx, level=-6.0)
+        snd.level = -12.0
+        assert snd.level == -12.0
         s.render(512)
 
-    def test_source_set_send_tap(self, s):
+    def test_source_send_tap(self, s):
         src = s.add_source("Synth")
         fx = s.add_bus("FX")
-        send_id = src.send(fx, level=-6.0)
-        src.set_send_tap(send_id, "pre")
-        src.set_send_tap(send_id, "post")
+        snd = src.send(fx, level=-6.0)
+        snd.tap = "pre"
+        assert snd.tap == "pre"
+        snd.tap = "post"
+        assert snd.tap == "post"
         s.render(512)
 
     def test_source_send_pre_tap(self, s):
         src = s.add_source("Synth")
         fx = s.add_bus("FX")
-        send_id = src.send(fx, level=-6.0, tap="pre")
-        assert send_id > 0
+        snd = src.send(fx, level=-6.0, tap="pre")
+        assert snd.send_id > 0
+        assert snd.tap == "pre"
         s.render(512)
 
 
@@ -177,29 +183,33 @@ class TestBusRouting:
     def test_bus_send(self, s):
         a = s.add_bus("A")
         b = s.add_bus("B")
-        send_id = a.send(b, level=-6.0)
-        assert send_id > 0
+        snd = a.send(b, level=-6.0)
+        assert snd.send_id > 0
+        assert snd.level == -6.0
 
-    def test_bus_remove_send(self, s):
+    def test_bus_send_remove(self, s):
         a = s.add_bus("A")
         b = s.add_bus("B")
-        send_id = a.send(b, level=-6.0)
-        a.remove_send(send_id)
+        snd = a.send(b, level=-6.0)
+        snd.remove()
         s.render(512)
 
-    def test_bus_set_send_level(self, s):
+    def test_bus_send_level(self, s):
         a = s.add_bus("A")
         b = s.add_bus("B")
-        send_id = a.send(b, level=-6.0)
-        a.set_send_level(send_id, -12.0)
+        snd = a.send(b, level=-6.0)
+        snd.level = -12.0
+        assert snd.level == -12.0
         s.render(512)
 
-    def test_bus_set_send_tap(self, s):
+    def test_bus_send_tap(self, s):
         a = s.add_bus("A")
         b = s.add_bus("B")
-        send_id = a.send(b, level=-6.0)
-        a.set_send_tap(send_id, "pre")
-        a.set_send_tap(send_id, "post")
+        snd = a.send(b, level=-6.0)
+        snd.tap = "pre"
+        assert snd.tap == "pre"
+        snd.tap = "post"
+        assert snd.tap == "post"
         s.render(512)
 
 
@@ -639,45 +649,45 @@ class TestProcessEvents:
 
 class TestPerfMonitor:
     def test_disabled_by_default(self, s):
-        assert not s.perf_is_enabled()
+        assert not s.perf.enabled
 
     def test_enable_disable(self, s):
-        s.perf_enable(True)
-        assert s.perf_is_enabled()
-        s.perf_enable(False)
-        assert not s.perf_is_enabled()
+        s.perf.enabled = True
+        assert s.perf.enabled
+        s.perf.enabled = False
+        assert not s.perf.enabled
 
     def test_slot_profiling_disabled_by_default(self, s):
-        assert not s.perf_is_slot_profiling_enabled()
+        assert not s.perf.slot_profiling
 
     def test_enable_disable_slot_profiling(self, s):
-        s.perf_enable_slots(True)
-        assert s.perf_is_slot_profiling_enabled()
-        s.perf_enable_slots(False)
-        assert not s.perf_is_slot_profiling_enabled()
+        s.perf.slot_profiling = True
+        assert s.perf.slot_profiling
+        s.perf.slot_profiling = False
+        assert not s.perf.slot_profiling
 
     def test_xrun_threshold_default(self, s):
-        assert abs(s.perf_get_xrun_threshold() - 1.0) < 1e-6
+        assert abs(s.perf.xrun_threshold - 1.0) < 1e-6
 
     def test_xrun_threshold_roundtrip(self, s):
-        s.perf_set_xrun_threshold(0.5)
-        assert abs(s.perf_get_xrun_threshold() - 0.5) < 1e-6
+        s.perf.xrun_threshold = 0.5
+        assert abs(s.perf.xrun_threshold - 0.5) < 1e-6
 
     def test_xrun_threshold_clamped(self, s):
-        s.perf_set_xrun_threshold(0.01)
-        assert s.perf_get_xrun_threshold() >= 0.1
-        s.perf_set_xrun_threshold(10.0)
-        assert s.perf_get_xrun_threshold() <= 2.0
+        s.perf.xrun_threshold = 0.01
+        assert s.perf.xrun_threshold >= 0.1
+        s.perf.xrun_threshold = 10.0
+        assert s.perf.xrun_threshold <= 2.0
 
     def test_snapshot_when_disabled(self, s):
-        snap = s.perf_snapshot()
+        snap = s.perf.snapshot()
         assert isinstance(snap, dict)
         assert snap["callback_avg_us"] == 0.0
         assert snap["xrun_count"] == 0
         assert snap["callback_count"] == 0
 
     def test_snapshot_fields(self, s):
-        snap = s.perf_snapshot()
+        snap = s.perf.snapshot()
         expected_keys = {
             "callback_avg_us", "callback_peak_us", "cpu_load_percent",
             "xrun_count", "callback_count", "sample_rate", "block_size",
@@ -686,40 +696,40 @@ class TestPerfMonitor:
         assert set(snap.keys()) == expected_keys
 
     def test_snapshot_after_render(self, s):
-        s.perf_enable(True)
+        s.perf.enabled = True
         src = s.add_source("Synth")
         src.route_to(s.master)
         for _ in range(20):
             s.render(512)
-        snap = s.perf_snapshot()
+        snap = s.perf.snapshot()
         assert snap["callback_count"] >= 1
         assert snap["sample_rate"] == 44100.0
         assert snap["block_size"] == 512
 
     def test_reset(self, s):
-        s.perf_enable(True)
+        s.perf.enabled = True
         for _ in range(20):
             s.render(512)
-        snap = s.perf_snapshot()
+        snap = s.perf.snapshot()
         assert snap["callback_count"] >= 1
-        s.perf_reset()
-        snap2 = s.perf_snapshot()
+        s.perf.reset()
+        snap2 = s.perf.snapshot()
         assert snap2["xrun_count"] == 0
         assert snap2["callback_count"] == 0
 
     def test_slots_empty_when_disabled(self, s):
-        slots = s.perf_slots()
+        slots = s.perf.slots()
         assert isinstance(slots, list)
         assert len(slots) == 0
 
     def test_slots_with_profiling(self, s):
-        s.perf_enable(True)
-        s.perf_enable_slots(True)
+        s.perf.enabled = True
+        s.perf.slot_profiling = True
         src = s.add_source("Synth")
         src.route_to(s.master)
         for _ in range(20):
             s.render(512)
-        slots = s.perf_slots()
+        slots = s.perf.slots()
         assert len(slots) >= 1
         for slot in slots:
             assert "handle" in slot
@@ -727,11 +737,11 @@ class TestPerfMonitor:
             assert "peak_us" in slot
 
     def test_callback_count_increments(self, s):
-        s.perf_enable(True)
+        s.perf.enabled = True
         s.render(512)
         s.render(512)
         s.render(512)
-        snap = s.perf_snapshot()
+        snap = s.perf.snapshot()
         assert snap["callback_count"] >= 3
 
 
@@ -747,7 +757,9 @@ class TestImports:
         assert hasattr(squeeze, 'Bus')
         assert hasattr(squeeze, 'Chain')
         assert hasattr(squeeze, 'Clock')
+        assert hasattr(squeeze, 'Perf')
         assert hasattr(squeeze, 'Processor')
+        assert hasattr(squeeze, 'Send')
         assert hasattr(squeeze, 'Transport')
         assert hasattr(squeeze, 'Midi')
         assert hasattr(squeeze, 'MidiDevice')

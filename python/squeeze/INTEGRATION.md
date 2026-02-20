@@ -35,7 +35,8 @@ Key methods:
 - `s.transport -> Transport`
 - `s.midi -> Midi`
 - `s.clock(resolution, latency_ms, callback) -> Clock`
-- `s.start(sample_rate, block_size)` / `s.stop()` — audio device
+- `s.perf -> Perf` (performance monitoring)
+- `s.start(sample_rate=None, block_size=None)` / `s.stop()` — audio device (defaults to constructor args)
 - `s.render(num_samples)` — headless test rendering
 - `s.load_plugin_cache(path)` / `s.available_plugins` / `s.num_plugins`
 - `s.batch()` — context manager, defers graph rebuild until exit
@@ -45,12 +46,16 @@ Key methods:
 - `s.source_count -> int` / `s.bus_count -> int`
 - `Squeeze.process_events(timeout_ms)` — pump JUCE GUI events (static)
 
-Performance monitoring:
-- `s.perf_enable(bool)` / `s.perf_is_enabled() -> bool`
-- `s.perf_enable_slots(bool)` / `s.perf_is_slot_profiling_enabled() -> bool`
-- `s.perf_set_xrun_threshold(factor)` / `s.perf_get_xrun_threshold() -> float`
-- `s.perf_snapshot() -> dict` / `s.perf_slots() -> list[dict]`
-- `s.perf_reset()`
+### Perf (performance monitoring)
+
+```python
+s.perf.enabled = True           # enable/disable (also gettable)
+s.perf.slot_profiling = True    # per-slot profiling (also gettable)
+s.perf.xrun_threshold = 0.8    # fraction of budget (also gettable)
+s.perf.snapshot() -> dict       # callback_avg_us, cpu_load_percent, xrun_count, ...
+s.perf.slots() -> list[dict]    # per-slot handle, avg_us, peak_us
+s.perf.reset()                  # reset cumulative counters
+```
 
 ### Source
 
@@ -59,9 +64,9 @@ src = s.add_source("Lead", plugin="Diva")  # or omit plugin= for GainProcessor
 ```
 
 Properties: `name`, `gain` (float, settable), `pan` (float -1..1, settable), `bypassed` (bool, settable), `handle -> int`
+- `src["param"]` / `src["param"] = val` — shortcut for `src.generator.get_param()` / `set_param()`
 - `src.route_to(bus)` — set main output bus
-- `src.send(bus, *, level=0.0, tap="post") -> int` — add send, returns send ID
-- `src.remove_send(send_id)` / `src.set_send_level(send_id, level)` / `src.set_send_tap(send_id, tap)`
+- `src.send(bus, *, level=0.0, tap="post") -> Send` — add send, returns Send object
 - `src.chain -> Chain` (insert effects)
 - `src.generator -> Processor` (the instrument)
 - `src.midi_assign(*, device="", channel=0, note_range=(0, 127))`
@@ -79,8 +84,7 @@ bus = s.add_bus("Reverb")
 
 Properties: `name`, `gain`, `pan`, `bypassed` (all settable), `peak -> float`, `rms -> float`, `handle -> int`
 - `bus.route_to(other_bus)` — route downstream
-- `bus.send(other_bus, *, level=0.0, tap="post") -> int`
-- `bus.remove_send(send_id)` / `bus.set_send_level(send_id, level)` / `bus.set_send_tap(send_id, tap)`
+- `bus.send(other_bus, *, level=0.0, tap="post") -> Send`
 - `bus.chain -> Chain`
 - `bus.remove() -> bool` (cannot remove Master)
 
@@ -101,8 +105,8 @@ chain = src.chain  # or bus.chain
 proc = src.generator  # or from chain.append()/chain.insert()
 ```
 
-- `proc.get_param(name) -> float`
-- `proc.set_param(name, value)`
+- `proc["name"] -> float` / `proc["name"] = value` — get/set parameter by name
+- `proc.get_param(name) -> float` / `proc.set_param(name, value)` — same, explicit form
 - `proc.param_text(name) -> str` (e.g. "2.5 s")
 - `proc.param_descriptors -> list[ParamDescriptor]`
 - `proc.param_count -> int`
@@ -113,6 +117,17 @@ proc = src.generator  # or from chain.append()/chain.insert()
 - `proc.handle -> int`
 
 `ParamDescriptor` fields: `name`, `default_value`, `min_value`, `max_value`, `num_steps`, `automatable`, `boolean`, `label`, `group`
+
+### Send
+
+```python
+snd = src.send(reverb_bus, level=-6.0, tap="pre")
+```
+
+- `snd.level -> float` (settable) — send level in dB
+- `snd.tap -> str` (settable) — "pre" or "post"
+- `snd.send_id -> int`
+- `snd.remove()` — remove this send
 
 ### Transport
 
@@ -175,7 +190,7 @@ with Squeeze() as s:
 with Squeeze() as s:
     src = s.add_source("Lead", plugin="Vital")
     src.route_to(s.master)
-    s.start(44100.0, 512)
+    s.start()  # uses constructor sample_rate/block_size
     s.transport.play()
     Squeeze.process_events(5000)  # run for 5 seconds
     s.transport.stop()
@@ -213,7 +228,8 @@ with Squeeze() as s:
     reverb = s.add_bus("Reverb")
 
     keys.route_to(s.master)
-    keys.send(reverb, level=-6.0, tap="pre")
+    snd = keys.send(reverb, level=-6.0, tap="pre")
+    snd.level = -3.0   # adjust later
     bass.route_to(s.master)
     reverb.route_to(s.master)
 

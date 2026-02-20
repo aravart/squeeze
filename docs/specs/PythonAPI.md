@@ -2,7 +2,7 @@
 
 ## Motivation
 
-The Python package (`squeeze`) provides a single Pythonic API to the Squeeze audio engine. There is no separate "low-level" and "high-level" layer — the public API is one set of objects (`Squeeze`, `Source`, `Bus`, `Chain`, `Processor`, `Transport`, `Midi`) that call through internal ctypes bindings. This keeps the development cycle simple: one set of Python wrappers, one set of Python tests.
+The Python package (`squeeze`) provides a single Pythonic API to the Squeeze audio engine. There is no separate "low-level" and "high-level" layer — the public API is one set of objects (`Squeeze`, `Source`, `Bus`, `Chain`, `Processor`, `Send`, `Perf`, `Clock`, `Transport`, `Midi`) that call through internal ctypes bindings. This keeps the development cycle simple: one set of Python wrappers, one set of Python tests.
 
 ## Responsibilities
 
@@ -21,11 +21,14 @@ python/squeeze/
 ├── __init__.py          # re-exports: Squeeze, Source, Bus, Chain, Processor, etc.
 ├── _ffi.py              # ctypes declarations (internal, mechanical)
 ├── _helpers.py          # error checking, string/list conversion, memory freeing (internal)
-├── squeeze.py           # Squeeze — the public entry point (was Engine)
+├── squeeze.py           # Squeeze — the public entry point
 ├── source.py            # Source object
 ├── bus.py               # Bus object
 ├── chain.py             # Chain object
 ├── processor.py         # Processor object
+├── send.py              # Send object (returned by source/bus .send())
+├── perf.py              # Perf sub-object (s.perf)
+├── clock.py             # Clock sub-object
 ├── transport.py         # Transport sub-object
 ├── midi.py              # Midi, MidiDevice sub-objects
 └── types.py             # ParamDescriptor dataclass
@@ -108,6 +111,14 @@ class Processor:
 
     def close_editor(self) -> None:
         """Close the plugin editor window."""
+
+    # --- Subscript access (ergonomic shorthand) ---
+
+    def __getitem__(self, name: str) -> float:
+        """Get parameter value: ``proc["cutoff"]``."""
+
+    def __setitem__(self, name: str, value: float) -> None:
+        """Set parameter value: ``proc["cutoff"] = 0.5``."""
 
     # --- Automation ---
 
@@ -215,26 +226,25 @@ class Source:
     @bypassed.setter
     def bypassed(self, value: bool) -> None: ...
 
+    # --- Generator param shortcut ---
+
+    def __getitem__(self, name: str) -> float:
+        """Shortcut for ``source.generator[name]``."""
+
+    def __setitem__(self, name: str, value: float) -> None:
+        """Shortcut for ``source.generator[name] = value``."""
+
     # --- Routing ---
 
     def route_to(self, bus: "Bus") -> None:
         """Route this source's output to a bus."""
 
     def send(self, bus: "Bus", *, level: float = 0.0,
-             tap: str = "post") -> int:
-        """Add a send to a bus. Returns send ID.
+             tap: str = "post") -> "Send":
+        """Add a send to a bus. Returns a Send object.
         Level is in dB (0.0 = unity).
         tap: "pre" (pre-fader) or "post" (post-fader, default).
         """
-
-    def remove_send(self, send_id: int) -> None:
-        """Remove a send by ID."""
-
-    def set_send_level(self, send_id: int, level: float) -> None:
-        """Change a send's level in dB."""
-
-    def set_send_tap(self, send_id: int, tap: str) -> None:
-        """Change a send's tap point: "pre" or "post"."""
 
     # --- MIDI ---
 
@@ -333,19 +343,10 @@ class Bus:
         """Route this bus's output to another bus."""
 
     def send(self, bus: "Bus", *, level: float = 0.0,
-             tap: str = "post") -> int:
-        """Add a send to a bus. Returns send ID.
+             tap: str = "post") -> "Send":
+        """Add a send to a bus. Returns a Send object.
         tap: "pre" (pre-fader) or "post" (post-fader, default).
         """
-
-    def remove_send(self, send_id: int) -> None:
-        """Remove a send by ID."""
-
-    def set_send_level(self, send_id: int, level: float) -> None:
-        """Change a send's level in dB."""
-
-    def set_send_tap(self, send_id: int, tap: str) -> None:
-        """Change a send's tap point: "pre" or "post"."""
 
     # --- Metering ---
 
@@ -372,6 +373,87 @@ class Bus:
 
     def __hash__(self) -> int:
         return hash(self._handle)
+```
+
+---
+
+### Send (`send.py`)
+
+A `Send` wraps a send connection from a source or bus to a destination bus. Returned by `source.send()` and `bus.send()`.
+
+```python
+class Send:
+    """A send from a source or bus to a destination bus."""
+
+    def __init__(self, engine: "Squeeze", owner_handle: int,
+                 send_id: int, owner_type: str,
+                 level: float, tap: str):
+        """owner_type is 'source' or 'bus'."""
+
+    @property
+    def send_id(self) -> int:
+        """The send ID."""
+
+    @property
+    def level(self) -> float:
+        """Send level in dB."""
+
+    @level.setter
+    def level(self, value: float) -> None: ...
+
+    @property
+    def tap(self) -> str:
+        """Tap point: "pre" or "post"."""
+
+    @tap.setter
+    def tap(self, value: str) -> None: ...
+
+    def remove(self) -> None:
+        """Remove this send."""
+
+    def __repr__(self) -> str:
+        return f"Send(id={self._send_id}, level={self._level}, tap={self._tap!r})"
+```
+
+---
+
+### Perf (`perf.py`)
+
+Performance monitoring sub-object, accessed via `s.perf`.
+
+```python
+class Perf:
+    """Performance monitoring. Accessed via ``squeeze.perf``."""
+
+    @property
+    def enabled(self) -> bool:
+        """Whether performance monitoring is enabled."""
+
+    @enabled.setter
+    def enabled(self, value: bool) -> None: ...
+
+    @property
+    def slot_profiling(self) -> bool:
+        """Whether per-slot (source/bus) profiling is enabled."""
+
+    @slot_profiling.setter
+    def slot_profiling(self, value: bool) -> None: ...
+
+    @property
+    def xrun_threshold(self) -> float:
+        """Xrun threshold as fraction of budget (default 1.0)."""
+
+    @xrun_threshold.setter
+    def xrun_threshold(self, factor: float) -> None: ...
+
+    def snapshot(self) -> dict[str, float | int]:
+        """Return the latest performance snapshot as a dict."""
+
+    def slots(self) -> list[dict[str, int | float]]:
+        """Return per-slot timing as a list of dicts."""
+
+    def reset(self) -> None:
+        """Reset cumulative counters (xrun_count, callback_count)."""
 ```
 
 ---
@@ -499,6 +581,10 @@ class Squeeze:
     def midi(self) -> Midi:
         """MIDI device management and routing."""
 
+    @property
+    def perf(self) -> Perf:
+        """Performance monitoring."""
+
     # --- Sources ---
 
     def add_source(self, name: str, *, plugin: str = None,
@@ -570,8 +656,9 @@ class Squeeze:
 
     # --- Audio device ---
 
-    def start(self) -> None:
-        """Start the audio device."""
+    def start(self, sample_rate: float | None = None,
+              block_size: int | None = None) -> None:
+        """Start the audio device. Defaults to constructor args if not specified."""
 
     def stop(self) -> None:
         """Stop the audio device."""
@@ -605,9 +692,12 @@ from squeeze.squeeze import Squeeze
 from squeeze.source import Source
 from squeeze.bus import Bus
 from squeeze.chain import Chain
+from squeeze.clock import Clock
+from squeeze.perf import Perf
 from squeeze.processor import Processor
+from squeeze.send import Send
 from squeeze.transport import Transport
-from squeeze.midi import Midi, MidiDevice
+from squeeze.midi import Midi, MidiDevice, MidiRouteInfo
 from squeeze.types import ParamDescriptor
 
 # Module-level utilities
@@ -618,10 +708,11 @@ from squeeze._helpers import SqueezeError, set_log_level, set_log_callback
 
 ## Invariants
 
-- `Source`, `Bus`, `Processor` objects are lightweight proxies — they hold a handle and a reference
-- `Processor.get_param()` always reads through the engine — no stale caching
+- `Source`, `Bus`, `Processor`, `Send` objects are lightweight proxies — they hold a handle and a reference
+- `Processor.get_param()` (and `proc["name"]`) always reads through the engine — no stale caching
+- `Send.level` and `Send.tap` are tracked locally and synced to the engine on write
 - All error conditions raise `SqueezeError`
-- Sub-objects (`Transport`, `Midi`) hold internal references — they do not outlive `Squeeze`
+- Sub-objects (`Transport`, `Midi`, `Perf`) hold internal references — they do not outlive `Squeeze`
 - There is one public Python API, not two layers
 - `_ffi.py` and `_helpers.py` are internal implementation details
 
@@ -655,10 +746,12 @@ All calls from a single thread (the control thread). Objects are proxies to the 
 ## Testing Strategy
 
 - **One set of Python tests** covering the public API
-- Source tests: create, routing, chain ops, MIDI assignment
+- Source tests: create, routing, chain ops, MIDI assignment, `[]` param shortcut
 - Bus tests: create, routing, sends, metering, bypass
+- Send tests: level/tap get/set, remove
 - Chain tests: append/insert/remove/index
-- Processor tests: get/set params, descriptors, latency
+- Processor tests: get/set params, `[]` syntax, descriptors, latency
+- Perf tests: enable/disable, snapshot, slots, reset, xrun threshold
 - Transport tests: play/stop/pause, tempo, seek, loop
 - Midi tests: device listing, open/close
 
@@ -700,7 +793,8 @@ with Squeeze() as s:
 
     # Routing
     synth.route_to(s.master)
-    synth.send(reverb_bus, level=-6.0)
+    snd = synth.send(reverb_bus, level=-6.0)
+    snd.level = -3.0  # adjust later
     drums.route_to(drum_bus)
     drum_bus.route_to(s.master)
     reverb_bus.route_to(s.master)
@@ -709,9 +803,9 @@ with Squeeze() as s:
     synth.midi_assign(device="Keylab", channel=1)
     drums.midi_assign(device="MPD", channel=10)
 
-    # Parameters
-    reverb_bus.chain[0].set_param("decay", 2.5)
-    reverb_bus.chain[0].set_param("mix", 0.3)
+    # Parameters (subscript shorthand)
+    reverb_bus.chain[0]["decay"] = 2.5
+    reverb_bus.chain[0]["mix"] = 0.3
 
     # Transport
     s.transport.tempo = 128

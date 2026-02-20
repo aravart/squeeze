@@ -8,6 +8,7 @@ from squeeze._ffi import lib
 from squeeze._helpers import decode_string, encode
 from squeeze.chain import Chain
 from squeeze.processor import Processor
+from squeeze.send import Send
 
 if TYPE_CHECKING:
     from squeeze.bus import Bus
@@ -81,27 +82,17 @@ class Source:
         """Route this source's output to a bus."""
         lib.sq_route(self._engine._ptr, self._handle, bus.handle)
 
-    def send(self, bus: Bus, *, level: float = 0.0, tap: str = "post") -> int:
-        """Add a send to a bus. Returns send ID.
+    def send(self, bus: Bus, *, level: float = 0.0, tap: str = "post") -> Send:
+        """Add a send to a bus. Returns a Send object.
+
         Level is in dB (0.0 = unity).
         tap: "pre" (pre-fader) or "post" (post-fader, default).
         """
         pre_fader = 1 if tap == "pre" else 0
-        send_id = lib.sq_send(self._engine._ptr, self._handle, bus.handle, level, pre_fader)
-        return send_id
-
-    def remove_send(self, send_id: int) -> None:
-        """Remove a send by ID."""
-        lib.sq_remove_send(self._engine._ptr, self._handle, send_id)
-
-    def set_send_level(self, send_id: int, level: float) -> None:
-        """Change a send's level in dB."""
-        lib.sq_set_send_level(self._engine._ptr, self._handle, send_id, level)
-
-    def set_send_tap(self, send_id: int, tap: str) -> None:
-        """Change a send's tap point: "pre" or "post"."""
-        pre_fader = 1 if tap == "pre" else 0
-        lib.sq_set_send_tap(self._engine._ptr, self._handle, send_id, pre_fader)
+        send_id = lib.sq_send(
+            self._engine._ptr, self._handle, bus.handle, level, pre_fader)
+        return Send(self._engine, self._handle, send_id, "source",
+                    level=level, tap=tap)
 
     # --- MIDI ---
 
@@ -141,6 +132,16 @@ class Source:
         return lib.sq_schedule_pitch_bend(
             self._engine._ptr, self._handle, beat, channel, value
         )
+
+    # --- Generator param shortcut ---
+
+    def __getitem__(self, name: str) -> float:
+        """Shortcut for ``source.generator[name]``."""
+        return self.generator.get_param(name)
+
+    def __setitem__(self, name: str, value: float) -> None:
+        """Shortcut for ``source.generator[name] = value``."""
+        self.generator.set_param(name, value)
 
     # --- Lifecycle ---
 

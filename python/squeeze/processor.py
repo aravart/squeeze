@@ -97,6 +97,14 @@ class Processor:
             self._engine._ptr, self._handle, beat, encode(param_name), value
         )
 
+    def __getitem__(self, name: str) -> float:
+        """Get parameter value: ``proc["cutoff"]``."""
+        return self.get_param(name)
+
+    def __setitem__(self, name: str, value: float) -> None:
+        """Set parameter value: ``proc["cutoff"] = 0.5``."""
+        self.set_param(name, value)
+
     def __repr__(self) -> str:
         return f"Processor({self._handle})"
 

@@ -91,8 +91,8 @@ def main():
         print(f"Engine: {SAMPLE_RATE:.0f} Hz, {BLOCK_SIZE} samples/block")
 
         # ── enable monitoring ────────────────────────────────────
-        s.perf_enable()
-        s.perf_enable_slots()
+        s.perf.enabled = True
+        s.perf.slot_profiling = True
 
         # schedule some notes so the sources are doing work
         t = s.transport
@@ -122,23 +122,23 @@ def main():
             for _ in range(BLOCKS_PER_PASS):
                 s.render(BLOCK_SIZE)
 
-            snap = s.perf_snapshot()
-            slots = s.perf_slots()
+            snap = s.perf.snapshot()
+            slots = s.perf.slots()
             print_snapshot(snap, slots, pass_num)
 
         # ── threshold experiment ─────────────────────────────────
         print(f"\n{'─' * 56}")
         print(f"  Lowering xrun threshold to 0.1 (10% of budget)...")
-        s.perf_reset()
-        s.perf_set_xrun_threshold(0.1)
+        s.perf.reset()
+        s.perf.xrun_threshold = 0.1
 
         for _ in range(BLOCKS_PER_PASS):
             s.render(BLOCK_SIZE)
 
-        snap = s.perf_snapshot()
-        threshold_us = s.perf_get_xrun_threshold() * snap["buffer_duration_us"]
+        snap = s.perf.snapshot()
+        threshold_us = s.perf.xrun_threshold * snap["buffer_duration_us"]
         print(f"  Threshold:  {fmt_us(threshold_us)} "
-              f"({s.perf_get_xrun_threshold():.1f}x of {fmt_us(snap['buffer_duration_us'])} budget)")
+              f"({s.perf.xrun_threshold:.1f}x of {fmt_us(snap['buffer_duration_us'])} budget)")
         print(f"  Avg:        {fmt_us(snap['callback_avg_us'])}")
         print(f"  Xruns:      {snap['xrun_count']}"
               f"{'  (callbacks too fast to exceed even 10% of budget!)' if snap['xrun_count'] == 0 else ''}")

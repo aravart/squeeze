@@ -178,6 +178,9 @@ python/
 │   ├── bus.py              # Bus object
 │   ├── chain.py            # Chain object
 │   ├── processor.py        # Processor object
+│   ├── send.py             # Send object (returned by source/bus .send())
+│   ├── perf.py             # Perf sub-object (s.perf)
+│   ├── clock.py            # Clock sub-object
 │   ├── transport.py        # Transport sub-object
 │   ├── midi.py             # Midi, MidiDevice sub-objects
 │   └── types.py            # ParamDescriptor dataclass
@@ -191,7 +194,7 @@ python/
 - **Test framework:** pytest
 - **Test location:** `python/tests/`
 - **Run tests:** `cd python && pytest`
-- **Every `sq_` function** exposed through the C ABI must have a corresponding Python method on the appropriate class (`Squeeze`, `Source`, `Bus`, `Chain`, `Processor`, `Transport`, `Midi`) and a pytest case
+- **Every `sq_` function** exposed through the C ABI must have a corresponding Python method on the appropriate class (`Squeeze`, `Source`, `Bus`, `Chain`, `Processor`, `Send`, `Perf`, `Clock`, `Transport`, `Midi`) and a pytest case
 - **One set of Python tests.** No separate low-level/high-level test files. Each `sq_*` function is tested through the public Python API.
 - **`_ffi.py` and `_helpers.py` are internal.** Users import `Squeeze`, `Source`, `Bus`, etc. — never `_ffi` or `_helpers`.
 
@@ -227,7 +230,7 @@ The existing rule — **every tier ships a working FFI and Python client** — e
 
 1. Add the `sq_` C ABI functions
 2. Add the ctypes declaration to `squeeze/_ffi.py`
-3. Add the Python wrapper to the appropriate module (`squeeze.py`, `source.py`, `bus.py`, `chain.py`, `processor.py`, `transport.py`, `midi.py`, `types.py`) — **with full type annotations**
+3. Add the Python wrapper to the appropriate module (`squeeze.py`, `source.py`, `bus.py`, `chain.py`, `processor.py`, `send.py`, `perf.py`, `clock.py`, `transport.py`, `midi.py`, `types.py`) — **with full type annotations**
 4. Add Python tests in `python/tests/`
 5. Update `python/INTEGRATION.md` with new class/method signatures
 6. Update `python/README.md` API table if a new class was added

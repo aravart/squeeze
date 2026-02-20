@@ -32,10 +32,12 @@ with Squeeze() as s:
 | Class | Role |
 |-------|------|
 | `Squeeze` | Engine entry point. Creates sources, buses; controls transport and audio device. |
-| `Source` | Sound generator (plugin synth or gain). Has insert chain, gain/pan, routing, MIDI. |
+| `Source` | Sound generator (plugin synth or gain). Has insert chain, gain/pan, routing, MIDI. `src["param"]` accesses generator params. |
 | `Bus` | Summing point with insert chain and routing. Master bus always exists. |
 | `Chain` | Ordered list of insert processors on a Source or Bus. |
-| `Processor` | Single effect/instrument. Parameter access by name. |
+| `Processor` | Single effect/instrument. `proc["param"]` for get/set. |
+| `Send` | A send from a source/bus to a bus. Has `.level`, `.tap`, `.remove()`. |
+| `Perf` | Performance monitoring via `s.perf`. Properties: `enabled`, `slot_profiling`, `xrun_threshold`. Methods: `snapshot()`, `slots()`, `reset()`. |
 | `Transport` | Play, stop, tempo, seek, loop. |
 | `Midi` | MIDI device listing, routing, and management. |
 | `Clock` | Beat-driven callbacks for generative music. |
