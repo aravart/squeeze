@@ -229,29 +229,31 @@ Build bottom-up, organized into phases.
 
 After phase 3, Engine's processBlock gains transport advance, beat-timed event resolution, clock dispatch (beat-driven callbacks for external clients), and audio thread instrumentation.
 
-### Phase 4: Sample Playback (tiers 16–21)
+### Phase 4: Sample Playback (tiers 16–23)
 
 ```
 16. Buffer                (no dependencies)
-17. SamplerVoice          (Buffer)
-18. TimeStretchEngine     (signalsmith-stretch)
-19. VoiceAllocator        (SamplerVoice)
-20. SamplerProcessor      (Processor, VoiceAllocator, TimeStretchEngine, Buffer)
-21. BufferLibrary         (Buffer, JUCE AudioFormatManager)
+17. PlaybackCursor        (Buffer)
+18. PlayerProcessor       (Processor, PlaybackCursor, Buffer)
+19. SamplerVoice          (PlaybackCursor, Buffer)
+20. TimeStretchEngine     (signalsmith-stretch)
+21. VoiceAllocator        (SamplerVoice)
+22. SamplerProcessor      (Processor, VoiceAllocator, TimeStretchEngine, Buffer)
+23. BufferLibrary         (Buffer, JUCE AudioFormatManager)
 ```
 
-### Phase 5: Advanced (tiers 22–24)
+### Phase 5: Advanced (tiers 24–26)
 
 ```
-22. RecordingProcessor    (Processor)
-23. PDC                   (Processor, Chain, Source, Bus, Engine — cross-cutting)
-24. MeterProcessor        (Processor)
+24. RecordingProcessor    (Processor)
+25. PDC                   (Processor, Chain, Source, Bus, Engine — cross-cutting)
+26. MeterProcessor        (Processor)
 ```
 
-### Phase 6: Modulation (tier 25)
+### Phase 6: Modulation (tier 27)
 
 ```
-25. Modulation            (Processor, Engine, MixerSnapshot, Transport)
+27. Modulation            (Processor, Engine, MixerSnapshot, Transport)
     — ModSource base class + LfoSource
     — ModConnection routing, depth atomics
     — Sub-block dispatch in processBlock (kModSubBlockSize = 16)

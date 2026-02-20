@@ -886,6 +886,39 @@ class TestBuffer:
             assert buf1 != buf2
             assert buf1 == Buffer(s, buf1.buffer_id)
 
+    def test_buffer_tempo_default(self):
+        with Squeeze(plugins=False) as s:
+            buf = s.create_buffer(channels=1, length=100, sample_rate=44100.0)
+            assert buf.tempo == 0.0
+
+    def test_buffer_tempo_set_and_get(self):
+        with Squeeze(plugins=False) as s:
+            buf = s.create_buffer(channels=1, length=100, sample_rate=44100.0)
+            buf.tempo = 120.0
+            assert buf.tempo == 120.0
+            buf.tempo = 98.5
+            assert buf.tempo == 98.5
+
+    def test_buffer_tempo_reset_to_zero(self):
+        with Squeeze(plugins=False) as s:
+            buf = s.create_buffer(channels=1, length=100, sample_rate=44100.0)
+            buf.tempo = 140.0
+            buf.tempo = 0.0
+            assert buf.tempo == 0.0
+
+    def test_buffer_info_includes_tempo(self):
+        with Squeeze(plugins=False) as s:
+            buf = s.create_buffer(channels=1, length=100, sample_rate=44100.0)
+            buf.tempo = 128.0
+            info = s.buffer_info(buf.buffer_id)
+            assert info.tempo == 128.0
+
+    def test_buffer_info_tempo_default(self):
+        with Squeeze(plugins=False) as s:
+            buf = s.create_buffer(channels=1, length=100, sample_rate=44100.0)
+            info = s.buffer_info(buf.buffer_id)
+            assert info.tempo == 0.0
+
 
 # ═══════════════════════════════════════════════════════════════════
 # BufferLibrary (load_buffer, buffer_info, buffers)

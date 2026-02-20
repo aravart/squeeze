@@ -49,6 +49,11 @@ public:
     const std::string& getName() const;
     const std::string& getFilePath() const;
 
+    // --- Mutable metadata (control-thread only) ---
+
+    double getTempo() const;
+    void setTempo(double bpm);
+
     // --- Recording ---
 
     /// Current write position (samples from buffer start).
@@ -65,6 +70,7 @@ private:
     double sampleRate_ = 0.0;
     std::string name_;
     std::string filePath_;
+    double tempo_ = 0.0;
 };
 
 } // namespace squeeze

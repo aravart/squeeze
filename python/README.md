@@ -34,7 +34,7 @@ with Squeeze() as s:
 | `Squeeze` | Engine entry point. Creates sources, buses, buffers; controls transport and audio device. |
 | `Source` | Sound generator (plugin, player, or gain). Has insert chain, gain/pan, routing, MIDI. `src["param"]` accesses generator params. |
 | `Buffer` | Audio sample data in the engine. Read/write samples, clear, remove. Created via `s.create_buffer()` or loaded via `s.load_buffer()`. |
-| `BufferInfo` | Metadata about a buffer (dataclass). Returned by `s.buffer_info(id)`. Fields: `buffer_id`, `num_channels`, `length`, `sample_rate`, `name`, `file_path`, `length_seconds`. |
+| `BufferInfo` | Metadata about a buffer (dataclass). Returned by `s.buffer_info(id)`. Fields: `buffer_id`, `num_channels`, `length`, `sample_rate`, `name`, `file_path`, `length_seconds`, `tempo`. |
 | `PluginInfo` | Metadata about a plugin (dataclass). Returned by `s.plugin_infos`. Fields: `name`, `manufacturer`, `category`, `version`, `is_instrument`, `num_inputs`, `num_outputs`. |
 | `Bus` | Summing point with insert chain and routing. Master bus always exists. |
 | `Chain` | Ordered list of insert processors on a Source or Bus. |

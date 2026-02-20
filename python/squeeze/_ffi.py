@@ -118,6 +118,7 @@ class SqBufferInfo(ctypes.Structure):
         ("name", ctypes.c_char_p),
         ("file_path", ctypes.c_char_p),
         ("length_seconds", ctypes.c_double),
+        ("tempo", ctypes.c_double),
     ]
 
 class SqIdNameList(ctypes.Structure):
@@ -337,6 +338,8 @@ def _load_lib():
     _sig("sq_buffer_length_seconds", _D, [_V, _I])
     _sig("sq_buffer_write_position", _I, [_V, _I])
     _sig("sq_buffer_set_write_position", None, [_V, _I, _I])
+    _sig("sq_buffer_tempo", _D, [_V, _I])
+    _sig("sq_buffer_set_tempo", None, [_V, _I, _D])
     _sig("sq_buffer_read", _I, [_V, _I, _I, _I, ctypes.POINTER(ctypes.c_float), _I])
     _sig("sq_buffer_write", _I, [_V, _I, _I, _I, ctypes.POINTER(ctypes.c_float), _I])
     _sig("sq_buffer_clear", None, [_V, _I])

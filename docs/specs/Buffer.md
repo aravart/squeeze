@@ -56,6 +56,10 @@ public:
     const std::string& getName() const;
     const std::string& getFilePath() const; // empty for createEmpty buffers
 
+    // --- Mutable metadata (control-thread only) ---
+    double getTempo() const;     // BPM; 0.0 = not set
+    void setTempo(double bpm);
+
     // --- Recording ---
 
     /// Current write position (samples from buffer start).
@@ -72,6 +76,7 @@ private:
     double sampleRate_ = 0.0;
     std::string name_;
     std::string filePath_;
+    double tempo_ = 0.0;
 };
 
 } // namespace squeeze
@@ -116,6 +121,12 @@ int sq_buffer_write_position(SqEngine engine, int buffer_id);
 
 /// Set the write position. No-op if buffer not found.
 void sq_buffer_set_write_position(SqEngine engine, int buffer_id, int position);
+
+/// Returns buffer tempo (BPM), or 0.0 if buffer not found.
+double sq_buffer_tempo(SqEngine engine, int buffer_id);
+
+/// Set buffer tempo (BPM). No-op if buffer not found.
+void sq_buffer_set_tempo(SqEngine engine, int buffer_id, double bpm);
 
 /* ── Buffer sample data ───────────────────────────────────────── */
 
@@ -165,6 +176,12 @@ class Buffer:
     @write_position.setter
     def write_position(self, pos: int) -> None: ...
 
+    @property
+    def tempo(self) -> float: ...   # BPM; 0.0 = not set
+
+    @tempo.setter
+    def tempo(self, bpm: float) -> None: ...
+
     def read(self, channel: int, offset: int = 0,
              num_samples: int = -1) -> list[float]:
         """Read samples from the buffer.
@@ -190,7 +207,7 @@ def buffer_count(self) -> int: ...
 
 ## Invariants
 
-1. Metadata (`sampleRate`, `name`, `filePath`) is immutable after construction.
+1. Metadata (`sampleRate`, `name`, `filePath`) is immutable after construction. Tempo defaults to 0.0 (not set) and is mutable via `setTempo()`, control-thread only.
 2. `createEmpty` returns a buffer with `writePosition == 0` and all samples zeroed.
 3. `createFromData` returns a buffer with `writePosition == lengthInSamples` (fully written).
 4. Read/write pointers for a given channel are stable (same address) for the lifetime of the Buffer.
@@ -246,6 +263,7 @@ No dependencies on other squeeze components.
 | `getReadPointer()` | Any | No allocation, no locking; RT-safe |
 | `getWritePointer()` | Any | No allocation, no locking; RT-safe |
 | Metadata getters | Any | Immutable after construction; RT-safe |
+| `getTempo()` / `setTempo()` | Control | Mutable metadata; no atomics needed |
 | `writePosition` load | Any | Atomic; use `std::memory_order_acquire` |
 | `writePosition` store | Audio | Atomic; use `std::memory_order_release` |
 

@@ -228,6 +228,7 @@ class Squeeze:
             name=info.name.decode("utf-8") if info.name else "",
             file_path=info.file_path.decode("utf-8") if info.file_path else "",
             length_seconds=info.length_seconds,
+            tempo=info.tempo,
         )
         lib.sq_free_buffer_info(info)
         return result

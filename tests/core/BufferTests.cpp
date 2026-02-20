@@ -184,6 +184,48 @@ TEST_CASE("Buffer writePosition can be stored and loaded atomically")
 // clear
 // ═══════════════════════════════════════════════════════════════════
 
+// ═══════════════════════════════════════════════════════════════════
+// Tempo
+// ═══════════════════════════════════════════════════════════════════
+
+TEST_CASE("Buffer::getTempo defaults to 0.0")
+{
+    auto buf = Buffer::createEmpty(1, 100, 44100.0);
+    REQUIRE(buf != nullptr);
+    CHECK(buf->getTempo() == 0.0);
+}
+
+TEST_CASE("Buffer::setTempo/getTempo round-trip")
+{
+    auto buf = Buffer::createEmpty(1, 100, 44100.0);
+    REQUIRE(buf != nullptr);
+    buf->setTempo(120.0);
+    CHECK(buf->getTempo() == 120.0);
+    buf->setTempo(98.5);
+    CHECK(buf->getTempo() == 98.5);
+}
+
+TEST_CASE("Buffer::setTempo to 0.0 clears it")
+{
+    auto buf = Buffer::createEmpty(1, 100, 44100.0);
+    buf->setTempo(140.0);
+    buf->setTempo(0.0);
+    CHECK(buf->getTempo() == 0.0);
+}
+
+TEST_CASE("Buffer::createFromData defaults tempo to 0.0")
+{
+    juce::AudioBuffer<float> data(1, 100);
+    data.clear();
+    auto buf = Buffer::createFromData(std::move(data), 44100.0, "test");
+    REQUIRE(buf != nullptr);
+    CHECK(buf->getTempo() == 0.0);
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// clear
+// ═══════════════════════════════════════════════════════════════════
+
 TEST_CASE("Buffer::clear zeroes all samples and resets writePosition")
 {
     auto buf = Buffer::createEmpty(2, 100, 44100.0);

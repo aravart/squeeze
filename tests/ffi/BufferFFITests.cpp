@@ -291,6 +291,64 @@ TEST_CASE("sq_buffer_clear on unknown ID is a no-op")
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// Buffer tempo
+// ═══════════════════════════════════════════════════════════════════
+
+TEST_CASE("sq_buffer_tempo defaults to 0.0")
+{
+    SqEngine e = sq_engine_create(44100.0, 512, nullptr);
+    int id = sq_create_buffer(e, 1, 100, 44100.0, "x", nullptr);
+    CHECK(sq_buffer_tempo(e, id) == 0.0);
+    sq_engine_destroy(e);
+}
+
+TEST_CASE("sq_buffer_set_tempo/sq_buffer_tempo round-trip")
+{
+    SqEngine e = sq_engine_create(44100.0, 512, nullptr);
+    int id = sq_create_buffer(e, 1, 100, 44100.0, "x", nullptr);
+    sq_buffer_set_tempo(e, id, 120.0);
+    CHECK(sq_buffer_tempo(e, id) == 120.0);
+    sq_buffer_set_tempo(e, id, 98.5);
+    CHECK(sq_buffer_tempo(e, id) == 98.5);
+    sq_engine_destroy(e);
+}
+
+TEST_CASE("sq_buffer_tempo returns 0.0 for unknown ID")
+{
+    SqEngine e = sq_engine_create(44100.0, 512, nullptr);
+    CHECK(sq_buffer_tempo(e, 999) == 0.0);
+    sq_engine_destroy(e);
+}
+
+TEST_CASE("sq_buffer_set_tempo on unknown ID is a no-op")
+{
+    SqEngine e = sq_engine_create(44100.0, 512, nullptr);
+    sq_buffer_set_tempo(e, 999, 120.0);  // should not crash
+    sq_engine_destroy(e);
+}
+
+TEST_CASE("sq_buffer_info includes tempo")
+{
+    SqEngine e = sq_engine_create(44100.0, 512, nullptr);
+    int id = sq_create_buffer(e, 1, 100, 44100.0, "x", nullptr);
+    sq_buffer_set_tempo(e, id, 140.0);
+    SqBufferInfo info = sq_buffer_info(e, id);
+    CHECK(info.tempo == 140.0);
+    sq_free_buffer_info(info);
+    sq_engine_destroy(e);
+}
+
+TEST_CASE("sq_buffer_info tempo defaults to 0.0")
+{
+    SqEngine e = sq_engine_create(44100.0, 512, nullptr);
+    int id = sq_create_buffer(e, 1, 100, 44100.0, "x", nullptr);
+    SqBufferInfo info = sq_buffer_info(e, id);
+    CHECK(info.tempo == 0.0);
+    sq_free_buffer_info(info);
+    sq_engine_destroy(e);
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // PlayerProcessor integration tests
 // ═══════════════════════════════════════════════════════════════════
 

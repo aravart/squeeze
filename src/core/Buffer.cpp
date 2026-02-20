@@ -78,6 +78,14 @@ double Buffer::getLengthInSeconds() const
 const std::string& Buffer::getName() const { return name_; }
 const std::string& Buffer::getFilePath() const { return filePath_; }
 
+double Buffer::getTempo() const { return tempo_; }
+
+void Buffer::setTempo(double bpm)
+{
+    SQ_DEBUG("Buffer::setTempo: name=%s bpm=%.2f", name_.c_str(), bpm);
+    tempo_ = bpm;
+}
+
 void Buffer::clear()
 {
     SQ_DEBUG("Buffer::clear: name=%s", name_.c_str());

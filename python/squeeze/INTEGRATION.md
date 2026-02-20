@@ -76,13 +76,13 @@ buf_id = s.load_buffer("/samples/kick.wav")  # returns int buffer ID
 info = s.buffer_info(buf_id)                 # BufferInfo dataclass
 ```
 
-Properties: `buffer_id -> int`, `num_channels -> int`, `length -> int`, `sample_rate -> float`, `name -> str`, `length_seconds -> float`, `write_position -> int` (settable)
+Properties: `buffer_id -> int`, `num_channels -> int`, `length -> int`, `sample_rate -> float`, `name -> str`, `length_seconds -> float`, `write_position -> int` (settable), `tempo -> float` (settable, BPM; 0.0 = not set)
 - `buf.read(channel, offset=0, num_samples=-1) -> list[float]` — read samples (-1 reads to end)
 - `buf.write(channel, data, offset=0) -> int` — write samples, returns count written
 - `buf.clear()` — zero all samples, reset write_position
 - `buf.remove() -> bool`
 
-`BufferInfo` fields: `buffer_id`, `num_channels`, `length`, `sample_rate`, `name`, `file_path`, `length_seconds`
+`BufferInfo` fields: `buffer_id`, `num_channels`, `length`, `sample_rate`, `name`, `file_path`, `length_seconds`, `tempo`
 
 ### Source
 

@@ -1173,6 +1173,7 @@ SqBufferInfo sq_buffer_info(SqEngine engine, int buffer_id)
     info.name = strdup(buf->getName().c_str());
     info.file_path = strdup(buf->getFilePath().c_str());
     info.length_seconds = buf->getLengthInSeconds();
+    info.tempo = buf->getTempo();
     return info;
 }
 
@@ -1243,6 +1244,20 @@ void sq_buffer_set_write_position(SqEngine engine, int buffer_id, int position)
     auto* buf = cast(engine)->bufferLibrary.getBuffer(buffer_id);
     if (!buf) return;
     buf->writePosition.store(position, std::memory_order_release);
+}
+
+double sq_buffer_tempo(SqEngine engine, int buffer_id)
+{
+    auto* buf = cast(engine)->bufferLibrary.getBuffer(buffer_id);
+    if (!buf) return 0.0;
+    return buf->getTempo();
+}
+
+void sq_buffer_set_tempo(SqEngine engine, int buffer_id, double bpm)
+{
+    auto* buf = cast(engine)->bufferLibrary.getBuffer(buffer_id);
+    if (!buf) return;
+    buf->setTempo(bpm);
 }
 
 int sq_buffer_read(SqEngine engine, int buffer_id, int channel,

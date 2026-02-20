@@ -41,3 +41,4 @@ class BufferInfo:
     name: str
     file_path: str
     length_seconds: float
+    tempo: float

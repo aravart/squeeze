@@ -447,6 +447,7 @@ typedef struct {
     char*  name;
     char*  file_path;
     double length_seconds;
+    double tempo;
 } SqBufferInfo;
 
 typedef struct {
@@ -502,6 +503,12 @@ int sq_buffer_write_position(SqEngine engine, int buffer_id);
 
 /// Set the write position. No-op if buffer not found.
 void sq_buffer_set_write_position(SqEngine engine, int buffer_id, int position);
+
+/// Returns buffer tempo (BPM), or 0.0 if buffer not found.
+double sq_buffer_tempo(SqEngine engine, int buffer_id);
+
+/// Set buffer tempo (BPM). No-op if buffer not found.
+void sq_buffer_set_tempo(SqEngine engine, int buffer_id, double bpm);
 
 /* ── Buffer sample data ───────────────────────────────────────── */
 

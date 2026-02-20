@@ -61,6 +61,15 @@ class Buffer:
     def write_position(self, pos: int) -> None:
         lib.sq_buffer_set_write_position(self._engine._ptr, self._buffer_id, pos)
 
+    @property
+    def tempo(self) -> float:
+        """Buffer tempo in BPM. 0.0 means not set."""
+        return lib.sq_buffer_tempo(self._engine._ptr, self._buffer_id)
+
+    @tempo.setter
+    def tempo(self, bpm: float) -> None:
+        lib.sq_buffer_set_tempo(self._engine._ptr, self._buffer_id, bpm)
+
     def read(self, channel: int, offset: int = 0,
              num_samples: int = -1) -> list[float]:
         """Read samples from the buffer.
