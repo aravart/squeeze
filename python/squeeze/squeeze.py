@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ctypes
 import os
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -258,6 +259,31 @@ class Squeeze:
     def process_events(timeout_ms: int = 0) -> None:
         """Process pending JUCE GUI/message events."""
         lib.sq_process_events(timeout_ms)
+
+    # --- Event loop ---
+
+    def run(self, *, seconds: float | None = None,
+            until: Callable[[], bool] | None = None) -> None:
+        """Pump JUCE events until a condition is met.
+
+        Args:
+            seconds: Stop after this many seconds.
+            until: Stop when this callable returns True.
+
+        If neither is given, runs until ``KeyboardInterrupt``.
+        Can combine both — stops on whichever comes first.
+        """
+        deadline = (time.monotonic() + seconds) if seconds is not None else None
+        try:
+            while True:
+                if deadline is not None and time.monotonic() >= deadline:
+                    break
+                if until is not None and until():
+                    break
+                lib.sq_process_events(10)
+                time.sleep(0.005)
+        except KeyboardInterrupt:
+            pass
 
     # --- Testing ---
 

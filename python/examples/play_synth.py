@@ -14,7 +14,6 @@ Usage:
 
 import os
 import sys
-import time
 
 # Add the project root so `squeeze` is importable without installing
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -102,13 +101,7 @@ def play(plugin_name, open_editor=False):
         print(f"\nPlaying for {PLAY_SECONDS}s at {TEMPO} BPM ...")
 
         t.play()
-
-        deadline = time.monotonic() + PLAY_SECONDS
-        while time.monotonic() < deadline:
-            # pump JUCE message loop (needed for audio + GUI)
-            Squeeze.process_events(10)
-            time.sleep(0.005)
-
+        s.run(seconds=PLAY_SECONDS)
         t.stop()
 
         if open_editor:

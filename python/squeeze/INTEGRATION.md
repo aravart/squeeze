@@ -42,6 +42,7 @@ Key methods:
 - `s.clock(resolution, latency_ms, callback) -> Clock`
 - `s.perf -> Perf` (performance monitoring)
 - `s.start(sample_rate=None, block_size=None)` / `s.stop()` — audio device (defaults to constructor args)
+- `s.run(*, seconds=None, until=None)` — pump events (see Event Loop below)
 - `s.render(num_samples)` — headless test rendering
 - `s.load_plugin_cache(path)` / `s.available_plugins` / `s.num_plugins`
 - `s.batch()` — context manager, defers graph rebuild until exit
@@ -49,7 +50,7 @@ Key methods:
 - `s.version -> str`
 - `s.is_running -> bool` / `s.sample_rate -> float` / `s.block_size -> int`
 - `s.source_count -> int` / `s.bus_count -> int`
-- `Squeeze.process_events(timeout_ms)` — pump JUCE GUI events (static)
+- `Squeeze.process_events(timeout_ms)` — pump JUCE GUI events (static, for custom event loops)
 
 ### Perf (performance monitoring)
 
@@ -195,9 +196,9 @@ with Squeeze() as s:
 with Squeeze() as s:
     src = s.add_source("Lead", plugin="Vital")
     src.route_to(s.master)
-    s.start()  # uses constructor sample_rate/block_size
+    s.start()
     s.transport.play()
-    Squeeze.process_events(5000)  # run for 5 seconds
+    s.run(seconds=5)        # or s.run() for Ctrl+C
     s.transport.stop()
     s.stop()
 ```

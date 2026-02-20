@@ -666,11 +666,24 @@ class Squeeze:
     def stop(self) -> None:
         """Stop the audio device."""
 
+    # --- Event loop ---
+
+    def run(self, *, seconds: float | None = None,
+            until: Callable[[], bool] | None = None) -> None:
+        """Pump JUCE events until a condition is met.
+
+        seconds: stop after this many seconds.
+        until: stop when this callable returns True.
+        If neither is given, runs until KeyboardInterrupt.
+        Can combine both — stops on whichever comes first.
+        """
+
     # --- Plugin editor ---
 
     @staticmethod
     def process_events(timeout_ms: int = 0) -> None:
-        """Process pending JUCE GUI/message events."""
+        """Low-level: process pending JUCE events once. Use run() for
+        standalone scripts; use this for custom/embedded event loops."""
 
     # --- Testing ---
 

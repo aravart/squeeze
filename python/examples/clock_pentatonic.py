@@ -19,9 +19,7 @@ Press Ctrl+C to stop.
 
 import os
 import random
-import signal
 import sys
-import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -39,14 +37,6 @@ SCALE = [
     60, 63, 65, 67, 70,   # C4  Eb4  F4  G4  Bb4
     72, 75, 77, 79, 82,   # C5  Eb5  F5  G5  Bb5
 ]
-
-running = True
-
-
-def on_sigint(sig, frame):
-    global running
-    running = False
-
 
 def parse_args():
     args = sys.argv[1:]
@@ -87,8 +77,6 @@ def main():
     resolution = 4.0 / subdivision   # beats per tick
 
     set_log_level(2)  # info
-
-    signal.signal(signal.SIGINT, on_sigint)
 
     with Squeeze(SAMPLE_RATE, BLOCK_SIZE) as s:
 
@@ -169,12 +157,7 @@ def main():
         )
 
         t.play()
-
-        while running:
-            Squeeze.process_events(10)
-            time.sleep(0.005)
-
-        # ── teardown ───────────────────────────────────────────────
+        s.run()
 
         print("\nStopping...")
         t.stop()

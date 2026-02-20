@@ -19,9 +19,7 @@ Press Ctrl+C to stop.
 """
 
 import os
-import signal
 import sys
-import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -32,13 +30,6 @@ from squeeze import Squeeze, set_log_level
 DEFAULT_PLUGIN = "Vital"
 SAMPLE_RATE = 44100.0
 BLOCK_SIZE = 512
-
-running = True
-
-
-def on_sigint(sig, frame):
-    global running
-    running = False
 
 
 def parse_args():
@@ -102,8 +93,6 @@ def main():
 
     set_log_level(2)  # info
 
-    signal.signal(signal.SIGINT, on_sigint)
-
     with Squeeze(SAMPLE_RATE, BLOCK_SIZE) as s:
 
         # ── list modes (early exit) ─────────────────────────────
@@ -157,11 +146,7 @@ def main():
         s.start()
         print(f"\nListening — play your keyboard! (Ctrl+C to stop)\n")
 
-        while running:
-            Squeeze.process_events(10)
-            time.sleep(0.005)
-
-        # ── teardown ────────────────────────────────────────────
+        s.run()
 
         print("\nStopping...")
         if open_editor:
