@@ -276,6 +276,128 @@ TEST_CASE("PlayerProcessor continues playing with forward loop")
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// Fade-out
+// ═══════════════════════════════════════════════════════════════════
+
+TEST_CASE("PlayerProcessor fade-out produces non-zero audio after stop")
+{
+    PlayerProcessor pp;
+    pp.prepare(44100.0, 512);
+    pp.setParameter("fade_ms", 50.0f); // long fade for easy detection
+    auto buf = makeConstBuffer(2, 44100, 0.8f);
+    pp.setBuffer(buf.get());
+    pp.setParameter("loop_mode", 1.0f);
+    pp.setParameter("playing", 1.0f);
+
+    // Render a block while playing to establish wasPlaying_
+    juce::AudioBuffer<float> warmup(2, 512);
+    pp.process(warmup);
+
+    // Stop playback
+    pp.setParameter("playing", 0.0f);
+
+    // Render the fade-out block
+    juce::AudioBuffer<float> fadeOut(2, 512);
+    pp.process(fadeOut);
+
+    // The fade-out block must contain non-zero audio (the actual fade)
+    bool hasSignal = false;
+    for (int i = 0; i < 512; ++i)
+    {
+        if (std::abs(fadeOut.getSample(0, i)) > 0.001f)
+        {
+            hasSignal = true;
+            break;
+        }
+    }
+    CHECK(hasSignal);
+}
+
+TEST_CASE("PlayerProcessor fade-out decays to silence")
+{
+    PlayerProcessor pp;
+    pp.prepare(44100.0, 512);
+    pp.setParameter("fade_ms", 5.0f); // short fade
+    auto buf = makeConstBuffer(2, 44100, 0.8f);
+    pp.setBuffer(buf.get());
+    pp.setParameter("loop_mode", 1.0f);
+    pp.setParameter("playing", 1.0f);
+
+    juce::AudioBuffer<float> warmup(2, 512);
+    pp.process(warmup);
+
+    pp.setParameter("playing", 0.0f);
+
+    // Render enough blocks to exhaust the fade (5ms = ~220 samples)
+    for (int block = 0; block < 4; ++block)
+    {
+        juce::AudioBuffer<float> out(2, 256);
+        pp.process(out);
+    }
+
+    // After the fade completes, output should be silent
+    juce::AudioBuffer<float> after(2, 512);
+    pp.process(after);
+    for (int i = 0; i < 512; ++i)
+    {
+        CHECK(after.getSample(0, i) == 0.0f);
+    }
+}
+
+TEST_CASE("PlayerProcessor fade-out envelope is monotonically decreasing")
+{
+    PlayerProcessor pp;
+    pp.prepare(44100.0, 512);
+    pp.setParameter("fade_ms", 20.0f);
+    auto buf = makeConstBuffer(2, 44100, 1.0f); // constant 1.0 so output = envelope
+    pp.setBuffer(buf.get());
+    pp.setParameter("loop_mode", 1.0f);
+    pp.setParameter("playing", 1.0f);
+
+    juce::AudioBuffer<float> warmup(2, 512);
+    pp.process(warmup);
+
+    pp.setParameter("playing", 0.0f);
+
+    juce::AudioBuffer<float> fadeOut(2, 1024);
+    pp.process(fadeOut);
+
+    // Check that the envelope is monotonically non-increasing
+    float prev = fadeOut.getSample(0, 0);
+    for (int i = 1; i < 1024; ++i)
+    {
+        float cur = fadeOut.getSample(0, i);
+        CHECK(cur <= prev + 1e-6f);
+        prev = cur;
+    }
+}
+
+TEST_CASE("PlayerProcessor no fade-out when fade_ms is 0")
+{
+    PlayerProcessor pp;
+    pp.prepare(44100.0, 512);
+    pp.setParameter("fade_ms", 0.0f);
+    auto buf = makeConstBuffer(2, 44100, 0.8f);
+    pp.setBuffer(buf.get());
+    pp.setParameter("loop_mode", 1.0f);
+    pp.setParameter("playing", 1.0f);
+
+    juce::AudioBuffer<float> warmup(2, 512);
+    pp.process(warmup);
+
+    pp.setParameter("playing", 0.0f);
+
+    juce::AudioBuffer<float> out(2, 512);
+    pp.process(out);
+
+    // With fade_ms=0, output should be fully silent immediately
+    for (int i = 0; i < 512; ++i)
+    {
+        CHECK(out.getSample(0, i) == 0.0f);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // Seek
 // ═══════════════════════════════════════════════════════════════════
 
