@@ -23,7 +23,6 @@ from squeeze import Squeeze, set_log_level
 
 # ── configuration ────────────────────────────────────────────────
 
-CACHE = os.path.join(os.path.dirname(__file__), "..", "..", "plugin-cache.xml")
 DEFAULT_PLUGIN = "Vital"
 SAMPLE_RATE = 44100.0
 BLOCK_SIZE = 512
@@ -41,8 +40,6 @@ def play(plugin_name, open_editor=False):
     set_log_level(2)  # info
 
     with Squeeze(SAMPLE_RATE, BLOCK_SIZE) as s:
-        # load the plugin cache
-        s.load_plugin_cache(os.path.abspath(CACHE))
         print(f"Loaded {s.num_plugins} plugins from cache")
 
         if "--list" in sys.argv:
@@ -101,7 +98,7 @@ def play(plugin_name, open_editor=False):
 
         # ── start audio and play ─────────────────────────────────
 
-        s.start(SAMPLE_RATE, BLOCK_SIZE)
+        s.start()
         print(f"\nPlaying for {PLAY_SECONDS}s at {TEMPO} BPM ...")
 
         t.play()

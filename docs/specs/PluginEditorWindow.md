@@ -113,7 +113,6 @@ class Squeeze:
 from squeeze import Squeeze, set_log_level
 
 with Squeeze() as s:
-    s.load_plugin_cache("plugin-cache.xml")
     synth = s.add_source("Dexed", plugin="Dexed")
     synth.route_to(s.master)
 

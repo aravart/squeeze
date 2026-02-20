@@ -182,8 +182,9 @@ Key methods:
 - s.transport -> Transport
 - s.midi -> Midi
 - s.clock(resolution, latency_ms, callback) -> Clock
-- s.start() / s.stop()  — audio device
+- s.start() / s.stop()  — audio device (defaults to constructor sample_rate/block_size)
 - s.render(num_samples)  — headless test rendering
+- plugins=True (default) auto-finds plugin-cache.xml; or pass a path string
 - s.load_plugin_cache(path) / s.available_plugins / s.num_plugins
 - s.batch()  — context manager, defers graph rebuild
 - s.close()

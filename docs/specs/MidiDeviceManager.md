@@ -160,7 +160,6 @@ sq_destroy(engine);
 from squeeze import Squeeze
 
 s = Squeeze()
-s.load_plugin_cache("/path/to/plugin-cache.xml")
 
 # Enumerate and open
 print(s.midi.devices)

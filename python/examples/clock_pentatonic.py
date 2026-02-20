@@ -29,7 +29,6 @@ from squeeze import Squeeze, set_log_level
 
 # ── configuration ────────────────────────────────────────────────
 
-CACHE = os.path.join(os.path.dirname(__file__), "..", "..", "plugin-cache.xml")
 DEFAULT_PLUGIN = "Pure LoFi"
 SAMPLE_RATE = 44100.0
 BLOCK_SIZE = 512
@@ -95,7 +94,6 @@ def main():
 
         # ── list mode (early exit) ─────────────────────────────────
 
-        s.load_plugin_cache(os.path.abspath(CACHE))
         print(f"Loaded {s.num_plugins} plugins from cache")
 
         if list_plugins:
@@ -160,7 +158,7 @@ def main():
 
         # ── start audio ────────────────────────────────────────────
 
-        s.start(SAMPLE_RATE, BLOCK_SIZE)
+        s.start()
 
         sub_label = {4: "quarter", 8: "eighth", 16: "sixteenth"}.get(
             subdivision, f"1/{subdivision}"

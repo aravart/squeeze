@@ -69,7 +69,7 @@ Plugin instantiation is embedded in source/bus chain operations:
 ### Python API
 
 ```python
-engine.load_plugin_cache("/path/to/plugin-cache.xml")
+# plugins=True by default — auto-finds plugin-cache.xml
 plugins = engine.available_plugins    # list of strings
 
 synth = engine.add_source("Lead", plugin="Diva.vst3")
@@ -180,7 +180,7 @@ sq_destroy(engine);
 from squeeze import Squeeze
 
 s = Squeeze()
-s.load_plugin_cache("/path/to/plugin-cache.xml")
+# plugins=True by default — auto-finds plugin-cache.xml
 
 print(f"Available: {s.available_plugins}")
 
