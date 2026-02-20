@@ -138,7 +138,7 @@ class WavLoopPlayer:
     # ── Event loop ──────────────────────────────────────────────
 
     def _pump(self) -> None:
-        Squeeze.process_events(10)
+        Squeeze.process_events(0)  # non-blocking; tkinter owns the run loop
         self.root.after(16, self._pump)
 
     def _on_close(self) -> None:

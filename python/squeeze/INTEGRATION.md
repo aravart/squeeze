@@ -55,7 +55,7 @@ Key methods:
 - `s.version -> str`
 - `s.is_running -> bool` / `s.sample_rate -> float` / `s.block_size -> int`
 - `s.source_count -> int` / `s.bus_count -> int`
-- `Squeeze.process_events(timeout_ms)` — pump JUCE GUI events (static, for custom event loops)
+- `Squeeze.process_events(timeout_ms)` — pump JUCE GUI events (static, for custom event loops). **Use `timeout_ms=0` when embedding in another event loop** (tkinter, Qt, etc.) — a non-zero timeout enters the platform run loop and conflicts with the host framework's event handling (GIL crash on macOS).
 
 ### Perf (performance monitoring)
 
@@ -228,6 +228,21 @@ with Squeeze() as s:
     s.stop()
 ```
 
+### Custom event loop (tkinter, Qt, etc.)
+
+When embedding Squeeze in a GUI framework that owns the event loop, use `process_events(0)` (non-blocking) pumped by the framework's timer instead of `s.run()`:
+
+```python
+def pump():
+    Squeeze.process_events(0)  # non-blocking — host framework owns the run loop
+    root.after(16, pump)       # ~60 fps
+
+s.start()
+s.transport.play()
+pump()
+root.mainloop()
+```
+
 ### Batch mutations (single graph rebuild)
 
 ```python
@@ -270,6 +285,8 @@ with Squeeze() as s:
 ```
 
 PlayerProcessor parameters: `playing` (0/1), `position` (0-1), `speed` (-4..4, varispeed), `loop_mode` (0=off, 1=forward, 2=ping-pong), `loop_start` (0-1), `loop_end` (0-1), `fade_ms` (0-50), `tempo_lock` (0/1, lock speed to engine tempo / buffer tempo), `transpose` (-24..24, semitone pitch shift).
+
+**tempo_lock prerequisite:** The buffer must have a non-zero tempo (`buf.tempo = 120.0`) for tempo_lock to take effect. Loaded WAVs default to tempo 0.0 — set it explicitly after loading. If tempo_lock is enabled but the buffer tempo or engine tempo is unavailable, a warning is logged and speed is unaffected.
 
 ### Mixer with sends
 
